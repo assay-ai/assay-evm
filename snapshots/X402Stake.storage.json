@@ -1,0 +1,416 @@
+{
+  "storage": [
+    {
+      "astId": 42153,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "_nameFallback",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_string_storage"
+    },
+    {
+      "astId": 42155,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "_versionFallback",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_string_storage"
+    },
+    {
+      "astId": 41049,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "_status",
+      "offset": 0,
+      "slot": "2",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 49448,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "CONFIG",
+      "offset": 0,
+      "slot": "3",
+      "type": "t_contract(IX402Config)51217"
+    },
+    {
+      "astId": 49451,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "ASSET",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_contract(IERC20)40258"
+    },
+    {
+      "astId": 49457,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "stakes",
+      "offset": 0,
+      "slot": "5",
+      "type": "t_mapping(t_address,t_struct(ProviderStake)49438_storage)"
+    },
+    {
+      "astId": 49462,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "verifierWindows",
+      "offset": 0,
+      "slot": "6",
+      "type": "t_mapping(t_address,t_struct(VerifierWindow)49444_storage)"
+    },
+    {
+      "astId": 49465,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "totalStaked",
+      "offset": 0,
+      "slot": "7",
+      "type": "t_uint128"
+    },
+    {
+      "astId": 49467,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "totalDeposited",
+      "offset": 16,
+      "slot": "7",
+      "type": "t_uint128"
+    },
+    {
+      "astId": 49469,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "totalWithdrawn",
+      "offset": 0,
+      "slot": "8",
+      "type": "t_uint128"
+    },
+    {
+      "astId": 49471,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "totalSlashed",
+      "offset": 16,
+      "slot": "8",
+      "type": "t_uint128"
+    },
+    {
+      "astId": 50078,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "slashRecords",
+      "offset": 0,
+      "slot": "9",
+      "type": "t_mapping(t_bytes32,t_struct(SlashRecord)50073_storage)"
+    },
+    {
+      "astId": 51119,
+      "contract": "src/X402Stake.sol:X402Stake",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "10",
+      "type": "t_array(t_uint256)49_storage"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_uint256)49_storage": {
+      "encoding": "inplace",
+      "label": "uint256[49]",
+      "numberOfBytes": "1568",
+      "base": "t_uint256"
+    },
+    "t_bytes32": {
+      "encoding": "inplace",
+      "label": "bytes32",
+      "numberOfBytes": "32"
+    },
+    "t_contract(IERC20)40258": {
+      "encoding": "inplace",
+      "label": "contract IERC20",
+      "numberOfBytes": "20"
+    },
+    "t_contract(IX402Config)51217": {
+      "encoding": "inplace",
+      "label": "contract IX402Config",
+      "numberOfBytes": "20"
+    },
+    "t_enum(SlashStatus)47314": {
+      "encoding": "inplace",
+      "label": "enum SlashStatus",
+      "numberOfBytes": "1"
+    },
+    "t_mapping(t_address,t_struct(ProviderStake)49438_storage)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => struct X402Stake.ProviderStake)",
+      "numberOfBytes": "32",
+      "value": "t_struct(ProviderStake)49438_storage"
+    },
+    "t_mapping(t_address,t_struct(VerifierWindow)49444_storage)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => struct X402Stake.VerifierWindow)",
+      "numberOfBytes": "32",
+      "value": "t_struct(VerifierWindow)49444_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(SlashRecord)50073_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct X402Stake.SlashRecord)",
+      "numberOfBytes": "32",
+      "value": "t_struct(SlashRecord)50073_storage"
+    },
+    "t_string_storage": {
+      "encoding": "bytes",
+      "label": "string",
+      "numberOfBytes": "32"
+    },
+    "t_struct(ProviderStake)49438_storage": {
+      "encoding": "inplace",
+      "label": "struct X402Stake.ProviderStake",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 49419,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "bonded",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint128"
+        },
+        {
+          "astId": 49421,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "unbonding",
+          "offset": 16,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49423,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "unbondingStartedAt",
+          "offset": 24,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49425,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "slashedInWindow",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49427,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "slashWindowStartedAt",
+          "offset": 8,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49429,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "pendingSlash",
+          "offset": 16,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49431,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "__gap",
+          "offset": 24,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49433,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "totalDeposited",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint128"
+        },
+        {
+          "astId": 49435,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "totalWithdrawn",
+          "offset": 16,
+          "slot": "2",
+          "type": "t_uint128"
+        },
+        {
+          "astId": 49437,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "totalSlashed",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint128"
+        }
+      ]
+    },
+    "t_struct(SlashRecord)50073_storage": {
+      "encoding": "inplace",
+      "label": "struct X402Stake.SlashRecord",
+      "numberOfBytes": "160",
+      "members": [
+        {
+          "astId": 50045,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "provider",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_address"
+        },
+        {
+          "astId": 50048,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "status",
+          "offset": 20,
+          "slot": "0",
+          "type": "t_enum(SlashStatus)47314"
+        },
+        {
+          "astId": 50050,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "penalty",
+          "offset": 21,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50052,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "beneficiary",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_address"
+        },
+        {
+          "astId": 50054,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "proposedAt",
+          "offset": 20,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50056,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "__gap",
+          "offset": 28,
+          "slot": "1",
+          "type": "t_uint32"
+        },
+        {
+          "astId": 50058,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "verifier",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_address"
+        },
+        {
+          "astId": 50060,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "executableAt",
+          "offset": 20,
+          "slot": "2",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50062,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "__gap2",
+          "offset": 28,
+          "slot": "2",
+          "type": "t_uint32"
+        },
+        {
+          "astId": 50064,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "reserved",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50066,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "capAllowance",
+          "offset": 8,
+          "slot": "3",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50068,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "applied",
+          "offset": 16,
+          "slot": "3",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50070,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "executedAt",
+          "offset": 24,
+          "slot": "3",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 50072,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "policy",
+          "offset": 0,
+          "slot": "4",
+          "type": "t_bytes32"
+        }
+      ]
+    },
+    "t_struct(VerifierWindow)49444_storage": {
+      "encoding": "inplace",
+      "label": "struct X402Stake.VerifierWindow",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 49441,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "slashedInWindow",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 49443,
+          "contract": "src/X402Stake.sol:X402Stake",
+          "label": "windowStartedAt",
+          "offset": 8,
+          "slot": "0",
+          "type": "t_uint64"
+        }
+      ]
+    },
+    "t_uint128": {
+      "encoding": "inplace",
+      "label": "uint128",
+      "numberOfBytes": "16"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "t_uint32": {
+      "encoding": "inplace",
+      "label": "uint32",
+      "numberOfBytes": "4"
+    },
+    "t_uint64": {
+      "encoding": "inplace",
+      "label": "uint64",
+      "numberOfBytes": "8"
+    }
+  }
+}

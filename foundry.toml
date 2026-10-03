@@ -1,0 +1,50 @@
+[profile.default]
+src              = "src"
+out              = "out"
+libs             = ["lib"]
+# remappings.txt is the complete, explicit list. Without this, forge ALSO synthesises a
+# prefix per lib/ directory, so `openzeppelin/…` resolves alongside
+# `@openzeppelin/contracts/…` and two spellings of one dependency both compile.
+auto_detect_remappings = false
+test             = "test"
+script           = "script"
+solc_version     = "0.8.24"
+evm_version      = "shanghai"
+via_ir           = true
+optimizer        = true
+optimizer_runs   = 200
+bytecode_hash    = "ipfs"
+cbor_metadata    = true
+# `script/check-layout.sh` compares a committed snapshot of each contract's storage layout with a
+# freshly generated one, and `forge inspect --json` stamps a position-dependent `astId` on every
+# entry and inside every struct type key. Left to itself, `forge inspect` compiles a SMALLER unit
+# than `forge build` does, so those ids differ between the run that wrote the snapshot and the run
+# that checks it, and the gate reports every contract as byte-stale on every run. With this key
+# `forge build` emits the layout too, the gate builds first, and the two runs see the same source
+# set and the same ids — so a byte-identical snapshot means what it says.
+#
+# forge 1.2.1-nightly does recompile with the storageLayout selection when an artifact lacks it,
+# so the reason this key stays is the astId stability above, not availability of the layout.
+#
+# It is artifact CONTENT only: creation and runtime bytecode are byte-identical with and without
+# it, for both contracts (measured with SHA-256 over the artifact objects).
+extra_output     = ["storageLayout"]
+gas_reports      = ["X402Escrow", "X402Stake", "X402Config"]
+# The repository root is read-write: the layout and snapshot gates write under it. Nothing in the
+# suite reads or writes outside the repository.
+fs_permissions   = [{ access = "read-write", path = "./" }]
+
+[fuzz]
+runs = 512
+
+[invariant]
+runs                  = 256
+depth                 = 64
+fail_on_revert        = false
+shrink_run_limit      = 5000
+
+[fmt]
+# The repo writes Solidity at 100 columns (the project's shared formatting width) while forge fmt
+# defaults to 120. Setting it here makes `forge fmt --check` agree with the code that is already
+# written, so it can be a CI gate.
+line_length = 100
