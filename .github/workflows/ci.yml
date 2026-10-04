@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  FOUNDRY_DISABLE_NIGHTLY_WARNING: "1"
+
+jobs:
+  forge:
+    name: fmt, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The gas figures and the bytecode pins are measured with exactly this forge build
+      # (`forge --version` prints 1.2.1-nightly, commit 7e68208e…). The tag v1.2.1 is a DIFFERENT
+      # commit, so the nightly is pinned by name.
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly-7e68208eaae86342998f4a713d27a538ce5a3fbb
+
+      - name: Format check
+        run: forge fmt --check
+
+      - name: Build
+        run: forge build
+
+      # Fork suites under test/fork/ skip themselves when RH_TESTNET_RPC is unset.
+      - name: Test
+        run: forge test
+
+      # forge snapshot --check, with the fork suite and the tests whose gas depends on the
+      # checkout path excluded (docs/ci-gates.md section 8).
+      - name: Gas snapshot
+        run: ./script/check-snapshot.sh

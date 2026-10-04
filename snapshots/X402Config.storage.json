@@ -1,0 +1,218 @@
+{
+  "storage": [
+    {
+      "astId": 47368,
+      "contract": "src/X402Config.sol:X402Config",
+      "label": "admin",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_address"
+    },
+    {
+      "astId": 47372,
+      "contract": "src/X402Config.sol:X402Config",
+      "label": "paused",
+      "offset": 20,
+      "slot": "0",
+      "type": "t_bool"
+    },
+    {
+      "astId": 47376,
+      "contract": "src/X402Config.sol:X402Config",
+      "label": "_params",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_struct(ParamSet)47308_storage"
+    },
+    {
+      "astId": 47710,
+      "contract": "src/X402Config.sol:X402Config",
+      "label": "verifiers",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_mapping(t_address,t_struct(VerifierKey)47704_storage)"
+    },
+    {
+      "astId": 47966,
+      "contract": "src/X402Config.sol:X402Config",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "5",
+      "type": "t_array(t_uint256)49_storage"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_uint256)49_storage": {
+      "encoding": "inplace",
+      "label": "uint256[49]",
+      "numberOfBytes": "1568",
+      "base": "t_uint256"
+    },
+    "t_bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "t_mapping(t_address,t_struct(VerifierKey)47704_storage)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => struct X402Config.VerifierKey)",
+      "numberOfBytes": "32",
+      "value": "t_struct(VerifierKey)47704_storage"
+    },
+    "t_struct(ParamSet)47308_storage": {
+      "encoding": "inplace",
+      "label": "struct ParamSet",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "astId": 47289,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "treasury",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_address"
+        },
+        {
+          "astId": 47291,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "redeemer",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_address"
+        },
+        {
+          "astId": 47293,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "unbondingPeriodSeconds",
+          "offset": 20,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47295,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "minimumStake",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47297,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "penaltyAmount",
+          "offset": 8,
+          "slot": "2",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47299,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "verifierDailyCap",
+          "offset": 16,
+          "slot": "2",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47301,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "takeRateBps",
+          "offset": 24,
+          "slot": "2",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 47303,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "slashAgentBps",
+          "offset": 26,
+          "slot": "2",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 47305,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "slashPlatformBps",
+          "offset": 28,
+          "slot": "2",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 47307,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "slashCapBps",
+          "offset": 30,
+          "slot": "2",
+          "type": "t_uint16"
+        }
+      ]
+    },
+    "t_struct(VerifierKey)47704_storage": {
+      "encoding": "inplace",
+      "label": "struct X402Config.VerifierKey",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 47691,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "registeredAt",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47694,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "expiresAt",
+          "offset": 8,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47697,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "revokedAt",
+          "offset": 16,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 47700,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "registered",
+          "offset": 24,
+          "slot": "0",
+          "type": "t_bool"
+        },
+        {
+          "astId": 47703,
+          "contract": "src/X402Config.sol:X402Config",
+          "label": "revoked",
+          "offset": 25,
+          "slot": "0",
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_uint16": {
+      "encoding": "inplace",
+      "label": "uint16",
+      "numberOfBytes": "2"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "t_uint64": {
+      "encoding": "inplace",
+      "label": "uint64",
+      "numberOfBytes": "8"
+    }
+  }
+}

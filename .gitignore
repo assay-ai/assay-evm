@@ -1,0 +1,19 @@
+# Foundry
+out/
+cache/
+broadcast/
+
+# Environment files (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# Keys
+*.key
+keystore/
+.keys/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

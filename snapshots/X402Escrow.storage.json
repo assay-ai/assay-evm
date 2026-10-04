@@ -1,0 +1,242 @@
+{
+  "storage": [
+    {
+      "astId": 42153,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "_nameFallback",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_string_storage"
+    },
+    {
+      "astId": 42155,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "_versionFallback",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_string_storage"
+    },
+    {
+      "astId": 41049,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "_status",
+      "offset": 0,
+      "slot": "2",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 48048,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "CONFIG",
+      "offset": 0,
+      "slot": "3",
+      "type": "t_contract(IX402Config)51217"
+    },
+    {
+      "astId": 48051,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "STAKE",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_contract(IX402StakeView)51228"
+    },
+    {
+      "astId": 48054,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "ASSET",
+      "offset": 0,
+      "slot": "5",
+      "type": "t_contract(IERC20)40258"
+    },
+    {
+      "astId": 48056,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "PERMIT2",
+      "offset": 0,
+      "slot": "6",
+      "type": "t_address"
+    },
+    {
+      "astId": 48062,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "escrows",
+      "offset": 0,
+      "slot": "7",
+      "type": "t_mapping(t_address,t_struct(Escrow)48044_storage)"
+    },
+    {
+      "astId": 48065,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "totalEscrowed",
+      "offset": 0,
+      "slot": "8",
+      "type": "t_uint128"
+    },
+    {
+      "astId": 49361,
+      "contract": "src/X402Escrow.sol:X402Escrow",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "9",
+      "type": "t_array(t_uint256)50_storage"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_uint256)50_storage": {
+      "encoding": "inplace",
+      "label": "uint256[50]",
+      "numberOfBytes": "1600",
+      "base": "t_uint256"
+    },
+    "t_contract(IERC20)40258": {
+      "encoding": "inplace",
+      "label": "contract IERC20",
+      "numberOfBytes": "20"
+    },
+    "t_contract(IX402Config)51217": {
+      "encoding": "inplace",
+      "label": "contract IX402Config",
+      "numberOfBytes": "20"
+    },
+    "t_contract(IX402StakeView)51228": {
+      "encoding": "inplace",
+      "label": "contract IX402StakeView",
+      "numberOfBytes": "20"
+    },
+    "t_mapping(t_address,t_struct(Escrow)48044_storage)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => struct X402Escrow.Escrow)",
+      "numberOfBytes": "32",
+      "value": "t_struct(Escrow)48044_storage"
+    },
+    "t_string_storage": {
+      "encoding": "bytes",
+      "label": "string",
+      "numberOfBytes": "32"
+    },
+    "t_struct(Escrow)48044_storage": {
+      "encoding": "inplace",
+      "label": "struct X402Escrow.Escrow",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 48021,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "balance",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint128"
+        },
+        {
+          "astId": 48023,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "seqHigh",
+          "offset": 16,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48025,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "authNonce",
+          "offset": 24,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48027,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "maxVoucherAmount",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48029,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "maxPerWindow",
+          "offset": 8,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48031,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "spentInWindow",
+          "offset": 16,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48033,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "windowStartedAt",
+          "offset": 24,
+          "slot": "1",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48035,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "withdrawRequested",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48037,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "withdrawAvailableAt",
+          "offset": 8,
+          "slot": "2",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 48039,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "totalRedeemed",
+          "offset": 16,
+          "slot": "2",
+          "type": "t_uint128"
+        },
+        {
+          "astId": 48041,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "totalWithdrawn",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint128"
+        },
+        {
+          "astId": 48043,
+          "contract": "src/X402Escrow.sol:X402Escrow",
+          "label": "totalFunded",
+          "offset": 16,
+          "slot": "3",
+          "type": "t_uint128"
+        }
+      ]
+    },
+    "t_uint128": {
+      "encoding": "inplace",
+      "label": "uint128",
+      "numberOfBytes": "16"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "t_uint64": {
+      "encoding": "inplace",
+      "label": "uint64",
+      "numberOfBytes": "8"
+    }
+  }
+}
