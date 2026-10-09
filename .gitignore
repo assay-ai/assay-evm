@@ -2,6 +2,7 @@
 out/
 cache/
 broadcast/
+deployments/
 
 # Environment files (never commit secrets)
 .env
