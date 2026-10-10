@@ -104,7 +104,7 @@ on both chains, from `ArbGasInfo.getGasAccountingParams()`. The worst measured 6
 
 | variable | 46630 | 4663 |
 |---|---|---|
-| `USDG_ADDRESS` | `0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec` | **operator-supplied. Not derivable. Not the testnet address.** |
+| `USDG_ADDRESS` | **operator-supplied**: the 6-decimal settlement token, e.g. a mock USD you deployed | **operator-supplied. Not derivable. Not the testnet address.** |
 | `PERMIT2_ADDRESS` | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | same (18,306 chars of code measured on both) |
 | `ADMIN_ADDRESS` | **a Ledger address** | **a Ledger address** |
 | `TREASURY_ADDRESS` | a Ledger EOA | a **single-signer Ledger EOA** (multisig planned) |
