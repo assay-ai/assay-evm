@@ -2,13 +2,13 @@
 pragma solidity 0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {X402Config} from "../../src/X402Config.sol";
-import {X402Escrow} from "../../src/X402Escrow.sol";
-import {X402Stake} from "../../src/X402Stake.sol";
+import {X402Config} from "../src/X402Config.sol";
+import {X402Escrow} from "../src/X402Escrow.sol";
+import {X402Stake} from "../src/X402Stake.sol";
 import {
     Voucher, SlashAttestation, ParamSet, ResponseClass, SlashStatus
-} from "../../src/Types.sol";
-import {Constants} from "../../src/Constants.sol";
+} from "../src/Types.sol";
+import {Constants} from "../src/Constants.sol";
 import {
     ProgramPaused,
     NotAdmin,
@@ -22,9 +22,9 @@ import {
     UnbondingPeriodNotElapsed,
     SlashNotYetExecutable,
     SlashExecutionWindowClosed
-} from "../../src/Errors.sol";
-import {MockUSDG} from "../../test/helpers/MockUSDG.sol";
-import {VoucherSigner} from "../../test/helpers/VoucherSigner.sol";
+} from "../src/Errors.sol";
+import {MockUSDG} from "../test/helpers/MockUSDG.sol";
+import {VoucherSigner} from "../test/helpers/VoucherSigner.sol";
 
 /// Testnet end-to-end exercise of a deployment, in three phases chosen by `E2E_PHASE`:
 ///
