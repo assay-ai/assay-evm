@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {MockUSDG} from "../../test/helpers/MockUSDG.sol";
+import {MockUSDG} from "../test/helpers/MockUSDG.sol";
 
 /// Testnet only: deploys the 6-decimal `MockUSDG` used as the settlement token on 46630.
 /// Anyone can mint it; never point a mainnet deployment at it.
