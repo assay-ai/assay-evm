@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.24;
 
-import {Voucher, SlashAttestation, SetLimits, RequestWithdraw, ParamSet} from "../src/Types.sol";
+import {
+    Voucher,
+    SlashAttestation,
+    SetLimits,
+    RequestWithdraw,
+    AuthorizeDelegate,
+    RevokeDelegate,
+    ParamSet
+} from "../src/Types.sol";
 
 /// Probes that exist so the compiler will describe the EIP-712 structs back to us.
 ///
@@ -50,6 +58,18 @@ contract RequestWithdrawAbiProbe {
 /// `uint128` encodes identically while moving `_params` from 3 slots to 4 and `__gap` from slot 4
 /// to slot 5 — measured, 56 of 56 tests green. The compiled ABI carries the width, so this probe
 /// is how the gate gets to see it.
+contract AuthorizeDelegateAbiProbe {
+    function probe(AuthorizeDelegate calldata a) external pure returns (uint256) {
+        return a.nonce;
+    }
+}
+
+contract RevokeDelegateAbiProbe {
+    function probe(RevokeDelegate calldata r) external pure returns (uint256) {
+        return r.nonce;
+    }
+}
+
 contract ParamSetAbiProbe {
     function probe(ParamSet calldata p) external pure returns (uint256) {
         return p.minimumStake;

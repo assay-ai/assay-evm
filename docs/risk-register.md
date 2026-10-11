@@ -1,6 +1,6 @@
 # Risk register
 
-Thirteen entries. Each says what it is, who it affects, and **what the contract does not do about
+Fourteen entries. Each says what it is, who it affects, and **what the contract does not do about
 it** — because the value of this page is the last column. A risk with a mitigation is engineering;
 a risk that is disclosed and accepted is a decision, and the decisions are what a reader needs to
 find here rather than in a commit message.
@@ -270,3 +270,36 @@ that neither chain holds.
 named **backend requirement** — see `docs/gas.md` § "The operational rule", which now carries it beside
 the batch pre-validation rule. Cost if it is skipped: one voucher's `amount` per affected call,
 absorbed by the platform or the provider, exactly as a `VoucherTooOld` is (entry 1).
+
+---
+
+## 14. A payer can make in-flight vouchers unredeemable at once — revoking a delegate, or lowering a limit
+
+**Who it affects:** the platform (and, through it, the provider), never the payer.
+
+A delegate-signed voucher is judged at the REDEMPTION block: `_voucherAuthority` refuses a revoked
+delegate (`DelegateIsRevoked`) or a lapsed one (`DelegateIsExpired`) whenever the voucher was signed.
+So a payer whose agent has just been served calls can revoke the delegate — relayed, so at no gas
+cost — and every voucher of that agent not yet redeemed becomes unredeemable after the provider
+served it. The same is true of lowering the delegate's caps, and it is ALREADY true of the escrow's
+own `setLimits`, which takes effect immediately and has done since the first deployment. The
+amount is bounded by what was served and not yet redeemed (the redemption job runs every minute),
+but it can be repeated.
+
+**Unlike §13 there is no delay sized to make it safe.** The withdrawal clock exists for exactly this;
+revocation deliberately has none, because a payer revoking a key they believe is compromised must
+stop it now, and the `/agents` screen promises that ("it can no longer sign payments").
+
+**The alternative considered and not taken (2026-10-12):** record `revokedAt` (and a lowered-cap
+instant) and keep honouring vouchers with `issuedAt < revokedAt`. It closes this exposure only by
+trusting the redeemer — pinned to the platform — for the ~35 minutes a voucher stays redeemable,
+and `issuedAt` is chosen by the very key being revoked; a compromised delegate key together with a
+compromised platform could then spend for that window after the payer said stop. That trade
+belongs to a product decision, not to this upgrade.
+
+**What the contract does not do:** honour anything signed before a revocation or a lowered limit.
+**What the backend does:** it reads the delegation fresh for every call (no cache), requires the
+delegation to outlive the voucher's whole redeemable life (`validUntil >= expiresAt + 1800`), and
+treats `DelegateIsRevoked` / `DelegateIsExpired` as terminal so they are never re-broadcast. The
+residual is the platform's, like §13, and it is visible: every unredeemable voucher raises the
+`voucher_unredeemable` alert.

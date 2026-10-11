@@ -147,6 +147,26 @@ library Constants {
     /// and that limit does not exist here, so the bound has to be written down.
     uint256 internal constant MAX_REDEEM_BATCH = 64;
 
+    /// The longest horizon a payer may give a voucher DELEGATE in one authorisation. A delegate
+    /// key lives on a machine the payer does not watch, so its authority must lapse on its own;
+    /// renewing is one more signature. No Anchor counterpart — delegation is EVM only.
+    uint64 internal constant MAX_DELEGATION_LIFETIME_SECONDS = 365 * 86_400;
+
+    /// How many delegates one payer may hold at once (revoking frees a place). It bounds
+    /// `delegatesOf`, which an off-chain reader enumerates in one call, so it is a bound on a
+    /// view's size rather than on anybody's money. No Anchor counterpart.
+    uint256 internal constant MAX_DELEGATES_PER_PAYER = 16;
+
+    /// The gas an EIP-1271 wallet's `isValidSignature` may use inside a redemption. Generous for
+    /// real wallets (a Safe or a Kernel-style validator answers in tens of thousands), and a hard
+    /// bound on what one wallet can cost the redeemer — see `X402Escrow._isValidERC1271`.
+    uint256 internal constant ERC1271_GAS_LIMIT = 150_000;
+
+    /// What must still be left after the wallet's capped call for the redemption to finish
+    /// refusing or paying — so the check refuses to START without it rather than letting a short
+    /// gas limit turn into a false `SignerIsNotPayer`.
+    uint256 internal constant ERC1271_GAS_RESERVE = 10_000;
+
     /// EIP-2's low-s ceiling, `floor(secp256k1n / 2)`. Enforced on every recover: without
     /// it every signature has a second valid encoding, and any structure keyed by a signature's
     /// bytes has a hole in it. No Anchor counterpart — ed25519 is not malleable this way.

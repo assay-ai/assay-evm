@@ -9,7 +9,9 @@ import {
     VOUCHER_TYPEHASH,
     SLASH_ATTESTATION_TYPEHASH,
     SET_LIMITS_TYPEHASH,
-    REQUEST_WITHDRAW_TYPEHASH
+    REQUEST_WITHDRAW_TYPEHASH,
+    AUTHORIZE_DELEGATE_TYPEHASH,
+    REVOKE_DELEGATE_TYPEHASH
 } from "../../src/Types.sol";
 
 /// `sig.length != 65` in [`VoucherSigner.malleate`]. A named error rather than
@@ -106,6 +108,47 @@ library VoucherSigner {
     /// both sides at once and every test would stay green. The eight `abi.encode` arguments
     /// below and the eight in `Attestation712.hashAttestation` are two spellings of one type
     /// string, and `test/Types.t.sol` pins the string itself against the compiled struct.
+    function signAuthorizeDelegate(
+        uint256 pk,
+        bytes32 domainSeparator,
+        address payer,
+        address delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil,
+        uint64 nonce,
+        uint64 deadline
+    ) internal pure returns (bytes memory) {
+        bytes32 sh = keccak256(
+            abi.encode(
+                AUTHORIZE_DELEGATE_TYPEHASH,
+                payer,
+                delegate,
+                maxVoucherAmount,
+                maxPerWindow,
+                validUntil,
+                nonce,
+                deadline
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest(domainSeparator, sh));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function signRevokeDelegate(
+        uint256 pk,
+        bytes32 domainSeparator,
+        address payer,
+        address delegate,
+        uint64 nonce,
+        uint64 deadline
+    ) internal pure returns (bytes memory) {
+        bytes32 sh =
+            keccak256(abi.encode(REVOKE_DELEGATE_TYPEHASH, payer, delegate, nonce, deadline));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest(domainSeparator, sh));
+        return abi.encodePacked(r, s, v);
+    }
+
     function signAttestation(uint256 pk, bytes32 domainSeparator, SlashAttestation memory a)
         internal
         pure

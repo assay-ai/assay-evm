@@ -22,8 +22,41 @@ import "../Errors.sol";
 /// `test_recoveryHappensAtExactlyOneCallSiteInSrc` follows the body: this file is now the one
 /// `src/` file allowed to contain a recovery call site, and the count is still exactly one.
 library Sig {
+    /// Why a signature did not recover, in guard order. `None` means it did.
+    enum Refusal {
+        None,
+        Length,
+        Malleable,
+        V,
+        Invalid
+    }
+
+    /// The strict form: every refusal reverts with its own name. This is the one every EOA
+    /// path uses, and its behaviour is unchanged by the delegation work.
     function recover(bytes32 digest, bytes calldata sig) internal pure returns (address) {
-        if (sig.length != 65) revert InvalidSignature();
+        (address signer, Refusal why) = check(digest, sig);
+        if (why == Refusal.Length) revert InvalidSignature();
+        if (why == Refusal.Malleable) revert MalleableSignature();
+        if (why == Refusal.V) revert BadSignatureV();
+        if (why == Refusal.Invalid) revert InvalidSignature();
+        return signer;
+    }
+
+    /// The lenient form: `address(0)` on any refusal, never a revert. It exists for exactly one
+    /// caller — `X402Escrow`'s voucher check when the PAYER HAS CODE. Such a payer may answer
+    /// through EIP-1271 with a signature that is not a 65-byte ECDSA one at all (a Safe's
+    /// `v = 0` contract signature, a passkey blob), so a malformed ECDSA encoding must fall
+    /// through to the wallet instead of ending the check. The four guards are the same guards:
+    /// a signature this returns an address for is one [`recover`] returns the same address for.
+    function tryRecover(bytes32 digest, bytes calldata sig) internal pure returns (address) {
+        (address signer, Refusal why) = check(digest, sig);
+        return why == Refusal.None ? signer : address(0);
+    }
+
+    /// The four guards and the one recovery call site, shared by both forms above so they
+    /// cannot disagree about what a valid signature is.
+    function check(bytes32 digest, bytes calldata sig) private pure returns (address, Refusal) {
+        if (sig.length != 65) return (address(0), Refusal.Length);
 
         bytes32 r;
         bytes32 s;
@@ -33,11 +66,13 @@ library Sig {
             s := calldataload(add(sig.offset, 0x20))
             v := byte(0, calldataload(add(sig.offset, 0x40)))
         }
-        if (uint256(s) > Constants.SECP256K1_HALF_N) revert MalleableSignature();
-        if (v != 27 && v != 28) revert BadSignatureV();
+        if (uint256(s) > Constants.SECP256K1_HALF_N) return (address(0), Refusal.Malleable);
+        if (v != 27 && v != 28) return (address(0), Refusal.V);
 
         (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, v, r, s);
-        if (err != ECDSA.RecoverError.NoError || signer == address(0)) revert InvalidSignature();
-        return signer;
+        if (err != ECDSA.RecoverError.NoError || signer == address(0)) {
+            return (address(0), Refusal.Invalid);
+        }
+        return (signer, Refusal.None);
     }
 }

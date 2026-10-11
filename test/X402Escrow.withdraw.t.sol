@@ -580,13 +580,19 @@ contract X402EscrowWithdrawTest is Fixture {
         // what catches a relayed door spelled under some other name.
         assertEq(_count(src, "function withdrawBySig"), 0, "a relayed withdraw exists in src/");
 
-        string[24] memory expected = [
+        // Agent delegation added six, none of which moves money out of an escrow except through
+        // a voucher: two views, and authorise/revoke in direct and relayed form.
+        string[30] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
             "PERMIT2()",
             "STAKE()",
             "UPGRADE_INTERFACE_VERSION()",
+            "authorizeDelegate(address,uint64,uint64,uint64)",
+            "authorizeDelegateBySig(address,address,uint64,uint64,uint64,uint64,uint64,bytes)",
+            "delegatesOf(address)",
+            "delegationOf(address,address)",
             "deposit(uint64)",
             "depositFor(address,uint64)",
             "depositWithPermit2(address,uint64,uint256,uint256,bytes)",
@@ -599,18 +605,20 @@ contract X402EscrowWithdrawTest is Fixture {
             "redeemVoucherBatch((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64)[],bytes[])",
             "requestWithdraw(uint64)",
             "requestWithdrawBySig(address,uint64,uint64,uint64,bytes)",
+            "revokeDelegate(address)",
+            "revokeDelegateBySig(address,address,uint64,uint64,bytes)",
             "setLimits(uint64,uint64)",
             "setLimitsBySig(address,uint64,uint64,uint64,uint64,bytes)",
             "totalEscrowed()",
             "upgradeToAndCall(address,bytes)",
             "withdraw()",
-            "" // the 24th slot is deliberately empty: a 24th function makes this test red
+            "" // the 30th slot is deliberately empty: a 30th function makes this test red
         ];
 
         string memory artifact =
             vm.readFile(string.concat(vm.projectRoot(), "/out/X402Escrow.sol/X402Escrow.json"));
         string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 23, "X402Escrow's external surface changed size");
+        assertEq(keys.length, 29, "X402Escrow's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;

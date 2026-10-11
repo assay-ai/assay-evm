@@ -9,6 +9,8 @@ import {
     SLASH_ATTESTATION_TYPEHASH,
     SET_LIMITS_TYPEHASH,
     REQUEST_WITHDRAW_TYPEHASH,
+    AUTHORIZE_DELEGATE_TYPEHASH,
+    REVOKE_DELEGATE_TYPEHASH,
     SlashStatus,
     ResponseClass,
     CancelReason,
@@ -16,6 +18,8 @@ import {
     SlashAttestation,
     SetLimits,
     RequestWithdraw,
+    AuthorizeDelegate,
+    RevokeDelegate,
     ParamSet
 } from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
@@ -24,6 +28,8 @@ import {
     SlashAttestationAbiProbe,
     SetLimitsAbiProbe,
     RequestWithdrawAbiProbe,
+    AuthorizeDelegateAbiProbe,
+    RevokeDelegateAbiProbe,
     ParamSetAbiProbe
 } from "./TypeAbiProbe.sol";
 
@@ -108,6 +114,8 @@ contract TypesTest is Test {
     SlashAttestationAbiProbe internal slashAttestationProbe;
     SetLimitsAbiProbe internal setLimitsProbe;
     RequestWithdrawAbiProbe internal requestWithdrawProbe;
+    AuthorizeDelegateAbiProbe internal authorizeDelegateProbe;
+    RevokeDelegateAbiProbe internal revokeDelegateProbe;
     ParamSetAbiProbe internal paramSetProbe;
 
     /// **Deploying the probes is not decoration — it is what makes the gate run at all.**
@@ -121,6 +129,8 @@ contract TypesTest is Test {
         slashAttestationProbe = new SlashAttestationAbiProbe();
         setLimitsProbe = new SetLimitsAbiProbe();
         requestWithdrawProbe = new RequestWithdrawAbiProbe();
+        authorizeDelegateProbe = new AuthorizeDelegateAbiProbe();
+        revokeDelegateProbe = new RevokeDelegateAbiProbe();
         paramSetProbe = new ParamSetAbiProbe();
     }
 
@@ -129,7 +139,7 @@ contract TypesTest is Test {
     /// probe fails the artifact read; adding one without a correct canonical string or pinned
     /// digest fails halves 2 and 3.
     function _registry() internal pure returns (GatedType[] memory g) {
-        g = new GatedType[](4);
+        g = new GatedType[](6);
         g[0] = GatedType({
             constantName: "VOUCHER_TYPEHASH",
             probeContract: "VoucherAbiProbe",
@@ -160,6 +170,21 @@ contract TypesTest is Test {
             typehash: REQUEST_WITHDRAW_TYPEHASH,
             canonical: "RequestWithdraw(address buyer,uint64 amount,uint64 nonce,uint64 deadline)",
             pinnedWire: 0xc8cc528b1ce6b0f90c78a68b0a6e8bf221eaae4e39d597faa197eb0b950f5504
+        });
+        g[4] = GatedType({
+            constantName: "AUTHORIZE_DELEGATE_TYPEHASH",
+            probeContract: "AuthorizeDelegateAbiProbe",
+            typehash: AUTHORIZE_DELEGATE_TYPEHASH,
+            canonical: "AuthorizeDelegate(address payer,address delegate,uint64 maxVoucherAmount,"
+                "uint64 maxPerWindow,uint64 validUntil,uint64 nonce,uint64 deadline)",
+            pinnedWire: 0x786954adebf8c05339e9845386e14cc57d1612df2dafbd44bfbb75458b56f3ed
+        });
+        g[5] = GatedType({
+            constantName: "REVOKE_DELEGATE_TYPEHASH",
+            probeContract: "RevokeDelegateAbiProbe",
+            typehash: REVOKE_DELEGATE_TYPEHASH,
+            canonical: "RevokeDelegate(address payer,address delegate,uint64 nonce,uint64 deadline)",
+            pinnedWire: 0xb76fe89d3e35d0a6374de5a472a654e25b45926d78c088c444d137fcba8790bc
         });
     }
 
@@ -539,6 +564,25 @@ contract TypesTest is Test {
             RequestWithdraw({buyer: address(0xA11CE), amount: 9, nonce: 4, deadline: 400});
         assertEq(requestWithdrawProbe.probe(r), 4);
 
+        AuthorizeDelegate memory ad = AuthorizeDelegate({
+            payer: address(0xA11CE),
+            delegate: address(0xB0B),
+            maxVoucherAmount: 1,
+            maxPerWindow: 2,
+            validUntil: 3,
+            nonce: 5,
+            deadline: 400
+        });
+        assertEq(authorizeDelegateProbe.probe(ad), 5);
+
+        RevokeDelegate memory rd = RevokeDelegate({
+            payer: address(0xA11CE),
+            delegate: address(0xB0B),
+            nonce: 6,
+            deadline: 400
+        });
+        assertEq(revokeDelegateProbe.probe(rd), 6);
+
         // The artifacts the three typehash halves read must actually be on disk by now.
         GatedType[] memory g = _registry();
         for (uint256 i = 0; i < g.length; i++) {
@@ -547,6 +591,42 @@ contract TypesTest is Test {
                 string.concat("no artifact emitted for probe ", g[i].probeContract)
             );
         }
+    }
+
+    /// The positional check of `test_structsAbiEncodeInDeclarationOrder` for the two delegation
+    /// messages, in its own function so that one stays inside the stack.
+    function test_delegationStructsAbiEncodeInDeclarationOrder() public pure {
+        AuthorizeDelegate memory a = AuthorizeDelegate({
+            payer: address(0x1111),
+            delegate: address(0x2222),
+            maxVoucherAmount: 3,
+            maxPerWindow: 4,
+            validUntil: 5,
+            nonce: 6,
+            deadline: 7
+        });
+        (address p, address d, uint64 mva, uint64 mpw, uint64 vu, uint64 n, uint64 dl) =
+            abi.decode(abi.encode(a), (address, address, uint64, uint64, uint64, uint64, uint64));
+        assertEq(p, address(0x1111), "AuthorizeDelegate field 0");
+        assertEq(d, address(0x2222), "AuthorizeDelegate field 1");
+        assertEq(mva, 3, "AuthorizeDelegate field 2");
+        assertEq(mpw, 4, "AuthorizeDelegate field 3");
+        assertEq(vu, 5, "AuthorizeDelegate field 4");
+        assertEq(n, 6, "AuthorizeDelegate field 5");
+        assertEq(dl, 7, "AuthorizeDelegate field 6");
+
+        RevokeDelegate memory r = RevokeDelegate({
+            payer: address(0x1111),
+            delegate: address(0x2222),
+            nonce: 3,
+            deadline: 4
+        });
+        (address rp, address rd, uint64 rn, uint64 rdl) =
+            abi.decode(abi.encode(r), (address, address, uint64, uint64));
+        assertEq(rp, address(0x1111), "RevokeDelegate field 0");
+        assertEq(rd, address(0x2222), "RevokeDelegate field 1");
+        assertEq(rn, 3, "RevokeDelegate field 2");
+        assertEq(rdl, 4, "RevokeDelegate field 3");
     }
 
     // -------------------------------------------------------------------------------------

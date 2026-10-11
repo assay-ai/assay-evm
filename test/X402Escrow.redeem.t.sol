@@ -1013,6 +1013,10 @@ contract X402EscrowRedeemTest is Fixture {
         vm.assume(payer_ != address(escrow) && payer_ != address(usdg));
         vm.assume(payer_ != address(config) && payer_ != address(stake));
         vm.assume(payer_ != address(this) && payer_ != address(vm));
+        // A payer WITH code answers through EIP-1271 (agent delegation), where a malformed ECDSA
+        // encoding falls through to the wallet rather than reverting with its own name. The
+        // contract-payer half of this property is `X402Escrow.delegate.t.sol`'s.
+        vm.assume(payer_.code.length == 0);
         vm.assume(prov != address(escrow) && prov != address(usdg));
         amount = uint64(bound(amount, 1, 1_000_000));
 
@@ -1046,16 +1050,32 @@ contract X402EscrowRedeemTest is Fixture {
     /// deliberate edit is a red test that asks the editor to say so here; an `&&`-ed exemption is a
     /// red test that cannot be argued with. It is not a substitute for the behavioural tests and
     /// they are not a substitute for it.
+    ///
+    /// **Re-pinned deliberately for agent delegation.** The guard used to be one comparison
+    /// against `v.payer`. It is now `_voucherAuthority`, which accepts the payer's key, a delegate
+    /// the payer authorised on chain, or the payer's own EIP-1271 wallet, and raises
+    /// `SignerIsNotPayer` otherwise. What is pinned is that `_redeem` calls it unconditionally on
+    /// the voucher's own digest, that the payer comparison is its first test, and that nothing else
+    /// in the file raises the refusal. The behaviour is `test/X402Escrow.delegate.t.sol`'s.
     function test_theSignatureComparisonIsUnconditionalInTheSource() public view {
         string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Escrow.sol"));
 
         assertEq(
             _count(
                 src,
-                "        if (_recover(_hashTypedDataV4(Voucher712.hashVoucher(v)), sig) != v.payer) {\n            revert SignerIsNotPayer();\n        }\n"
+                "        address delegate =\n            _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);\n"
             ),
             1,
-            "the signature guard is not the exact unconditional comparison this test pins"
+            "_redeem does not call the voucher authority unconditionally on the voucher's digest"
+        );
+        assertEq(_count(src, "_voucherAuthority("), 2, "the authority has a second caller");
+        assertEq(
+            _count(
+                src,
+                "        address signer = Sig.tryRecover(digest, sig);\n        if (signer == payer) return address(0);\n"
+            ),
+            1,
+            "the payer's own key is not the first thing the authority tests"
         );
         assertEq(
             _count(src, "SignerIsNotPayer()"),

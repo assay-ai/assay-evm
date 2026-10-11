@@ -23,7 +23,8 @@ import "./Errors.sol";
 
 /// Buyer money. One contract holds every buyer's USDG in one pooled balance, with per-buyer
 /// accounting in storage. Money leaves through exactly two doors — `redeemVoucher`, which
-/// needs the buyer's EIP-712 signature over an exact amount for an exact request, and
+/// needs an EIP-712 voucher over an exact amount for an exact request, authorised by the buyer
+/// (its own key, a delegate key it authorised on chain within caps, or its EIP-1271 wallet), and
 /// `withdraw()`, which is msg.sender-only. There is no admin path beside them, and there is
 /// no `closeEscrow`: closing would reset `seqHigh` and replay every in-window voucher.
 ///
@@ -95,6 +96,26 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint128 totalFunded; //         ↑ EVM only — see the contract note above
     }
 
+    /// A payer's grant to one DELEGATE key: the delegate may sign vouchers on the payer's escrow,
+    /// and nothing else. Two slots. The caps are the delegate's own and are applied IN ADDITION
+    /// to the escrow's — a delegate-signed voucher must clear both — with its own rolling
+    /// window, decayed by the same [`Window.decay`] as the escrow's.
+    ///
+    /// `validUntil == 0` is "never authorised"; an authorisation always writes a future instant,
+    /// so the zero value of an unread entry is exactly that. `listPosition` is the 1-based index
+    /// in `delegateList[payer]`, `0` when the delegate is not listed (never authorised, or
+    /// revoked). The window counters survive a revocation and a re-authorisation, so revoking
+    /// and re-granting inside one window hands the delegate no fresh capacity.
+    struct Delegation {
+        uint64 maxVoucherAmount; //    slot 0
+        uint64 maxPerWindow; //         ↑
+        uint64 spentInWindow; //        ↑
+        uint64 windowStartedAt; //      ↑
+        uint64 validUntil; //          slot 1
+        uint32 listPosition; //         ↑
+        bool revoked; //                ↑
+    }
+
     /// These four were `immutable` in the pre-proxy draft of this design. Under D-1 they are
     /// ordinary storage, written once in `initialize` and never again — the standard,
     /// upgrade-safe shape. The UPPER_SNAKE_CASE names and the public getters are kept
@@ -118,6 +139,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// entitlements would disagree — a `balanceOf`-based assertion would then refuse *every*
     /// withdrawal rather than the one actually blocked.
     uint128 public totalEscrowed;
+
+    /// `payer → delegate → grant`. Appended for agent delegation: a new slot BEFORE `__gap`,
+    /// which shrank by exactly the two slots these two mappings take (D-7).
+    mapping(address => mapping(address => Delegation)) internal delegations;
+
+    /// The delegates a payer currently holds (authorised and not revoked; an expired one stays
+    /// until revoked), so an off-chain reader can enumerate them without scanning logs. Bounded
+    /// by `Constants.MAX_DELEGATES_PER_PAYER`.
+    mapping(address => address[]) internal delegateList;
 
     /// `events.rs::StakeDeposited` (`events.rs:61-69`) is the nearest analogue — the same
     /// `(funder, amount, running-total)` shape, because a buyer deposit and a provider stake
@@ -456,7 +486,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// advances `seqHigh`, so anyone who could land one could void every voucher a buyer had
     /// already served (`redeem_voucher.rs:19-24`).
     ///
-    /// **The whole authority over the money is the buyer's EIP-712 signature**, proved against
+    /// **The whole authority over the money is the buyer's authorisation of the EIP-712 voucher**
+    /// — its own signature, a delegate's within the caps the buyer set on chain, or its EIP-1271
+    /// wallet's answer (`_voucherAuthority`) — proved against
     /// `v.payer`, which is also the escrow's mapping key: the account spent and the key required
     /// name one party.
     ///
@@ -902,12 +934,12 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         if (v.seq == 0) revert VoucherSeqZero();
         if (v.seq <= e.seqHigh) revert VoucherSeqNotIncreasing();
 
-        // `redeem_voucher.rs:137-142`. The four recovery guards are [`_recover`]'s; the
-        // comparison against the SIGNED `v.payer` is this function's, and it is the whole
-        // authority over the money.
-        if (_recover(_hashTypedDataV4(Voucher712.hashVoucher(v)), sig) != v.payer) {
-            revert SignerIsNotPayer();
-        }
+        // `redeem_voucher.rs:137-142`, widened for delegation. [`_voucherAuthority`] is the whole
+        // authority over the money: the payer's key, a delegate the payer authorised, or the
+        // payer's own EIP-1271 wallet. It returns the delegate, or `address(0)` when the payer
+        // itself authorised the voucher.
+        address delegate =
+            _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);
 
         // `state.rs::admit_spend` (`state.rs:591-612`). A limit of `0` refuses everything, so an
         // unarmed escrow needs no separate branch.
@@ -915,6 +947,19 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint64 carried = Window.decay(e.spentInWindow, e.windowStartedAt, nowTs);
         uint256 spent = uint256(carried) + v.amount;
         if (spent > e.maxPerWindow) revert EscrowWindowLimitExceeded();
+
+        // A delegate-signed voucher clears the delegate's OWN caps as well as the escrow's. The
+        // storage reference is taken unconditionally (it reads nothing); it is only read and
+        // written when there is a delegate, and `delegations[payer][address(0)]` is never
+        // written because an authorisation refuses the zero address.
+        Delegation storage d = delegations[v.payer][delegate];
+        uint256 delegateSpent;
+        if (delegate != address(0)) {
+            if (v.amount > d.maxVoucherAmount) revert DelegateVoucherExceedsPerCallLimit();
+            delegateSpent =
+                uint256(Window.decay(d.spentInWindow, d.windowStartedAt, nowTs)) + v.amount;
+            if (delegateSpent > d.maxPerWindow) revert DelegateWindowLimitExceeded();
+        }
 
         // `redeem_voucher.rs:148-153` — being paid is the counterpart of being slashable.
         // `bonded` only: stake already asked back is not backing anybody's traffic
@@ -942,6 +987,12 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         e.windowStartedAt = nowTs > e.windowStartedAt ? nowTs : e.windowStartedAt;
         e.totalRedeemed += v.amount; // redeem_voucher.rs:206-209
         totalEscrowed -= v.amount; // the pooled solvency counter; `totalFunded` is NOT touched
+        uint64 delegateSpentAfter;
+        if (delegate != address(0)) {
+            delegateSpentAfter = Cast.toUint64(delegateSpent); // `<= d.maxPerWindow`, checked above
+            d.spentInWindow = delegateSpentAfter;
+            d.windowStartedAt = nowTs > d.windowStartedAt ? nowTs : d.windowStartedAt;
+        }
 
         (uint64 fee, uint64 providerAmount) = Fee.splitFee(v.amount, p.takeRateBps);
 
@@ -962,10 +1013,315 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
             p.takeRateBps,
             spentAfter
         );
+        if (delegate != address(0)) {
+            emit DelegateVoucherRedeemed(v.payer, delegate, v.seq, v.amount, delegateSpentAfter);
+        }
+    }
+
+    // --- voucher delegation ------------------------------------------------------------------
+
+    /// The voucher's authority, in the order x402 facilitators apply it off chain:
+    ///
+    ///   (a) an ECDSA signature by `payer` itself — unchanged;
+    ///   (b) an ECDSA signature by a DELEGATE that `payer` authorised here, not revoked and not
+    ///       past `validUntil` (its caps are [`_redeem`]'s to apply, beside the escrow's);
+    ///   (c) when `payer` has code, the payer's own EIP-1271 `isValidSignature(digest, sig)`
+    ///       answering `0x1626ba7e`, by [`_isValidERC1271`] (a capped STATICCALL, so
+    ///       the wallet cannot write state from inside a redemption).
+    ///
+    /// Returns the delegate for (b) and `address(0)` for (a) and (c).
+    ///
+    /// **For an account without code a malformed signature keeps the name it always had**
+    /// (`InvalidSignature`, `MalleableSignature`, `BadSignatureV`), raised by the strict recovery,
+    /// so the EOA rule is the old rule plus (b). An account WITH code (a contract wallet, or an
+    /// EIP-7702 account) falls through to its wallet instead, which may answer for a signature that
+    /// is not ECDSA-shaped at all.
+    ///
+    /// The refusal, when nothing authorises the voucher, is the most specific true one: a known
+    /// delegate that was revoked or has lapsed is named as such; anything else is
+    /// [`SignerIsNotPayer`].
+    ///
+    /// ERC-6492 (signatures of not-yet-deployed wallets) is deliberately NOT accepted: it needs
+    /// the redemption to deploy the wallet first, which is a state change and a call to an
+    /// arbitrary factory inside the money path. A counterfactual wallet deploys, then signs.
+    function _voucherAuthority(address payer, bytes32 digest, bytes calldata sig, uint64 nowTs)
+        internal
+        view
+        returns (address)
+    {
+        // (a) — first, and without touching the payer's account: the common case (the payer
+        // signed) must not pay a cold EXTCODESIZE (2,600 gas, EIP-2929) on every redemption.
+        address signer = Sig.tryRecover(digest, sig);
+        if (signer == payer) return address(0);
+
+        // An account without code has only ECDSA keys, so a signature that did not recover is
+        // refused here under the name its guard gives it — exactly as before delegation existed.
+        // `_recover` cannot return for such a signature: it applies the same four guards
+        // `tryRecover` just failed. The payer's code is read only on these refusal and EIP-1271
+        // paths, never when the payer or an active delegate signed.
+        if (signer == address(0) && payer.code.length == 0) _recover(digest, sig);
+
+        // (b)
+        uint8 refusal; // 0 SignerIsNotPayer, 1 DelegateIsRevoked, 2 DelegateIsExpired
+        if (signer != address(0)) {
+            Delegation storage d = delegations[payer][signer];
+            if (d.validUntil != 0) {
+                if (d.revoked) refusal = 1;
+                else if (nowTs > d.validUntil) refusal = 2;
+                else return signer;
+            }
+        }
+
+        // (c)
+        if (payer.code.length != 0 && _isValidERC1271(payer, digest, sig)) {
+            return address(0);
+        }
+
+        if (refusal == 1) revert DelegateIsRevoked();
+        if (refusal == 2) revert DelegateIsExpired();
+        revert SignerIsNotPayer();
+    }
+
+    /// The EIP-1271 call of (c): a STATICCALL (the wallet cannot write state from inside a
+    /// redemption), with two bounds OpenZeppelin's `SignatureChecker` does not have, because the
+    /// wallet is code the payer controls and the redemption is the platform's transaction:
+    ///
+    /// - **a gas cap**, `Constants.ERC1271_GAS_LIMIT`. Uncapped, the wallet receives 63/64 of all
+    ///   remaining gas and can burn it — reverting a whole `redeemVoucherBatch`, honest payers'
+    ///   vouchers with it, at the redeemer's expense, from a wallet that answered honestly when it
+    ///   was checked before the call was served;
+    /// - **at most 32 bytes of return data copied.** `bytes memory result` copies everything the
+    ///   wallet returns, and a wallet can return enough to make the copy itself run out of gas.
+    ///
+    /// The answer is valid only if the call succeeded, returned at least a full word, and that word
+    /// is exactly `bytes32(0x1626ba7e)` — the check `SignatureChecker` makes.
+    ///
+    /// **The cap must not become a false refusal.** Under EIP-150 a callee receives at most 63/64
+    /// of what is left, so with too little gas a correct wallet would fail and the voucher would be
+    /// refused as `SignerIsNotPayer` — a terminal answer — for a reason that is the caller's. So the
+    /// check refuses to start without enough gas for the full cap, with `WalletCheckUnderfunded`,
+    /// which reverts the transaction and says what is wrong.
+    function _isValidERC1271(address wallet, bytes32 digest, bytes calldata sig)
+        internal
+        view
+        returns (bool valid)
+    {
+        uint256 cap = Constants.ERC1271_GAS_LIMIT;
+        if (gasleft() < cap + cap / 63 + Constants.ERC1271_GAS_RESERVE) {
+            revert WalletCheckUnderfunded();
+        }
+        bytes memory data = abi.encodeWithSelector(ERC1271_MAGIC_VALUE, digest, sig);
+        bytes4 magic = ERC1271_MAGIC_VALUE;
+        assembly ("memory-safe") {
+            // Return data goes to scratch space (0x00-0x20): never more than one word is copied.
+            let success := staticcall(cap, wallet, add(data, 0x20), mload(data), 0x00, 0x20)
+            valid := and(success, and(gt(returndatasize(), 0x1f), eq(mload(0x00), magic)))
+        }
+    }
+
+    /// EIP-1271's magic value, which is also the `isValidSignature(bytes32,bytes)` selector.
+    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
+    event DelegateAuthorized(
+        address indexed payer,
+        address indexed delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil
+    );
+    /// A standing grant's caps or horizon changed. Separate from [`DelegateAuthorized`] so an
+    /// indexer can tell a new grant from an update without keeping state of its own.
+    event DelegateUpdated(
+        address indexed payer,
+        address indexed delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil
+    );
+    event DelegateRevoked(address indexed payer, address indexed delegate);
+
+    /// Emitted beside [`VoucherRedeemed`] (whose shape is unchanged, so no reader of it breaks)
+    /// when the voucher's authority was a delegate. `spentInWindow` is the delegate's own
+    /// running counter after this redemption.
+    event DelegateVoucherRedeemed(
+        address indexed payer,
+        address indexed delegate,
+        uint64 seq,
+        uint64 amount,
+        uint64 spentInWindow
+    );
+
+    function delegationOf(address payer, address delegate)
+        external
+        view
+        returns (Delegation memory)
+    {
+        return delegations[payer][delegate];
+    }
+
+    function delegatesOf(address payer) external view returns (address[] memory) {
+        return delegateList[payer];
+    }
+
+    /// The payer grants `delegate` the right to sign vouchers on `msg.sender`'s escrow, within
+    /// `maxVoucherAmount` per voucher and `maxPerWindow` per rolling window, until `validUntil`.
+    /// Writing again over a standing grant replaces its caps and horizon (the window counters
+    /// carry over).
+    ///
+    /// # What a delegate can and cannot do
+    ///
+    /// It can sign a VOUCHER, which [`_voucherAuthority`] accepts in place of the payer's. Every
+    /// other door is closed to it by construction: `withdraw`, `requestWithdraw` and `setLimits`
+    /// read `msg.sender`, and every `…BySig` door — including these delegation doors — recovers
+    /// to the PAYER through [`_consumeAuth`], never to a delegate. A delegate therefore cannot
+    /// take money out, move a ceiling, or authorise anybody, and its worst case is spending the
+    /// escrow to providers within its own caps until it is revoked or lapses.
+    ///
+    /// # Why the nonce is the escrow's shared `authNonce`, and why this direct door consumes it
+    ///
+    /// With a SEPARATE delegation nonce, an `AuthorizeDelegate` signature the relayer withheld
+    /// could be landed AFTER the payer's revocation and switch the delegate back on. With the
+    /// shared nonce every payer decision — relayed or direct — consumes `authNonce`, so a
+    /// signature collected before a later decision is dead, and two signatures made at the same
+    /// nonce are alternatives (landing either voids the other). That is why `authorizeDelegate`
+    /// and `revokeDelegate` advance `authNonce` although they take no signature: a direct
+    /// revocation must kill a withheld relayed authorisation. The cost is that a `SetLimits`
+    /// signature still in flight dies too and has to be signed again.
+    ///
+    /// Not pause-gated: it moves no money, and a payer must always be able to change who may
+    /// sign for them.
+    function authorizeDelegate(
+        address delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil
+    ) external nonReentrant {
+        escrows[msg.sender].authNonce += 1;
+        _authorizeDelegate(msg.sender, delegate, maxVoucherAmount, maxPerWindow, validUntil);
+    }
+
+    /// The relayed twin of [`authorizeDelegate`], so a payer without gas (an embedded wallet)
+    /// signs once and the platform's relayer submits. The relayer can carry exactly the message
+    /// the payer signed, once, before `deadline`; it cannot change the delegate, the caps or the
+    /// horizon, because they are inside the signed struct.
+    function authorizeDelegateBySig(
+        address payer,
+        address delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil,
+        uint64 nonce,
+        uint64 deadline,
+        bytes calldata sig
+    ) external nonReentrant {
+        _consumeAuth(
+            payer,
+            Voucher712.hashAuthorizeDelegate(
+                payer, delegate, maxVoucherAmount, maxPerWindow, validUntil, nonce, deadline
+            ),
+            nonce,
+            deadline,
+            sig
+        );
+        _authorizeDelegate(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
+    }
+
+    /// Ends a delegate's authority immediately: every voucher it signed that has not yet been
+    /// redeemed is refused from the next block. Like `requestWithdraw`, a voucher signed BEFORE
+    /// the revocation and redeemed after it is the platform's risk, not the payer's. Consumes
+    /// `authNonce` (see [`authorizeDelegate`]).
+    function revokeDelegate(address delegate) external nonReentrant {
+        escrows[msg.sender].authNonce += 1;
+        _revokeDelegate(msg.sender, delegate);
+    }
+
+    /// The relayed twin of [`revokeDelegate`] — the safety direction, so it must never be
+    /// blocked by the payer not holding gas.
+    function revokeDelegateBySig(
+        address payer,
+        address delegate,
+        uint64 nonce,
+        uint64 deadline,
+        bytes calldata sig
+    ) external nonReentrant {
+        _consumeAuth(
+            payer,
+            Voucher712.hashRevokeDelegate(payer, delegate, nonce, deadline),
+            nonce,
+            deadline,
+            sig
+        );
+        _revokeDelegate(payer, delegate);
+    }
+
+    function _authorizeDelegate(
+        address payer,
+        address delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil
+    ) internal {
+        if (delegate == address(0)) revert ZeroAddress();
+        if (delegate == payer) revert DelegateIsPayer();
+        if (maxVoucherAmount == 0 || maxPerWindow == 0 || maxVoucherAmount > maxPerWindow) {
+            revert DelegateCapsInvalid();
+        }
+        Escrow storage e = escrows[payer];
+        if (maxVoucherAmount > e.maxVoucherAmount || maxPerWindow > e.maxPerWindow) {
+            revert DelegateCapsExceedEscrowLimits();
+        }
+        uint64 nowTs = Cast.toUint64(block.timestamp);
+        if (validUntil <= nowTs || validUntil - nowTs > Constants.MAX_DELEGATION_LIFETIME_SECONDS) {
+            revert DelegateValidUntilInvalid();
+        }
+
+        Delegation storage d = delegations[payer][delegate];
+        if (
+            d.listPosition != 0 && d.maxVoucherAmount == maxVoucherAmount
+                && d.maxPerWindow == maxPerWindow && d.validUntil == validUntil
+        ) revert DelegationUnchanged();
+
+        bool isNew = d.listPosition == 0;
+        if (isNew) {
+            address[] storage list = delegateList[payer];
+            if (list.length >= Constants.MAX_DELEGATES_PER_PAYER) revert TooManyDelegates();
+            list.push(delegate);
+            // `list.length <= MAX_DELEGATES_PER_PAYER`, a small constant.
+            d.listPosition = uint32(list.length);
+        }
+        d.maxVoucherAmount = maxVoucherAmount;
+        d.maxPerWindow = maxPerWindow;
+        d.validUntil = validUntil;
+        d.revoked = false;
+        if (isNew) {
+            emit DelegateAuthorized(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
+        } else {
+            emit DelegateUpdated(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
+        }
+    }
+
+    function _revokeDelegate(address payer, address delegate) internal {
+        Delegation storage d = delegations[payer][delegate];
+        uint256 pos = d.listPosition;
+        if (pos == 0) revert DelegateNotActive();
+
+        // Swap-and-pop, keeping every moved entry's position true.
+        address[] storage list = delegateList[payer];
+        uint256 last = list.length;
+        if (pos != last) {
+            address moved = list[last - 1];
+            list[pos - 1] = moved;
+            delegations[payer][moved].listPosition = uint32(pos);
+        }
+        list.pop();
+
+        d.listPosition = 0;
+        d.revoked = true;
+        emit DelegateRevoked(payer, delegate);
     }
 
     /// The append budget the D-7 upgrade-safety gate spends. A new field is added ABOVE this
     /// line and the array shrinks by exactly the slots it consumes — the script refuses
     /// anything else.
-    uint256[50] private __gap;
+    uint256[48] private __gap;
 }

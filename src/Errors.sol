@@ -16,7 +16,7 @@ pragma solidity 0.8.24;
 /// # The accounting against `error.rs`, in full
 ///
 /// `error.rs` declares **55** `ErrorCode` variants. **50** of them appear below under the same
-/// name, and **21** errors below have no Anchor counterpart at all. The remaining **five** are
+/// name, and **33** errors below have no Anchor counterpart at all. The remaining **five** are
 /// listed here, every one of them, so that "the port is complete" is a claim a reader can check
 /// rather than take. (The counts are the output of a set difference over the two files, not an
 /// estimate; if you change either file, redo it rather than adjusting these by one.)
@@ -58,8 +58,8 @@ pragma solidity 0.8.24;
 /// this position, so the rename is by design rather than drift. `InvalidSignature`,
 /// `MalleableSignature` and `BadSignatureV` cover the cases where recovery itself fails.
 ///
-/// The 21 entries below with no Anchor counterpart are EIP-712 and ERC-20 conditions Solana does
-/// not have: signature malleability, `v` normalisation, deadline/nonce replay, fee-on-transfer
+/// The 33 entries below with no Anchor counterpart are EIP-712 and ERC-20 conditions Solana does
+/// not have, plus the twelve of voucher delegation, which Solana does not have either: signature malleability, `v` normalisation, deadline/nonce replay, fee-on-transfer
 /// tokens, the `uint256` → `uint64` narrowing, the batch bound the EVM has to state explicitly, and
 /// [`WithdrawDelayTooShort`], which is a Rust `const _: () = assert!(…)` that Solidity can only
 /// spell at runtime.
@@ -177,6 +177,36 @@ error ProviderBelowMinimumStake();
 error BatchTooLarge();
 error BatchLengthMismatch();
 error EmptyBatch();
+
+// --- voucher delegation (EVM only) -----------------------------------------------
+/// The delegate named in an authorisation is the payer itself — the payer's own key already
+/// signs, so the record would grant nothing and would read as a second authority.
+error DelegateIsPayer();
+/// A delegate cap of `0`, or a per-call cap above the per-window cap.
+error DelegateCapsInvalid();
+/// A delegate cap above the escrow's own ceiling at the moment of authorisation. The escrow
+/// ceilings keep applying at redemption too; this refuses a record that promises more.
+error DelegateCapsExceedEscrowLimits();
+/// `validUntil` not in the future, or further out than `MAX_DELEGATION_LIFETIME_SECONDS`.
+error DelegateValidUntilInvalid();
+/// An authorisation identical to the standing one — refused like [`EscrowLimitsUnchanged`].
+error DelegationUnchanged();
+/// A revocation of a delegate that is not authorised (never was, or already revoked).
+error DelegateNotActive();
+/// The payer already holds `MAX_DELEGATES_PER_PAYER` delegates; revoke one first.
+error TooManyDelegates();
+/// A voucher signed by a delegate the payer revoked.
+error DelegateIsRevoked();
+/// A voucher redeemed after its delegate's `validUntil`.
+error DelegateIsExpired();
+/// A delegate-signed voucher above the delegate's own per-call cap.
+error DelegateVoucherExceedsPerCallLimit();
+/// A delegate-signed voucher that would take the delegate's own rolling window past its cap.
+error DelegateWindowLimitExceeded();
+/// The transaction does not carry enough gas for a payer's EIP-1271 wallet to be asked with its
+/// full gas cap. Reverting is the honest answer: refusing the voucher would blame the payer for
+/// the submitter's gas limit.
+error WalletCheckUnderfunded();
 
 // --- escrow withdrawal -------------------------------------------------------
 error WithdrawNotYetAvailable();
