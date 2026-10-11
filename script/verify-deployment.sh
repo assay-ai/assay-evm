@@ -49,11 +49,40 @@ lc() { echo "$1" | tr 'A-Z' 'a-z'; }
 # 46630 on 2026-09-22 — while passing nothing on a fork either, because it had never been run
 # against a broadcast. The spans come from the compiler's own `immutableReferences`, so this masks
 # exactly what the constructor writes and nothing an upgrade could hide in.
+#
+# **The spans are taken from the build of the commit that implementation was built at**, not from
+# this tree. A shared library change moves the offsets of a contract that was NOT upgraded — the
+# delegation upgrade (2026-10-12) refactored `Sig`, which X402Stake also links, so Stake's
+# deployed code and this tree's Stake build put their immutables at different offsets, and masking
+# the old code at the new offsets failed a correct deployment. The commit is the contract's own
+# `builtAt` when the record has one (set on upgrade), else the record's `commit`. When that
+# commit's sources equal this tree's, the local build is used; otherwise the commit is exported
+# with `git archive` (lib/ is vendored, so the export builds standalone) and built in $TMP.
+artifact_for() { # <contract> -> path to the artifact built at the contract's recorded commit
+  local c="$1" commit tree here_tree dir
+  commit=$(jq -r ".contracts.\"$c\".builtAt // .commit // empty" "$REC")
+  if [ -n "$commit" ] && git -C "$HERE" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    tree=$(git -C "$HERE" rev-parse "$commit:src")
+    here_tree=$(git -C "$HERE" rev-parse "HEAD:src")
+    if [ "$tree" != "$here_tree" ] || [ -n "$(git -C "$HERE" status --porcelain -- src)" ]; then
+      dir="$TMP/build-$commit"
+      if [ ! -d "$dir" ]; then
+        mkdir -p "$dir"
+        git -C "$HERE" archive "$commit" | tar -x -C "$dir"
+        (cd "$dir" && "$FORGE" build --quiet >/dev/null)
+      fi
+      echo "$dir/out/$c.sol/$c.json"
+      return
+    fi
+  fi
+  [ -f "$HERE/out/$c.sol/$c.json" ] || (cd "$HERE" && "$FORGE" build --quiet >/dev/null)
+  echo "$HERE/out/$c.sol/$c.json"
+}
+
 masked_code() { # <contract> <address>
   local code art starts
   code=$(cast code "$2" --rpc-url "$RPC"); code=${code#0x}
-  art="out/$1.sol/$1.json"
-  [ -f "$art" ] || "$FORGE" build --quiet >/dev/null
+  art=$(artifact_for "$1")
   starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art")
   while read -r start len; do
     [ -n "$start" ] || continue
@@ -115,6 +144,12 @@ done
 #    (forge/cast 1.2.1-nightly 7e68208e) and is checked against EIP-1014 vector 0
 #    (CREATE2(0x0, 0x0, keccak(0x)) = 0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0), so the shell
 #    fallback keccak256(0xff ++ deployer ++ salt ++ initCodeHash)[12:] is not needed.
+#
+#    **After an upgrade the proxy's initcode still names the implementation it was CREATED with**,
+#    not the current one: `implementation` moves with every upgrade, the proxy address never does.
+#    So an upgraded contract keeps its first implementation in `initialImplementation`, and this
+#    check reads that field when present. Without it, the first verify after the first upgrade
+#    (46630, 2026-10-12) failed here on a proxy that was correct.
 CREATE2_DEPLOYER=$(jq -r '.create2Deployer // "0x4e59b44847b379578588920ca78fbf26c0b4956c"' "$REC")
 dep=$(jq -r '.deployer // empty' "$REC")
 [ -n "$dep" ] || fail "the record has no \`deployer\` field — it predates the CREATE2 check. Regenerate it."
@@ -131,7 +166,7 @@ for c in X402Config X402Stake X402Escrow; do
   init=$(cast keccak "$(cast concat-hex \
       "$($FORGE inspect ERC1967Proxy bytecode | tr -d '\n')" \
       "$(cast abi-encode 'constructor(address,bytes)' \
-          "$(jq -er ".contracts.\"$c\".implementation" "$REC")" "$args")")")
+          "$(jq -er ".contracts.\"$c\".initialImplementation // .contracts.\"$c\".implementation" "$REC")" "$args")")")
   want=$(cast create2 --deployer "$CREATE2_DEPLOYER" --salt "$salt" --init-code-hash "$init")
   [ "$(lc "$want")" = "$(lc "$proxy")" ] || fail \
     "$c proxy is not CREATE2(deployer=$CREATE2_DEPLOYER, salt=$salt, initcode over implementation+initializerArgs) — computed $want, record says $proxy"

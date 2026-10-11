@@ -465,7 +465,12 @@ calldata goes here so the state migration and the upgrade are one atomic transac
       one redeemed. This is the check the getter cannot make; see the warning.
 - [ ] Rewrite `implementation`, `implementationRuntimeKeccak` and — **only if the pre-check above
       showed a change you accepted** — `abiKeccak` and `abiFunctions` in
-      `deployments/<chainId>.json`, then `./script/verify-deployment.sh <chainId> <rpc>` —
+      `deployments/<chainId>.json` — on the contract's FIRST upgrade, first copy the old
+      `implementation` into `initialImplementation`, which the CREATE2 check reproduces the proxy
+      from — and set the contract's `builtAt` to the commit the new implementation was built
+      at (the bytecode check masks immutables at THAT build's offsets; the record's top-level
+      `commit` stays the one the untouched contracts were built at) — then
+      `./script/verify-deployment.sh <chainId> <rpc>` —
       **green** — and commit the record in the same change. `verify-deployment.sh`'s check 0 is
       the function surface and runs before it touches the network, so a surface you did not mean
       to change fails immediately and by name.
