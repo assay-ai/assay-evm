@@ -46,6 +46,8 @@ abstract contract Fixture is Test {
     X402Stake internal stakeImpl;
 
     address internal admin = address(0xADAA);
+    /// D-17: the upgrade authority, and the key that appoints `admin`. Not `admin`.
+    address internal owner = address(0x0A1E);
     address internal treasury = address(0x7EA5);
     address internal redeemer = address(0x4EED);
     address internal provider = address(0x9309);
@@ -93,7 +95,7 @@ abstract contract Fixture is Test {
         config = X402Config(
             address(
                 new ERC1967Proxy(
-                    address(configImpl), abi.encodeCall(X402Config.initialize, (p, admin))
+                    address(configImpl), abi.encodeCall(X402Config.initialize, (p, admin, owner))
                 )
             )
         );

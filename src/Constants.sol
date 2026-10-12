@@ -23,8 +23,7 @@ pragma solidity 0.8.24;
 /// from the buyer and nothing else" becomes `msg.sender` plus an EIP-712 signature.
 /// Listed so their absence reads as a decision rather than an oversight.
 ///
-/// Going the other way, `MAX_REDEEM_BATCH` and `SECP256K1_HALF_N` are EVM-only and marked so at
-/// their declarations.
+/// Going the other way, everything under "EVM only" below has no Anchor counterpart.
 library Constants {
     // --- delays and windows ----------------------------------------------------------------
 
@@ -143,9 +142,37 @@ library Constants {
 
     // --- EVM only --------------------------------------------------------------------------
 
+    /// The furthest one redeemed voucher may move a payer's `seqHigh`: a redemption needs
+    /// `seq <= seqHigh + MAX_SEQ_GAP`. Without it a single voucher with `seq = 2^64 - 1` (signed by
+    /// the payer or by any delegate) moves the high-water mark to the top of the type, and every
+    /// later voucher of that payer fails `VoucherSeqNotIncreasing` for ever. A constant, not a
+    /// parameter: the backend allocates seqs one at a time, so a million unredeemed numbers ahead
+    /// of the chain is already far outside normal operation, and a bound an admin could raise is a
+    /// bound a stolen admin key removes. No Anchor counterpart.
+    uint64 internal constant MAX_SEQ_GAP = 1_000_000;
+
     /// No Anchor counterpart: Solana's 1,232-byte packet limit caps a batch implicitly,
     /// and that limit does not exist here, so the bound has to be written down.
     uint256 internal constant MAX_REDEEM_BATCH = 64;
+
+    /// The longest horizon a payer may give a voucher DELEGATE in one authorisation. A delegate
+    /// key lives on a machine the payer does not watch, so its authority must lapse on its own;
+    /// renewing is one more signature. No Anchor counterpart — delegation is EVM only.
+    uint64 internal constant MAX_DELEGATION_LIFETIME_SECONDS = 365 * 86_400;
+
+    /// How many delegates one payer may hold at once (revoking frees a place). It bounds
+    /// `delegatesOf`, which an off-chain reader enumerates in one call, so it is a bound on a
+    /// view's size rather than on anybody's money. No Anchor counterpart.
+    uint256 internal constant MAX_DELEGATES_PER_PAYER = 16;
+
+    /// How far ahead of the landing block a relayed (`…BySig`) authorisation's `deadline` may be:
+    /// it is checked when the call LANDS (`deadline <= block.timestamp + this`), so it bounds how
+    /// early before its deadline a signature can be landed. It is **not** a signature lifetime: a
+    /// signature with a far deadline is refused now but lands in the last hour before that
+    /// deadline. What kills a withheld signature is the shared `authNonce`, which every later
+    /// payer decision consumes. The backend signs with 300 s. No Anchor counterpart — Solana has
+    /// no relayed doors.
+    uint64 internal constant MAX_SIGNATURE_LIFETIME_SECONDS = 3600;
 
     /// EIP-2's low-s ceiling, `floor(secp256k1n / 2)`. Enforced on every recover: without
     /// it every signature has a second valid encoding, and any structure keyed by a signature's

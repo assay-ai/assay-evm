@@ -3,7 +3,6 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {MockPermit2} from "./helpers/MockPermit2.sol";
 import {X402Escrow} from "../src/X402Escrow.sol";
 import {X402Stake} from "../src/X402Stake.sol";
 import {X402Config as X402Config_} from "../src/X402Config.sol";
@@ -22,7 +21,7 @@ import "../src/Errors.sol";
 ///
 /// | Function | Pause closes it? |
 /// |---|---|
-/// | `X402Escrow.deposit` / `depositFor` / `depositWithPermit2` | **yes** |
+/// | `X402Escrow.deposit` / `depositFor` | **yes** |
 /// | `X402Escrow.redeemVoucher` / `redeemVoucherBatch` | **yes** |
 /// | `X402Stake.proposeSlash` / `executeSlash` | **yes** |
 /// | `X402Escrow.withdraw` | **never** |
@@ -82,11 +81,7 @@ contract PauseTest is Fixture {
     // === the rows that CLOSE =================================================================
 
     function test_pauseClosesEveryDepositDoorOnTheEscrow() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow p2Escrow = _deployEscrow(address(permit2));
         _fund(buyer, 10_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), 10_000_000);
 
         _pause();
 
@@ -97,9 +92,6 @@ contract PauseTest is Fixture {
         vm.prank(buyer);
         vm.expectRevert(ProgramPaused.selector);
         escrow.depositFor(buyer, 1_000_000);
-
-        vm.expectRevert(ProgramPaused.selector);
-        p2Escrow.depositWithPermit2(buyer, 1_000_000, 0, block.timestamp + 60, hex"00");
     }
 
     function test_pauseClosesBothRedemptionDoors() public {
@@ -167,12 +159,14 @@ contract PauseTest is Fixture {
         escrow.requestWithdraw(1_000_000);
         assertEq(escrow.escrowOf(buyer).withdrawRequested, 1_000_000);
 
-        // …including the relayed form, which is the door a buyer with no gas has.
+        // …including the relayed form, which is the door a buyer with no gas has. The direct
+        // request above consumed a nonce (D-18), so the relayed one is signed at the next.
+        uint64 n = escrow.escrowOf(buyer).authNonce;
         uint64 deadline = uint64(block.timestamp) + 600;
         bytes memory sig = VoucherSigner.signRequestWithdraw(
-            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000_000, 0, deadline
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000_000, n, deadline
         );
-        escrow.requestWithdrawBySig(buyer, 2_000_000, 0, deadline, sig);
+        escrow.requestWithdrawBySig(buyer, 2_000_000, n, deadline, sig);
         assertEq(escrow.escrowOf(buyer).withdrawRequested, 2_000_000);
     }
 
@@ -186,11 +180,12 @@ contract PauseTest is Fixture {
         escrow.setLimits(1, 2);
         assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 1);
 
+        uint64 n = escrow.escrowOf(buyer).authNonce; // the direct call consumed one (D-18)
         uint64 deadline = uint64(block.timestamp) + 600;
         bytes memory sig = VoucherSigner.signSetLimits(
-            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 3, 4, 0, deadline
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 3, 4, n, deadline
         );
-        escrow.setLimitsBySig(buyer, 3, 4, 0, deadline, sig);
+        escrow.setLimitsBySig(buyer, 3, 4, n, deadline, sig);
         assertEq(escrow.escrowOf(buyer).maxPerWindow, 4);
     }
 
@@ -258,22 +253,22 @@ contract PauseTest is Fixture {
 
     /// **Pause is the first half of an emergency; the upgrade is usually the second.** A pause
     /// that blocked the fix would be a foot-gun, so all three proxies stay upgradeable while
-    /// paused — `_authorizeUpgrade` checks the admin and nothing else (D-1).
+    /// paused — `_authorizeUpgrade` checks the owner and nothing else (D-1, D-17).
     function test_pauseNeverClosesTheUpgradeDoorOnAnyOfTheThree() public {
         _pause();
 
         address escrowV2 = address(new X402EscrowV2());
         address stakeV2 = address(new X402Stake());
 
-        vm.prank(admin);
+        vm.prank(owner);
         escrow.upgradeToAndCall(escrowV2, "");
-        vm.prank(admin);
+        vm.prank(owner);
         stake.upgradeToAndCall(stakeV2, "");
 
         // Config last: upgrading it is what an operator would reach for to change `paused`
         // itself, so a pause that closed this door would be unrecoverable without a redeploy.
         address configV2 = address(new X402Config_());
-        vm.prank(admin);
+        vm.prank(owner);
         config.upgradeToAndCall(configV2, "");
 
         assertTrue(config.paused(), "still paused, and all three moved");

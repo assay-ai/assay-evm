@@ -22,7 +22,7 @@ scattered because five of the six were previously findable only by already knowi
 | # | Precondition | For | Skipping it produces |
 |---|---|---|---|
 | **0.1** | The **mainnet USDG address on `eip155:4663`**, from Robinhood Chain's documentation or the token issuer, verified on the explorer, `decimals()` confirmed **6** | 4663 only | `script/new-deployment-record.sh 4663` exits 1; `Deploy.s.sol` reverts `AssetHasNoCodeOnThisChain()`; the backend's `assertChainMetadata` refuses `eip155:4663` at boot. **All three refusals are deliberate. Do not weaken any of them, and never guess an address.** Risk register §10. |
-| **0.2** | The **admin Ledger**, provisioned, its address read off the device's own screen, and control of it **proved** before handover | both | Risk register §5, written out step by step: the admin key **is** the upgrade authority of all three contracts (D-1), `_validate` checks `newAdmin` only against `address(0)`, and a mistyped address is held by nobody. Neither the hot key nor the Ledger can undo it. The only remaining move is a full redeploy and a migration of every buyer and provider. §6.3's checklist is the whole mitigation. |
+| **0.2** | The **OWNER key** (a Ledger, or a Safe in production) and the **admin Ledger**, two different keys, each provisioned, its address read off the device's own screen, and control of it **proved** before it is named | both | The owner is the upgrade authority of all three contracts and appoints the admin (D-17); the admin is the operational key. `Deploy.s.sol` refuses a deployer that would keep either role. A wrong admin is repaired by the owner (`setAdmin`); a wrong owner *proposal* never takes effect (two-step), but an owner that *accepts* from a key that is then lost is total loss of upgradeability. §6.3 is the procedure. |
 | **0.3** | The **treasury Ledger**, a **single-signer EOA** (design decision) | both | `TREASURY_ADDRESS` is a `ParamSet` field and the deploy will accept anything. This is an accepted custody downgrade against Solana's Squads multisig; Safe **is** deployed on 4663 (measured, `chain-facts.md` §3) so the downgrade is a choice, not a constraint. Moving to a multisig later is an `updateConfig`, not a contract change. |
 | **0.4** | The **EVM verifier key**, **secp256k1**, key id `verifier-evm-<yyyy-mm>` | both | **Never the Solana ed25519 key**, and the two rotate independently on their own 180-day schedules. Enrolment is §6.4 and it is **one-shot in both directions** — `registerVerifier` refuses any address that has *ever* been registered, so a mistake here is a new keypair, not a retry. |
 | **0.5** | The **environment-configuration edit** (the backend's deployment configuration, e.g. a Kubernetes Secret or env file), in the **same deploy window** as the code | every environment | An environment that still sets the legacy `SOLANA_ENABLED_CHAINS` fails the new boot, which **refuses that variable's presence outright** — even beside a valid `ENABLED_CHAINS`. Deploying the code without the edit leaves the API refusing to boot and `/health` not answering at all. See §11. |
@@ -105,8 +105,9 @@ on both chains, from `ArbGasInfo.getGasAccountingParams()`. The worst measured 6
 | variable | 46630 | 4663 |
 |---|---|---|
 | `USDG_ADDRESS` | **operator-supplied**: the 6-decimal settlement token, e.g. a mock USD you deployed | **operator-supplied. Not derivable. Not the testnet address.** |
-| `PERMIT2_ADDRESS` | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | same (18,306 chars of code measured on both) |
-| `ADMIN_ADDRESS` | **a Ledger address** | **a Ledger address** |
+| `PERMIT2_ADDRESS` | recorded in a storage slot nothing reads since D-18 (the Permit2 door was removed); `0x000000000022D473030F116dDEE9F6B43aC78BA3` or `address(0)` | same |
+| `OWNER_ADDRESS` | **the cold owner** (Ledger or Safe), never the deploying key | **a Safe or a Ledger**, never the deploying key |
+| `ADMIN_ADDRESS` | **a Ledger address**, never the deploying key | **a Ledger address**, never the deploying key |
 | `TREASURY_ADDRESS` | a Ledger EOA | a **single-signer Ledger EOA** (multisig planned) |
 | `REDEEMER_ADDRESS` | the platform's redeemer key | the platform's redeemer key |
 | `UNBONDING_PERIOD_SECONDS` | ≥ 950,400 (11 d) and ≤ 2,592,000 (30 d) | same |
@@ -115,18 +116,21 @@ on both chains, from `ArbGasInfo.getGasAccountingParams()`. The worst measured 6
 | `SLASH_AGENT_BPS`, `SLASH_PLATFORM_BPS`, `SLASH_CAP_BPS` | `SLASH_CAP_BPS` ≤ 5,000 | same |
 | *the deploying key* | **not an env var.** The EOA `--broadcast` signs with. It is part of the six resulting addresses, it is recorded in `deployments/<chainId>.json.deployer`, and it is a hot key whose privilege ends at §6.3 | same |
 
-**`ADMIN_ADDRESS` is a Ledger address and must never be an environment variable holding a private
-key, anywhere in this system.** It is now *two* authorities in one key — the parameter admin and
-the upgrade authority for all three proxies (D-1) — so the whole system's custody is that one
-device. `docs/risk-register.md` §4 and §5 are the accepted downside.
+**`OWNER_ADDRESS` and `ADMIN_ADDRESS` are two different cold keys and neither may ever be an
+environment variable holding a private key, anywhere in this system.** The owner is the upgrade
+authority for all three proxies and appoints the admin (D-17); the admin sets parameters, pauses
+and runs the verifier registry. No role can move user funds directly: the owner's upgrade is the
+one residual power (`docs/risk-register.md` §4). `Deploy.s.sol` refuses to run when the deploying
+key would be the owner, the admin or the redeemer, so **after the deploy the deployer holds no
+power at all**.
 
 **The deploying key is in that table without being an environment variable, because
 `Deploy.s.sol` never reads it and it still decides where the contracts land.** Each implementation
 is a plain `CREATE` from the signing EOA, so its address is `CREATE(from, nonce)`; each proxy is a
 salted `CREATE2` whose initcode contains that implementation address. The chain of consequences is
 in §5, and the short version is: **a different key, or the same key at a different nonce, gives six
-different addresses.** The key is recorded in the deployment record, and the admin authority does
-**not** follow it — that goes to the Ledger named in `ADMIN_ADDRESS`, and §6.3 is the handover.
+different addresses.** The key is recorded in the deployment record, and no authority follows it — the owner and the
+admin are the keys named in `OWNER_ADDRESS` and `ADMIN_ADDRESS` from the first block.
 
 **`TREASURY_ADDRESS` is a single-signer Ledger EOA**, by design decision. Say it
 plainly here because it belongs in the operator's hands and not only in a decision log: **this is a
@@ -316,45 +320,48 @@ backend's configuration is per-deployment, and never derivable from the chain id
 2. **Confirm `params()` matches the record.**
    `PROXY_CONFIG=… PROXY_STAKE=… PROXY_ESCROW=… forge script script/VerifyDeployment.s.sol --rpc-url <rpc>`
    prints every field decoded, plus the live implementation of each proxy.
-3. **The admin handover, if the deploy was from a hot key.**
+3. **Prove both roles work** (§6.3): the admin pauses and unpauses, the owner calls `setAdmin`
+   with the current admin (a no-op that proves the owner signs).
 
-### 6.3 The handover — and it has NO safety net on 4663
+### 6.3 Changing the owner or the admin (D-17)
+
+**The admin is appointed by the owner, in one step:**
 
 ```sh
-cast send <configProxy> "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)" \
-  <the current params, unchanged> <ledgerAddress> --rpc-url <rpc> --ledger
+cast send <configProxy> "setAdmin(address)" <newAdmin> --rpc-url <rpc> --ledger   # signed by the OWNER
 ```
 
-**One step, and it moves the upgrade authority of all three contracts at the same time** — D-1: the
-two money contracts read `CONFIG.admin()` live.
+A wrong address here is recoverable: the owner sends `setAdmin` again. `updateConfig` can no
+longer move the admin (`AdminChangeRequiresOwner` for any non-zero `newAdmin`; always pass
+`address(0)`).
 
-**`update_config.rs` says a mistyped admin is recoverable by the upgrade authority. That is true on
-Solana and FALSE here**, because by design decision D-1 the upgrade authority *is* this key.
-`docs/risk-register.md` §5 has the scenario written out step by step; the short form is that a
-mistyped address becomes the admin **and** the upgrade authority of all three contracts, neither
-the hot key nor the Ledger can undo it, and the only remaining move is a full redeploy and a
-migration of every buyer and provider.
+**The owner moves in two steps, and only the second one moves anything:**
 
-**Therefore, before the handover transaction is signed:**
+```sh
+# 1. proposed by the CURRENT owner
+cast send <configProxy> "transferOwnership(address)" <newOwner> --rpc-url <rpc> --ledger
+cast call <configProxy> 'pendingOwner()(address)' --rpc-url <rpc>     # == <newOwner>
+# 2. accepted by the NEW owner itself — a Ledger (--ledger) or a Safe transaction
+cast send <configProxy> "acceptOwnership()" --rpc-url <rpc> --ledger
+cast call <configProxy> 'owner()(address)' --rpc-url <rpc>            # == <newOwner>
+```
 
-- [ ] **Display the new address on the Ledger's own screen** and read it from there — not from a
-      terminal, not from a password manager, not from a chat message. The device's display is the
-      only surface that cannot have been substituted upstream of the signature.
-- [ ] **Prove control of it.** Either sign a message from that exact address and verify the
-      recovery, or send it a dust transaction and confirm the Ledger sees the balance. An address
-      you can display is not yet an address you can sign with.
-- [ ] **Paste, never type.** Then compare all 40 hex characters against the Ledger screen, both
-      ends and the middle.
-- [ ] `cast call <configProxy> 'admin()(address)' --rpc-url <rpc>` **before**, and record it.
-- [ ] Send the handover.
-- [ ] `cast call <configProxy> 'admin()(address)' --rpc-url <rpc>` **after**, and compare to the
-      Ledger screen one more time.
-- [ ] Immediately prove the new admin works, while a mistake is still theoretical rather than
-      permanent: `setPaused(true)` then `setPaused(false)` from the Ledger. If the first reverts
-      `NotAdmin`, the handover went to an address nobody controls and it is already too late — but
-      you will know within a minute rather than at the next incident.
-- [ ] Update `.admin` in `deployments/<chainId>.json` and re-run `./script/verify-deployment.sh`,
-      which checks it.
+A wrong proposal never becomes the owner (an address nobody controls cannot accept); replace it
+with a second `transferOwnership`, or cancel it with `transferOwnership(0x0000…0000)`.
+`renounceOwnership()` always reverts. **What is NOT recoverable is an owner that accepted from a
+key that is later lost**, so before step 1:
+
+- [ ] **Display the new owner address on the device's own screen** (or read the Safe's address
+      from the Safe UI on a second device) — not from a terminal, a password manager or a chat.
+- [ ] **Prove control of it.** Sign a message from that exact address and verify the recovery, or
+      have it receive a dust transaction. An address you can display is not yet one you can sign
+      with.
+- [ ] **Paste, never type**, and compare all 40 hex characters, both ends and the middle.
+- [ ] `owner()`, `pendingOwner()` and `admin()` **before**, recorded.
+- [ ] After step 2, prove the new owner works at once: `setAdmin(<currentAdmin>)` from it (a
+      no-op).
+- [ ] Update `.owner` (and `.admin` if it moved) in `deployments/<chainId>.json` and the backend's
+      `EVM_DEPLOYMENTS[<chain>].owner` / `.admin`, then re-run `./script/verify-deployment.sh`.
 
 ### 6.4 Enrolling the EVM verifier key — and it can never be undone
 
@@ -381,7 +388,7 @@ cast send <configProxy> "registerVerifier(address,bytes32,uint64)" \
 **After:**
 
 - [ ] `cast call <configProxy> 'canSign(address)' <addr>` → `true`.
-- [ ] `cast call <configProxy> 'verifierExpiry(address)' <addr>` matches what you sent.
+- [ ] `cast call <configProxy> 'verifierKey(address)' <addr>` — its `expiresAt` matches what you sent.
 
 **And know what `revokeVerifier` does before you ever need it**, because it does two irreversible
 things and only one of them is obvious (risk register §12): the key is retired for ever, **and**
@@ -397,7 +404,26 @@ re-judged under the replacement key.**
 makes an upgrade the normal repair and a redeploy the exception, so the two swap
 places. Both are here; the redeploy half is the last paragraph.)*
 
-### Pre-checks, all four, before the Ledger is touched
+### Who does what (D-17)
+
+1. **The DEPLOYER** (a hot key with no role) deploys the new implementation(s):
+   `forge script script/UpgradeByOwner.s.sol --sig 'deploy()' --rpc-url <rpc> --broadcast --private-key <deployer>`
+   with `UPGRADE_<NAME>=true` for each contract. A deployed implementation is inert until a proxy
+   points at it.
+2. **You verify**, before the owner is asked to sign: the pre-checks below — layout, bytecode,
+   function surface, EIP-712 strings — and an **anvil-fork rehearsal** of the exact upgrade against
+   live state (§7.4 shows the shape; `testnet/rehearse-owner-split.sh` is the D-17 one).
+3. **The OWNER signs** `upgradeToAndCall`:
+   - a Ledger: `forge script script/UpgradeByOwner.s.sol --rpc-url <rpc> --broadcast --ledger --sender <owner>`
+     with `IMPL_<NAME>=<address from step 1>` (and `CALL_<NAME>=<reinitialiser calldata>` if any);
+     the script refuses unless the broadcaster IS `owner()` and each implementation answers
+     `proxiableUUID()`, then re-asserts the domains, a sampled buyer and provider, the totals,
+     the admin and the owner;
+   - a Safe: `forge script script/UpgradeByOwner.s.sol --sig 'safeCalldata()' --rpc-url <rpc>` prints
+     `(to, data)` per proxy for a Safe Transaction Builder proposal; the Safe's signers verify
+     the calldata against that output, and you run the post-checks below by hand.
+
+### Pre-checks, all four, before the owner is asked to sign
 
 - [ ] `./script/check-layout.sh` is **green**, or its classifier printed `append-only: allowed` and
       the snapshot was regenerated with `--update` **and reviewed in the same commit**. A refusal
@@ -439,15 +465,23 @@ places. Both are here; the redeploy half is the last paragraph.)*
 
 ### The transaction
 
-Deploy the new implementation (no proxy, no salt), then from the Ledger:
+The deployer deploys the new implementation (no proxy, no salt); then the **owner** signs:
 
 ```sh
 cast send <proxy> "upgradeToAndCall(address,bytes)" <newImplementation> 0x \
-  --rpc-url <rpc> --ledger
+  --rpc-url <rpc> --ledger      # the OWNER; the admin is refused (NotOwner / OwnableUnauthorizedAccount)
 ```
 
+With `script/UpgradeByOwner.s.sol` (`run()`, or `safeCalldata()` for a Safe), each flagged proxy
+also needs `EXPECTED_CODEHASH_<NAME>` — the `extcodehash` of `IMPL_<NAME>`
+(`cast keccak $(cast code $IMPL_<NAME> --rpc-url <rpc>)`), taken from the implementation that
+`check-bytecode.sh` / `verify-deployment.sh` matched against the local build. The script refuses
+(`ImplementationCodehashMismatch`) an `IMPL_*` whose code is not that hash, so the owner signs for
+exactly the verified code and not for whatever address ended up in the env.
+
 The `bytes` payload is `0x` unless a reinitialiser is genuinely needed; if it is, it is a
-`reinitializer(n)` function, it is written and reviewed as part of the same change, and its
+`reinitializer(n)` function — **the next Config one is `reinitializer(3)`, the next Stake or Escrow
+one `reinitializer(2)`** (versions after D-17: Config 2, Stake 1, Escrow 1) — it is written and reviewed as part of the same change, and its
 calldata goes here so the state migration and the upgrade are one atomic transaction.
 
 ### Post-checks, immediately, in this order
@@ -465,16 +499,80 @@ calldata goes here so the state migration and the upgrade are one atomic transac
       one redeemed. This is the check the getter cannot make; see the warning.
 - [ ] Rewrite `implementation`, `implementationRuntimeKeccak` and — **only if the pre-check above
       showed a change you accepted** — `abiKeccak` and `abiFunctions` in
-      `deployments/<chainId>.json`, then `./script/verify-deployment.sh <chainId> <rpc>` —
+      `deployments/<chainId>.json` — on the contract's FIRST upgrade, first copy the old
+      `implementation` into `initialImplementation`, which the CREATE2 check reproduces the proxy
+      from — and set the contract's `builtAt` to the commit the new implementation was built
+      at (the bytecode check masks immutables at THAT build's offsets; the record's top-level
+      `commit` stays the one the untouched contracts were built at) — then
+      `./script/verify-deployment.sh <chainId> <rpc>` —
       **green** — and commit the record in the same change. `verify-deployment.sh`'s check 0 is
       the function surface and runs before it touches the network, so a surface you did not mean
       to change fails immediately and by name.
+
+### 7.4 The one-time D-17 / D-18 migration (testnet 46630)
+
+The deployed implementations still check `CONFIG.admin()` for upgrades, so this one upgrade is
+signed by the **current admin**, and the owner is created inside it.
+
+1. **Layout gate, against each deployed commit** — Config and Stake were built at `0e5e4b8`, the
+   Escrow at `675e2be`:
+   `./script/check-layout-branch.sh 0e5e4b8` and `./script/check-layout-branch.sh 675e2be`, both
+   green ("identical" or "APPEND-ONLY").
+2. **Rehearse on an anvil fork** of the live chain, with the real admin impersonated:
+   `testnet/rehearse-owner-split.sh`. It runs the script below, then proves the domain separators,
+   a sampled buyer's escrow and the provider's stake are byte-identical, runs the two-step
+   ownership transfer, proves the admin can no longer upgrade and the owner can, and proves the
+   seq cap.
+3. **Broadcast** `script/UpgradeOwnerSplit.s.sol`, signed by the admin. In one run it deploys the
+   three implementations (from `DEPLOYER_ADDRESS` if set) and calls
+   `config.upgradeToAndCall(newConfig, initializeV2())`, which makes owner = admin in the same
+   transaction. It then upgrades `stake` and `escrow` (their old code still checks the admin) and,
+   with `NEW_OWNER` set, proposes the ownership to the cold key.
+   - **3b. Post-check ON CHAIN.** The script's own asserts ran in forge's local simulation before
+     the broadcast, so they prove the simulation, not the chain. Read what landed, with the three
+     implementation addresses the broadcast printed (`broadcast/UpgradeOwnerSplit.s.sol/46630/run-latest.json`):
+     ```sh
+     RPC=<rpc> PROXY_CONFIG=<c> PROXY_STAKE=<s> PROXY_ESCROW=<e> \
+     IMPL_CONFIG=<newConfig> IMPL_STAKE=<newStake> IMPL_ESCROW=<newEscrow> \
+     EXPECTED_OWNER=<admin> EXPECTED_PENDING_OWNER=<NEW_OWNER> script/postcheck-upgrade.sh
+     ```
+   - **3c. If the broadcast landed only partly.** The upgrades and `transferOwnership` are separate
+     transactions. If the Config upgrade landed and a later one did not, a re-run of
+     `UpgradeOwnerSplit.s.sol` reverts `AlreadyMigrated(owner)` — `owner()` now exists — and must
+     not be forced. Finish from the **same admin key**, which is also the owner at this point
+     (owner = admin until step 4): `UpgradeByOwner.s.sol` with `UPGRADE_STAKE=true` and/or
+     `UPGRADE_ESCROW=true`, `IMPL_*` = the implementations step 3 already deployed (or `deploy()`
+     fresh ones), and their `EXPECTED_CODEHASH_*`. If `pendingOwner()` is still zero, propose with
+     `cast send <configProxy> "transferOwnership(address)" <NEW_OWNER>` from the same key. Re-run
+     3b; it must be green **before** step 4. Until then the not-yet-upgraded Stake/Escrow still
+     check `CONFIG.admin()`, so the admin can still upgrade them — close the gap in the same
+     session.
+4. **Accept** from the cold key: `cast send <configProxy> "acceptOwnership()"` (`--ledger` in
+   production). From this block the admin can no longer upgrade anything.
+   - **4b. Rotate the redeemer off the relayer key.** Live `params().redeemer` on 46630 is still
+     the backend relayer key `0x24A2c5823204150fe1bdc5Ce378A704788B345DB`, so the backend's
+     redeemer/relayer key split protects nothing until one of these is done — pick ONE:
+     (a) the admin `updateConfig`s `params().redeemer` to the address of the new
+     `EVM_REDEEMER_KEYS` key, or (b) move the existing `0x24A2…45DB` key into `EVM_REDEEMER_KEYS`
+     and mint a NEW key for `EVM_RELAYER_KEYS` (fund it; runbook §10). The backend now fails closed
+     at its first vault-control check per chain unless the `EVM_REDEEMER_KEYS` address equals the
+     live `params().redeemer` **and** the `EVM_RELAYER_KEYS` address does not. Change the env and
+     the chain in the same window (§11). Do not keep the old key in `EVM_RELAYER_KEYS` with a new
+     redeemer key and no `updateConfig`: that halts every redemption.
+5. **Record**: `implementation`, `implementationRuntimeKeccak`, `builtAt`, `abiKeccak`,
+   `abiFunctions` for all three; copy each old `implementation` into `initialImplementation` on
+   a contract's first upgrade; add `.owner`; then `./script/verify-deployment.sh` and the
+   backend's `EVM_DEPLOYMENTS` (`owner`, `escrowImplementation`). `verify-deployment.sh` and the
+   backend's vault-control check both WARN on a non-zero `pendingOwner()` (a proposal nobody
+   accepted); `owner()` is the fail-closed check.
+6. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `X402Config`
+   (`docs/risk-register.md` §4a — the admin's indirect reach over stake and fees).
 
 ### The one thing an upgrade must never do: change the EIP-712 `name` or `version`
 
 They are ShortString immutables baked into each implementation. Change either and the proxy's
 domain separator moves on the next block, silently killing every voucher a buyer has already
-signed. Nothing on chain refuses it — `_authorizeUpgrade` checks *who*, never *what*. It is a
+signed. Nothing on chain refuses it — `_authorizeUpgrade` checks *who* (the owner), never *what*. It is a
 checklist item and a test (`Upgrade.t.sol` (d)), and that is all it can ever be.
 
 **And there is a quieter version of the same failure that the `DOMAIN_SEPARATOR()` check above
@@ -564,11 +662,8 @@ conservative" as an argument needs re-reading.
 
 The 4663 figure is still unmeasured and unobtainable: it needs the mainnet token, which is §0.1.
 
-Permit2 is **no longer** in that category. `test/fork/Permit2.fork.t.sol` runs
-`depositWithPermit2` against the canonical singleton at
-`0x000000000022D473030F116dDEE9F6B43aC78BA3` on 46630, with the domain separator read from the
-chain, real typehashes and the real nonce bitmap — and Permit2 itself produced the three refusals
-(`InvalidNonce()`, `SignatureExpired(uint256)`, `InvalidSigner()`).
+Permit2 is no longer a deposit path at all: D-18 removed `depositWithPermit2`, and with it
+`test/fork/Permit2.fork.t.sol`.
 
 ## 10. The relayer float
 

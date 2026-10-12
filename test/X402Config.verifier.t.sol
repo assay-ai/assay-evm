@@ -63,7 +63,8 @@ contract X402ConfigVerifierTest is Test {
         return X402Config(
             address(
                 new ERC1967Proxy(
-                    address(configImpl), abi.encodeCall(X402Config.initialize, (_valid(), a))
+                    address(configImpl),
+                    abi.encodeCall(X402Config.initialize, (_valid(), a, address(0x0A1E)))
                 )
             )
         );
@@ -104,9 +105,6 @@ contract X402ConfigVerifierTest is Test {
         assertEq(k.revokedAt, revokedAt, string.concat(what, ": revokedAt"));
         assertEq(k.registered, registered, string.concat(what, ": registered"));
         assertEq(k.revoked, revoked, string.concat(what, ": revoked"));
-        // `verifierExpiry` is the `IX402Config` half of the same field and the slash path reads it,
-        // so it is asserted wherever the record is.
-        assertEq(config.verifierExpiry(who), expiresAt, string.concat(what, ": verifierExpiry"));
     }
 
     /// The `verifiers` mapping's declared slot. `admin`/`paused` share slot 0, `ParamSet` takes
@@ -188,12 +186,12 @@ contract X402ConfigVerifierTest is Test {
         _register(verifier, LABEL, 1_000);
         _register(second, bytes32("second-key"), 2_000);
 
-        assertEq(config.verifierExpiry(verifier), T + 1_000, "first key's own expiry");
-        assertEq(config.verifierExpiry(second), T + 2_000, "second key's own expiry");
+        assertEq(config.verifierKey(verifier).expiresAt, T + 1_000, "first key's own expiry");
+        assertEq(config.verifierKey(second).expiresAt, T + 2_000, "second key's own expiry");
         assertEq(config.verifierKey(verifier).expiresAt, T + 1_000, "struct agrees, first");
         assertEq(config.verifierKey(second).expiresAt, T + 2_000, "struct agrees, second");
         assertTrue(
-            config.verifierExpiry(verifier) != config.verifierExpiry(second),
+            config.verifierKey(verifier).expiresAt != config.verifierKey(second).expiresAt,
             "two lifetimes, two expiries"
         );
 
@@ -212,12 +210,16 @@ contract X402ConfigVerifierTest is Test {
 
         assertTrue(config.canSign(verifier), "registered on the first proxy");
         assertFalse(otherConfig.canSign(verifier), "and only on the first proxy");
-        assertEq(otherConfig.verifierExpiry(verifier), 0, "the second proxy knows nothing of it");
+        assertEq(
+            otherConfig.verifierKey(verifier).expiresAt, 0, "the second proxy knows nothing of it"
+        );
 
         vm.prank(admin);
         otherConfig.registerVerifier(verifier, LABEL, uint64(block.timestamp) + 500);
-        assertEq(otherConfig.verifierExpiry(verifier), T + 500, "its own entry, its own expiry");
-        assertEq(config.verifierExpiry(verifier), T + 180 * 86_400, "the first is untouched");
+        assertEq(
+            otherConfig.verifierKey(verifier).expiresAt, T + 500, "its own entry, its own expiry"
+        );
+        assertEq(config.verifierKey(verifier).expiresAt, T + 180 * 86_400, "the first is untouched");
     }
 
     /// One key's lifecycle says nothing about another's. Kills a registry that is really a single
@@ -504,7 +506,7 @@ contract X402ConfigVerifierTest is Test {
         vm.prank(admin);
         config.registerVerifier(verifier, bytes32(0), nowTs + 1);
         assertTrue(config.canSign(verifier), "a one-second key is a key");
-        assertEq(config.verifierExpiry(verifier), nowTs + 1, "and it expires next second");
+        assertEq(config.verifierKey(verifier).expiresAt, nowTs + 1, "and it expires next second");
 
         // The upper end, on a second address so the one-shot rule does not interfere.
         uint64 ceiling = nowTs + Constants.MAX_VERIFIER_KEY_LIFETIME_SECONDS;
@@ -517,12 +519,12 @@ contract X402ConfigVerifierTest is Test {
         vm.prank(admin);
         config.registerVerifier(second, bytes32(0), ceiling);
         assertTrue(config.canSign(second), "the ceiling value itself is admitted");
-        assertEq(config.verifierExpiry(second), ceiling, "stored at the ceiling, verbatim");
+        assertEq(config.verifierKey(second).expiresAt, ceiling, "stored at the ceiling, verbatim");
 
         // ...and one second inside the ceiling, on a third address.
         vm.prank(admin);
         config.registerVerifier(stranger, bytes32(0), ceiling - 1);
-        assertEq(config.verifierExpiry(stranger), ceiling - 1, "one inside the ceiling");
+        assertEq(config.verifierKey(stranger).expiresAt, ceiling - 1, "one inside the ceiling");
     }
 
     /// `register_verifier.rs:53` adds the lifetime with `saturating_add`, so a clock close enough
@@ -537,7 +539,7 @@ contract X402ConfigVerifierTest is Test {
         vm.prank(admin);
         config.registerVerifier(verifier, LABEL, type(uint64).max);
         assertTrue(config.canSign(verifier), "admitted, exactly as saturating_add admits it");
-        assertEq(config.verifierExpiry(verifier), type(uint64).max, "stored verbatim");
+        assertEq(config.verifierKey(verifier).expiresAt, type(uint64).max, "stored verbatim");
 
         // The lower bound still binds at the same clock.
         vm.prank(admin);

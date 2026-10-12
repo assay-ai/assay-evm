@@ -58,6 +58,9 @@ SYM=$(cast call "$ASSET" 'symbol()(string)' --rpc-url "$RPC" | tr -d '"')
 [ "$(cast chain-id --rpc-url "$RPC")" = "$CHAIN_ID" ] || { echo "REFUSED: the RPC is not chain $CHAIN_ID"; exit 1; }
 
 $FORGE build >/dev/null
+# The compiler settings come from foundry.toml as forge resolves it, never from a literal here: a
+# hardcoded block said `bytecodeHash: "none"` on 46630 while the build used "ipfs".
+CFG=$($FORGE config --json)
 kc() { cast keccak "$($FORGE inspect "$1" deployedBytecode | tr -d '\n')"; }
 
 # The function surface, recorded per contract so that an upgrade cannot change it silently.
@@ -115,10 +118,11 @@ cat > "$OUT" <<JSON
 {
   "chainId": $CHAIN_ID,
   "commit": "$COMMIT",
-  "solc": "0.8.24",
-  "settings": { "viaIr": true, "optimizerRuns": 200, "evmVersion": "shanghai", "bytecodeHash": "none" },
+  "solc": "$(jq -r .solc <<< "$CFG")",
+  "settings": $(jq -c '{viaIr: .via_ir, optimizerRuns: .optimizer_runs, evmVersion: .evm_version, bytecodeHash: .bytecode_hash}' <<< "$CFG"),
   "asset": { "address": "$ASSET", "symbol": "$SYM", "decimals": 6 },
   "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  "owner": "0x0000000000000000000000000000000000000000",
   "admin": "0x0000000000000000000000000000000000000000",
   "deployer": "0x0000000000000000000000000000000000000000",
   "create2Deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
@@ -165,6 +169,6 @@ $(abi_json_entries X402Escrow)
 }
 JSON
 echo "wrote $OUT (status: pending-deploy)"
-echo "Fill the six addresses, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
+echo "Fill the six addresses, the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
 echo "two domain separators from Deploy.s.sol's output,"
 echo "flip .status to \"deployed\", then: ./script/verify-deployment.sh $CHAIN_ID $RPC"

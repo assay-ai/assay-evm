@@ -699,9 +699,9 @@ contract X402EscrowBatchTest is Fixture {
         // one, so `config.updateConfig(config.params(), …)` inside a pranked statement spends the
         // prank on the getter and the update arrives as the test contract — `NotAdmin()`,
         // measured. It is the same trap `ds` is cached in `setUp` for.
-        ParamSet memory current = config.params();
-        vm.prank(admin);
-        config.updateConfig(current, address(tok));
+        // Since D-17 the admin is appointed by the owner, in `setAdmin`.
+        vm.prank(owner);
+        config.setAdmin(address(tok));
 
         // A SECOND read, because `ParamSet memory shifted = current` would ALIAS rather than copy
         // — memory structs are reference types — and editing `shifted.treasury` would silently

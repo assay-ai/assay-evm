@@ -1,2 +1,4 @@
 @openzeppelin/contracts/=lib/openzeppelin/
+@openzeppelin/contracts-upgradeable/=lib/openzeppelin-upgradeable/
+lib/openzeppelin-upgradeable/proxy/utils/=lib/openzeppelin/proxy/utils/
 forge-std/=lib/forge-std/src/

@@ -63,7 +63,11 @@ contract DeployOnForkTest is ForkFixture {
 
         configImpl = address(new X402Config());
         config = X402Config(
-            address(new ERC1967Proxy(configImpl, abi.encodeCall(X402Config.initialize, (p, ADMIN))))
+            address(
+                new ERC1967Proxy(
+                    configImpl, abi.encodeCall(X402Config.initialize, (p, ADMIN, address(0x0A1E)))
+                )
+            )
         );
         stakeImpl = address(new X402Stake());
         stake = X402Stake(
@@ -136,7 +140,7 @@ contract DeployOnForkTest is ForkFixture {
     function test_theImplementationsCannotBeInitialised() public {
         ParamSet memory p = config.params();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        X402Config(configImpl).initialize(p, address(0xB0B));
+        X402Config(configImpl).initialize(p, address(0xB0B), address(0xB0B));
     }
 
     /// The money path, end to end, against the real token: deposit, then the buyer's own exit.

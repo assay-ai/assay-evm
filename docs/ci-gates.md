@@ -49,9 +49,13 @@ in the list so that a diff never contains a reformatting the author did not inte
 
 ## 2. `./script/check-vendor.sh`
 
-Pins `lib/openzeppelin/` to v5.1.0 = `69c8def5f222ff96f2b5beff05dfba996368aa79`, 31 files.
+Pins `lib/openzeppelin/` to v5.1.0 = `69c8def5f222ff96f2b5beff05dfba996368aa79`, 31 files, and
+(D-17) `lib/openzeppelin-upgradeable/` to v5.1.0 = `fa525310e45f91eb20a6d3baa2644be8e0adba31`, 3
+files (`Ownable2StepUpgradeable`, `OwnableUpgradeable`, `ContextUpgradeable`). It also asserts the
+one redirected import: the upgradeable package's `proxy/utils/Initializable.sol` is byte-identical
+to the main package's, and `remappings.txt` still maps it there.
 
-**Cannot see** a dependency added outside `lib/openzeppelin/`. `auto_detect_remappings = false`
+**Cannot see** a dependency added outside those two trees. `auto_detect_remappings = false`
 plus an explicit `remappings.txt` is what stops a second spelling of one dependency compiling
 beside the first; the vendor gate assumes that is still true.
 
@@ -311,7 +315,10 @@ excluded tests are: `testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor`,
 `test_theBatchDelegatesToTheOneRedeemPathInTheSource`,
 `test_recoveryHappensAtExactlyOneCallSiteInSrc`,
 `test_theSignatureComparisonIsUnconditionalInTheSource`,
-`test_noProviderAddressIsExemptFromTheSignatureGuard` and
+`test_noProviderAddressIsExemptFromTheSignatureGuard`,
+`test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes`,
+`test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment`,
+`test_theCapSitsBesideTheMonotonicCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole` and
 `test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`, plus every `invariant_*` run. Regenerate with
 `./script/check-snapshot.sh --write`. The sections below were written before this exclusion, and
 quote the plain `forge snapshot --check`.

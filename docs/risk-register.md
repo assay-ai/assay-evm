@@ -1,6 +1,6 @@
 # Risk register
 
-Thirteen entries. Each says what it is, who it affects, and **what the contract does not do about
+Seventeen entries. Each says what it is, who it affects, and **what the contract does not do about
 it** — because the value of this page is the last column. A risk with a mitigation is engineering;
 a risk that is disclosed and accepted is a decision, and the decisions are what a reader needs to
 find here rather than in a commit message.
@@ -72,51 +72,75 @@ actually blocked).
 Since design decision D-1 these contracts *can* be patched if a future USDG breaks something — which lowers
 this risk and raises the next one.
 
-## 4. The upgrade key is the Ledger holding `Config.admin`, and a compromised Ledger is total loss
+## 4. The upgrade key is the OWNER, and a compromised owner is total loss
 
-It can replace `X402Escrow`'s logic in one transaction with no delay and take every buyer's USDG.
+**Amended by D-17.** The upgrade authority of all three contracts is `X402Config.owner()`, a cold
+key (a Ledger, or a Safe in production), and no longer the operational admin. The owner can replace
+`X402Escrow`'s logic in one transaction with no delay and take every buyer's USDG.
+
+**The upgrade is the owner's power over funds, but it is not the only role power over them.** No
+role has a door that transfers a token to itself: there is no sweep, no rescue, no "excess"
+transfer, for the owner, the admin or anyone else, and for no token (`test/NoTokenDoors.t.sol`
+pins every token-moving line in `src/` and the function it sits in). The only ways a token leaves
+are a payer-signed voucher, the buyer's own `withdraw()`, the provider's own `withdrawStake`, and
+the two-phase slash. The ADMIN can still steer two of those through parameters — see §4a.
 
 This is **exactly the exposure the Solana program already carries** through its
 `BPFLoaderUpgradeable` upgrade authority, and parity is why it was chosen (D-1) over the
-immutable design of the first draft.
+immutable design of the first draft. As there, the upgrade authority is now a separate key from
+the admin.
 
-**What bounds it:** the key is hardware and **never** an environment variable, so the binding
-threat model — a full leak of every key held in an env var — is untouched.
+**What bounds it:** the key is cold and **never** an environment variable, so the binding threat
+model — a full leak of every key held in an env var, including the admin's — is untouched. It
+moves only in two steps, so a mistyped successor never becomes the owner.
 
-**What does not bound it:** nothing on chain. No timelock, no multisig, no pending-implementation
-slot, by decision (D-1). Custody of that Ledger is the control, and it is the only one.
+**What does not bound it:** nothing on chain. No timelock, no pending-implementation slot, by
+decision (D-1). If one is wanted, make an external `TimelockController` (behind a Safe) the owner,
+with a delay longer than `WITHDRAW_DELAY_SECONDS` plus a margin; no contract change is needed.
 
-## 5. The admin key and the upgrade key are the same key — worse than Solana here
+## 4a. The admin alone can redirect provider stake and fees, through parameters
 
-On Solana the program's admin and its upgrade authority are separate keys, and `update_config.rs`
-says so plainly: a mistyped admin is recoverable, because the upgrade authority can deploy a fixed
-program. **Here they are one key by D-1**, so a mistyped `newAdmin` in `updateConfig` loses both at
-once and there is nothing left to repair it with.
+Found by the independent review of D-17 (S2-1). It predates D-17. No upgrade and no owner are
+involved: every value below passes `_validate`.
 
-The exact scenario, because "unrecoverable" is too abstract to act on:
+- **Provider stake, after 72 h.** The admin can `registerVerifier` a key it holds and raise the
+  slash parameters with `updateConfig` (`slashCapBps` up to 5,000, `slashAgentBps` 10,000,
+  `penaltyAmount` and `verifierDailyCap` at their maxima). A `proposeSlash` naming its own
+  beneficiary then pays out **up to 50% of a provider's at-risk stake** when anyone calls
+  `executeSlash` after the 72 h delay — repeatable per provider and per window.
+  **The remedy is inside the delay:** the owner calls `setAdmin(fresh)`, and the fresh admin calls
+  `revokeVerifier` on the rogue key; `executeSlash` then reverts `VerifierRevoked`.
+- **Fees, immediately.** The admin can set `treasury` to an address it picks and `takeRateBps` up
+  to 3,000 in one `updateConfig`. From the next block **up to 30% of every redeemed voucher** goes
+  there. There is no delay; the bound is `MAX_TAKE_RATE_BPS` and how fast the owner replaces the
+  admin.
+- **Redemption ordering.** The admin can pin `redeemer` to itself, which lets it order (and so
+  void lower-seq) redemptions.
 
-> The operator finishes the 46630 deploy from a hot key and runs the handover:
-> `updateConfig(params(), 0x…)`. One hex character of the Ledger address is wrong — a
-> transposition, or a character copied from a truncated display. The transaction succeeds:
-> `X402Config._validate` checks the parameters, and `newAdmin` is only checked against
-> `address(0)`, so any other 20 bytes is accepted. From that block:
->
-> - the hot key is no longer the admin, so it cannot undo it;
-> - the Ledger was never the admin, so it cannot either;
-> - `_authorizeUpgrade` on all three contracts is `onlyAdmin` and resolves to `CONFIG.admin()`
->   **live**, so the mistyped address is now the upgrade authority of `X402Config`, `X402Escrow`
->   and `X402Stake`;
-> - `setPaused`, `registerVerifier`, `revokeVerifier` and `updateConfig` are all gone with it;
-> - buyers can still `withdraw()` and providers can still `withdrawStake()` — those are
->   `msg.sender`-only and never pause-gated (`test_pauseNeverClosesTheBuyersExit`) — so the money
->   is not lost, but nothing can ever be configured again and no defect can ever be patched.
->
-> The only remaining move is a full redeploy and a migration of every buyer and provider.
+**Monitoring (required, off chain):** alert, paging, on every `ConfigUpdated` and every
+`VerifierRegistered` event from `X402Config`. Each one is either a change the operator made and
+can confirm in minutes, or the start of the scenarios above — and the slash one gives 72 h to act.
 
-**Mitigated only by procedure**, and the procedure is `docs/deploy-runbook.md` §6: read the new
-address **off the Ledger's own screen**, prove control of it with a signature or a dust
-transaction **before** the handover, paste rather than type, and `cast call … admin()` before and
-after.
+No contract change is made for this yet; making `registerVerifier` and a `treasury` / `redeemer`
+change owner-only is the smallest code fix, and it is an open decision.
+
+## 5. The admin and the upgrade key were the same key — resolved by D-17
+
+**Was:** by D-1 the admin was also the upgrade authority, so a mistyped `newAdmin` in
+`updateConfig` lost both at once, and nothing was left to repair it with.
+
+**Now:** the roles are split.
+
+- A wrong ADMIN is recoverable: the owner calls `setAdmin` again. `updateConfig` can no longer
+  hand the admin over at all (`AdminChangeRequiresOwner`).
+- A wrong OWNER proposal is recoverable: `transferOwnership` only proposes. The address takes
+  nothing until it calls `acceptOwnership`, and an address nobody controls never does. A second
+  proposal replaces the first, and `transferOwnership(address(0))` cancels it.
+- `renounceOwnership` always reverts, so the owner can never become `address(0)`.
+
+**What is left:** an owner that ACCEPTS from a key it then loses. That is a lost cold key, which
+is procedure: read the address off the device's own screen, prove control before proposing, and
+upgrade or `setAdmin` from the new owner at once to prove it works (`docs/deploy-runbook.md` §6.3).
 
 ## 6. The treasury on 4663 is a 1-of-1 Ledger EOA, not a multisig
 
@@ -135,7 +159,7 @@ runbook.** It is not a contract concern and there is no contract-side mitigation
 
 ## 8. No gasless first deposit
 
-A buyer holding zero ETH needs one funded transaction before Permit2 helps (D-11).
+A buyer holding zero ETH needs one funded transaction (`approve` + `depositFor`) before the first deposit; the Permit2 door was removed in D-18.
 
 ## 9. **A zero-ETH buyer cannot WITHDRAW — MAINNET BLOCKER**
 
@@ -244,7 +268,7 @@ pending, with no record of which they were beyond the events.
 **What the contract does not do:** nothing. No two-step revoke, no timelock, no undo. This is
 faithful to the Anchor source and deliberate.
 
-**Mitigated only by procedure:** treat a revocation like the `newAdmin` handover in entry 5 —
+**Mitigated only by procedure:** treat a revocation like an owner or admin change (entry 5) —
 `cast call <config> 'verifierKey(address)' <key>` before, list the key's `Pending` records first so
 they can be re-judged under the replacement key, and paste the address rather than typing it.
 
@@ -270,3 +294,82 @@ that neither chain holds.
 named **backend requirement** — see `docs/gas.md` § "The operational rule", which now carries it beside
 the batch pre-validation rule. Cost if it is skipped: one voucher's `amount` per affected call,
 absorbed by the platform or the provider, exactly as a `VoucherTooOld` is (entry 1).
+
+---
+
+## 14. A payer can make in-flight vouchers unredeemable at once — revoking a delegate, or lowering a limit
+
+**Who it affects:** the platform (and, through it, the provider), never the payer.
+
+A delegate-signed voucher is judged at the REDEMPTION block: `_voucherAuthority` refuses a revoked
+delegate (`DelegateIsRevoked`) or a lapsed one (`DelegateIsExpired`) whenever the voucher was signed.
+So a payer whose agent has just been served calls can revoke the delegate — relayed, so at no gas
+cost — and every voucher of that agent not yet redeemed becomes unredeemable after the provider
+served it. The same is true of lowering the delegate's caps, and it is ALREADY true of the escrow's
+own `setLimits`, which takes effect immediately and has done since the first deployment. The
+amount is bounded by what was served and not yet redeemed (the redemption job runs every minute),
+but it can be repeated.
+
+**Unlike §13 there is no delay sized to make it safe.** The withdrawal clock exists for exactly this;
+revocation deliberately has none, because a payer revoking a key they believe is compromised must
+stop it now, and the `/agents` screen promises that ("it can no longer sign payments").
+
+**The alternative considered and not taken (2026-10-12):** record `revokedAt` (and a lowered-cap
+instant) and keep honouring vouchers with `issuedAt < revokedAt`. It closes this exposure only by
+trusting the redeemer — pinned to the platform — for the ~35 minutes a voucher stays redeemable,
+and `issuedAt` is chosen by the very key being revoked; a compromised delegate key together with a
+compromised platform could then spend for that window after the payer said stop. That trade
+belongs to a product decision, not to this upgrade.
+
+**What the contract does not do:** honour anything signed before a revocation or a lowered limit.
+**What the backend does:** it reads the delegation fresh for every call (no cache), requires the
+delegation to outlive the voucher's whole redeemable life (`validUntil >= expiresAt + 1800`), and
+treats `DelegateIsRevoked` / `DelegateIsExpired` as terminal so they are never re-broadcast. The
+residual is the platform's, like §13, and it is visible: every unredeemable voucher raises the
+`voucher_unredeemable` alert.
+
+## 15. The redeemer can censor or delay a provider's payment — no fallback yet
+
+**Who it affects:** providers.
+
+`redeemVoucher*` is pinned to `params().redeemer` (D-10), and a voucher stays redeemable for at
+most `MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS` (2,220 s) after `issuedAt`. A redeemer that is down
+for longer than that, or that withholds one provider's vouchers, leaves that provider unpaid for
+calls it served. The buyer is unharmed: their balance stays theirs.
+
+**The fallback that was specified and not built (2026-10-12):** anyone may redeem after an
+admin-set delay in [1 h, 7 d]. As specified it could never fire: every voucher is dead before an
+hour has passed. Making it fire would need either bounds below the shortest redeemable life
+(about 1,800 s), or a longer redeemable life. A longer life means a longer withdraw delay
+(`WITHDRAW_DELAY_SECONDS` must outlive every voucher signed before the request), and a
+third-party redeemer could then void lower seqs. A redesign is pending: only the voucher's named
+provider, after a fixed delay of about 10 to 15 minutes, with every other rule unchanged.
+
+**What the contract does not do:** nothing today. **Mitigations:** the redeemer and the relayer
+are separate keys (backend `EVM_REDEEMER_KEYS` / `EVM_RELAYER_KEYS`). A relayer leak therefore
+gives no redemption-ordering power. `voucher_unredeemable` alerts on every voucher that dies
+unredeemed.
+
+## 16. A single voucher could brick a payer's sequence space — closed by D-17
+
+**Was:** `seq` only had to exceed `seqHigh`, so one redeemed voucher with `seq = 2^64 - 1`
+(signed by the payer or by any delegate, or served by a compromised backend) made every later
+voucher of that payer fail `VoucherSeqNotIncreasing` for ever. Withdrawal still worked.
+
+**Now:** `seq <= seqHigh + MAX_SEQ_GAP` (1,000,000, a constant), on every path and for every
+signer kind. The backend refuses to issue or admit a seq past the same bound. The residual
+cost of a hostile jump is one million unusable seqs, and the next one is still admitted.
+
+## 17. A withheld relayed signature could undo a later direct decision — closed by D-18
+
+**Was:** the direct `setLimits` and `requestWithdraw` did not consume `authNonce`. A relayer
+that withheld a `SetLimitsBySig(high)` could land it after the buyer's direct emergency
+`setLimits(0, 0)`. A withheld `RequestWithdrawBySig` could cancel or restart a direct request.
+Each signature was bounded only by its own deadline, which the chain did not cap.
+
+**Now:** every payer decision consumes `authNonce`, direct or relayed. A relayed signature
+whose `deadline` is more than `MAX_SIGNATURE_LIFETIME_SECONDS` (1 h) past the landing block is
+refused (`SignatureDeadlineTooFar`). That caps how early a signature can land, not how long it
+lives: one with a far deadline still lands in the hour before it, unless a later decision has
+consumed `authNonce` — which is what actually kills a withheld signature. The cost: a relayed signature still in flight dies when the
+payer acts directly, and must be signed again.

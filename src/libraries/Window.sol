@@ -36,29 +36,7 @@ library Window {
         uint256 remaining = window - elapsed;
         // div_ceil, in uint256 so `counter * remaining` cannot wrap.
         uint256 carried = (uint256(counter) * remaining + window - 1) / window;
-        return narrow(carried);
-    }
-
-    /// The checked narrowing, identical in behaviour and error to `Fee.narrow`.
-    ///
-    /// **Why it is here even though it can never fire.** `remaining < window` is enforced two
-    /// lines above by the `elapsed >= SLASH_WINDOW_SECONDS` branch, so `carried <= counter`, and
-    /// `counter` is already a `uint64` — the bound is a local invariant of this function rather
-    /// than an obligation on a caller, which is the opposite of `Fee`'s situation. A bare
-    /// `uint64(carried)` would be provably safe.
-    ///
-    /// It is checked anyway because the rule adopted for `Fee` is that a silent `uint64(…)`
-    /// narrowing of a money amount is not acceptable on the strength of a comment, and two
-    /// identical operations receiving opposite treatment is how the next implementer learns the
-    /// wrong default from whichever file they open first. Consistency is the default; the burden
-    /// is on the exception, and "provably safe today" was not enough to earn one. The gas cost
-    /// is visible in `forge test` gas per call.
-    ///
-    /// **That third site appeared on the redeem path and the collapse this paragraph asked for has
-    /// happened**: the body is now `Cast.toUint64` and this is a one-line forwarder. The
-    /// paragraphs above are unchanged and still describe why the check is here at all — they are
-    /// the argument `Cast.toUint64`'s own NatSpec quotes.
-    function narrow(uint256 value) private pure returns (uint64) {
-        return Cast.toUint64(value);
+        // Unreachable (`carried <= counter`), checked anyway: no money narrowing is a bare cast.
+        return Cast.toUint64(carried);
     }
 }

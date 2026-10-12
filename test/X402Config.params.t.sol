@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {X402Config} from "../src/X402Config.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
 
@@ -36,6 +37,7 @@ contract X402ConfigParamsTest is Test {
     X402Config internal configImpl;
 
     address internal admin = address(0xADAA);
+    address internal constant OWNER = address(0x0A1E);
     address internal next = address(0xBEEF);
     address internal stranger = address(0x57A2);
 
@@ -96,7 +98,8 @@ contract X402ConfigParamsTest is Test {
         config = X402Config(
             address(
                 new ERC1967Proxy(
-                    address(configImpl), abi.encodeCall(X402Config.initialize, (_valid(), admin))
+                    address(configImpl),
+                    abi.encodeCall(X402Config.initialize, (_valid(), admin, OWNER))
                 )
             )
         );
@@ -140,7 +143,7 @@ contract X402ConfigParamsTest is Test {
 
         vm.prank(adminBefore);
         vm.expectRevert(selector);
-        config.updateConfig(p, next);
+        config.updateConfig(p, address(0));
 
         _assertParamsEq(config.params(), before, string.concat(tag, " moved a parameter"));
         assertEq(config.admin(), adminBefore, string.concat(tag, " moved the admin"));
@@ -329,21 +332,36 @@ contract X402ConfigParamsTest is Test {
         bad.takeRateBps = 3_001;
         vm.prank(admin);
         vm.expectRevert(InvalidTakeRateBps.selector);
-        config.updateConfig(bad, next);
+        config.updateConfig(bad, address(0));
 
-        assertEq(config.admin(), admin, "the admin handover rolled back with the set");
+        assertEq(config.admin(), admin, "the admin did not move");
         assertEq(config.params().takeRateBps, 1_000, "and the take rate never landed");
         _assertParamsEq(config.params(), _valid(), "nor did any other field");
     }
 
     // ---------------------------------------------------------------------------------------
-    // the admin handover — update_config.rs:84-87
+    // the admin handover — moved to the OWNER (D-17)
     // ---------------------------------------------------------------------------------------
 
-    /// One step. The old key is out the moment the call lands; the new key is in.
-    function test_happyPath_adminHandoverIsOneStep() public {
-        vm.prank(admin);
-        config.updateConfig(_valid(), next);
+    /// `updateConfig` keeps its `newAdmin` argument for ABI stability, and every non-zero value is
+    /// refused — the current admin included — and moves nothing.
+    function test_wrongSigner_updateConfigCannotHandTheAdminOver() public {
+        address[2] memory targets = [next, admin];
+        for (uint256 i = 0; i < targets.length; i++) {
+            vm.prank(admin);
+            vm.expectRevert(AdminChangeRequiresOwner.selector);
+            config.updateConfig(_other(), targets[i]);
+            assertEq(config.admin(), admin, "the admin did not move");
+            _assertParamsEq(config.params(), _valid(), "and no parameter landed");
+        }
+    }
+
+    /// The owner appoints the admin in one step; the old key is out at once, the new one in.
+    function test_happyPath_theOwnerAppointsTheAdminInOneStep() public {
+        vm.expectEmit(true, true, false, false, address(config));
+        emit X402Config.AdminSet(admin, next);
+        vm.prank(OWNER);
+        config.setAdmin(next);
         assertEq(config.admin(), next, "the handover landed in this same call");
 
         vm.prank(admin);
@@ -355,53 +373,23 @@ contract X402ConfigParamsTest is Test {
         _assertParamsEq(config.params(), _other(), "and the new admin's set landed");
     }
 
-    /// The zero address is the one nobody can sign for, so it is the "leave it" sentinel and
-    /// can never become the admin — the same refusal `update_config` makes on `Pubkey::default()`.
-    ///
-    /// The second half is what makes this more than a tautology: the sentinel is measured against
-    /// an admin that has already **moved**. A test that only ever ran at the initial admin cannot
-    /// tell "leave the current admin alone" from "restore the admin this contract started with".
-    function test_wrongState_theZeroAddressNeverBecomesAdmin() public {
-        vm.prank(admin);
-        config.updateConfig(_valid(), address(0));
-        assertEq(config.admin(), admin, "address(0) left the initial admin in place");
-
-        vm.prank(admin);
-        config.updateConfig(_valid(), next);
-        assertEq(config.admin(), next, "precondition: the admin has moved");
-
-        vm.prank(next);
-        config.updateConfig(_other(), address(0));
-        assertEq(config.admin(), next, "address(0) leaves the CURRENT admin, not the first one");
-    }
-
-    /// Handing the role to whoever already holds it is legal and is a no-op —
-    /// `update_config.rs:84-86` refuses `Pubkey::default()` and **only** that, so
-    /// `Some(current_admin)` is accepted and assigns the admin to itself.
-    ///
-    /// Without this leg a "must differ" rule on the admin (`if (newAdmin == admin) revert`)
-    /// survives the whole suite, because no other test ever passes the current admin
-    /// (mutation log C44). That is the half of this door a second call cannot undo: a parameter
-    /// this door refuses can be re-sent, an admin it refuses to install cannot be installed by
-    /// anybody but the incumbent.
-    function test_handingTheAdminRoleToItselfIsLegalAndANoOp() public {
-        vm.prank(admin);
-        config.updateConfig(_other(), admin);
-        assertEq(config.admin(), admin, "a self-handover leaves the admin where it was");
-        _assertParamsEq(config.params(), _other(), "and the set beside it still landed");
-
-        // and the incumbent still administers afterwards — the self-handover installed a live key,
-        // not a dead one.
-        vm.prank(admin);
-        config.updateConfig(_third(), address(0));
-        _assertParamsEq(config.params(), _third(), "the admin still administers after");
-
-        // the same, once the role has moved, so this is not a statement about the initial admin.
-        vm.prank(admin);
-        config.updateConfig(_third(), next);
-        vm.prank(next);
-        config.updateConfig(_other(), next);
-        assertEq(config.admin(), next, "a self-handover by the SECOND admin is a no-op too");
+    /// `setAdmin` is the owner's alone: neither the admin nor a stranger may appoint, and the
+    /// zero address is never an admin.
+    function test_wrongSigner_onlyTheOwnerAppointsTheAdmin() public {
+        address[3] memory callers = [admin, stranger, next];
+        for (uint256 i = 0; i < callers.length; i++) {
+            vm.prank(callers[i]);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    OwnableUpgradeable.OwnableUnauthorizedAccount.selector, callers[i]
+                )
+            );
+            config.setAdmin(next);
+        }
+        vm.prank(OWNER);
+        vm.expectRevert(InvalidAdmin.selector);
+        config.setAdmin(address(0));
+        assertEq(config.admin(), admin, "nothing moved");
     }
 
     // ---------------------------------------------------------------------------------------
@@ -489,11 +477,13 @@ contract X402ConfigParamsTest is Test {
         vm.prank(admin);
         config.updateConfig(_other(), address(0));
 
-        // with a handover: the indexed admin is `next`, though `admin` signed.
+        // after the OWNER moved the admin, the indexed admin is the new one.
+        vm.prank(OWNER);
+        config.setAdmin(next);
         vm.expectEmit(true, false, false, true, address(config));
         emit X402Config.ConfigUpdated(next, _third());
-        vm.prank(admin);
-        config.updateConfig(_third(), next);
+        vm.prank(next);
+        config.updateConfig(_third(), address(0));
     }
 
     // ---------------------------------------------------------------------------------------

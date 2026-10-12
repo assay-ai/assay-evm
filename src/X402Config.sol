@@ -3,13 +3,16 @@ pragma solidity 0.8.24;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Ownable2StepUpgradeable} from
+    "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 import {ParamSet} from "./Types.sol";
 import {Constants} from "./Constants.sol";
 import {IX402Config} from "./interfaces/IX402Config.sol";
 import "./Errors.sol";
 
-/// Parameters, the admin, the pause flag and the verifier registry.
+/// Parameters, the two roles (owner and admin), the pause flag and the verifier registry.
 ///
 /// The port of `state.rs::Config` minus everything that is Solana bookkeeping. What was left
 /// behind, and where it went:
@@ -27,13 +30,27 @@ import "./Errors.sol";
 /// This contract NEVER holds a token and never gains a function that moves one. It is the
 /// only shared leaf of the dependency graph, and both edges into it are views.
 ///
-/// Deployed behind an ERC1967Proxy and upgraded through UUPS (D-1). `admin` is both the
-/// parameter authority and the upgrade authority — for all three contracts, because the other
-/// two read `CONFIG.admin()` live. It is a Ledger, and it is never an environment variable.
-contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
+/// Deployed behind an ERC1967Proxy and upgraded through UUPS (D-1, amended by D-17).
+///
+/// # Two roles (D-17)
+///
+/// - **`owner()`** — OpenZeppelin's `Ownable2StepUpgradeable`, held cold (a Ledger or a Safe). It
+///   is the UUPS upgrade authority of all three contracts (the other two read `CONFIG.owner()`
+///   live), and it appoints the admin (`setAdmin`). It moves in two steps — `transferOwnership`
+///   then `acceptOwnership` by the incoming key — and can never be renounced or become
+///   `address(0)`. **It holds no door that moves a token**: no sweep, no rescue. Its one residual
+///   power over user money is the upgrade itself.
+/// - **`admin`** — operational and used often: `updateConfig`, `setPaused`, the verifier registry,
+///   and `cancelSlash` on X402Stake. Every value it sets is bounded by `_validate`.
+///   It can neither upgrade anything nor appoint its successor.
+///
+/// The owner's storage is ERC-7201 namespaced (`openzeppelin.storage.Ownable` and
+/// `openzeppelin.storage.Ownable2Step`), so adopting it appends no sequential slot.
+contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, IX402Config {
     /// `state.rs:23`. May change parameters, pause, enrol and revoke verifier keys, and cancel a
-    /// pending judgement — **and upgrade all three contracts**, which is the one authority the
-    /// Solana admin does not hold (there the upgrade authority is a separate BPF-loader key).
+    /// pending judgement. **It is not the upgrade authority**
+    /// (since D-17 that is `owner()`, which is also what appoints this key — the Solana split of
+    /// admin and BPF-loader upgrade authority, restored).
     address public admin;
 
     /// `state.rs:85`. The emergency stop, read by the doors that move money on somebody else's
@@ -76,6 +93,9 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
     /// [`slashProviderBps`].
     event ConfigUpdated(address indexed admin, ParamSet params);
 
+    /// The owner replaced the admin.
+    event AdminSet(address indexed previousAdmin, address indexed newAdmin);
+
     /// `set_paused.rs:33` — the `has_one = admin` constraint, raising `ErrorCode::NotAdmin`.
     modifier onlyAdmin() {
         if (msg.sender != admin) revert NotAdmin();
@@ -100,11 +120,23 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
     /// `initialParams` is validated **as a whole set**, exactly as `initialize_config.rs:92`
     /// calls `config.validate()` after every field has landed rather than checking each
     /// argument as it arrives. The two split shares are only meaningful together.
-    function initialize(ParamSet memory initialParams, address initialAdmin) external initializer {
+    ///
+    /// **A fresh deployment names both roles, and neither may be the deployer's to keep.**
+    /// `reinitializer(2)` rather than `initializer`, so a fresh proxy lands at the SAME version an
+    /// upgraded one reaches through [`initializeV2`]; the two are alternatives and whichever runs
+    /// first closes the other. The `admin != 0` refusal makes that true even on a proxy that was
+    /// upgraded without its `initializeV2` call, where version 2 would otherwise still be open.
+    function initialize(ParamSet memory initialParams, address initialAdmin, address initialOwner)
+        external
+        reinitializer(2)
+    {
+        if (admin != address(0)) revert InvalidInitialization();
         // Not a port: on Solana the admin is `Signer<'info>` and a signature by the zero key is
         // unforgeable, so `initialize_config` cannot receive one. Here it is a plain argument,
         // and a config whose admin is `address(0)` can never be paused or upgraded again.
         if (initialAdmin == address(0)) revert InvalidAdmin();
+        // `__Ownable_init` refuses `address(0)` with `OwnableInvalidOwner(0)`.
+        __Ownable_init(initialOwner);
         _validate(initialParams);
         admin = initialAdmin;
         _params = initialParams;
@@ -112,9 +144,50 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
         emit ConfigInitialized(initialAdmin, initialParams);
     }
 
-    /// The upgrade door. Immediate, by the same decision that leaves updateConfig immediate
-    /// (D-1, D-6): the Solana upgrade authority has no timelock either.
-    function _authorizeUpgrade(address) internal override onlyAdmin {}
+    /// The D-17 migration of a proxy initialised by the version-1 `initialize`, run inside the
+    /// upgrade's own `upgradeToAndCall`: the owner role starts at the CURRENT admin (the key that
+    /// was the upgrade authority until this call). The ownership then moves to a cold key in two
+    /// steps, outside this call.
+    ///
+    /// It takes no argument, so there is nothing for whoever lands it to choose. The caller check
+    /// is defence in depth: inside `upgradeToAndCall` the caller already passed the OLD
+    /// implementation's `_authorizeUpgrade`, which is exactly `msg.sender == admin`.
+    ///
+    /// **Initializer versions.** Config is now at version 2 (this function and `initialize` both
+    /// close it); `X402Stake` and `X402Escrow` are still at version 1 (`initializer`). The NEXT
+    /// Config reinitializer must therefore be `reinitializer(3)`, and the next Stake or Escrow one
+    /// `reinitializer(2)` — a reused number would revert `InvalidInitialization` inside the
+    /// upgrade's `upgradeToAndCall`.
+    function initializeV2() external reinitializer(2) {
+        address current = admin;
+        if (current == address(0)) revert InvalidInitialization();
+        if (msg.sender != current) revert NotAdmin();
+        __Ownable_init(current);
+    }
+
+    /// The upgrade door, for this contract — and through `CONFIG.owner()` for the other two.
+    /// Immediate, with no timelock (D-1); the authority is the owner since D-17.
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    /// `Ownable.owner()`, re-declared only because `IX402Config` names it as well.
+    function owner() public view override(OwnableUpgradeable, IX402Config) returns (address) {
+        return super.owner();
+    }
+
+    /// Disabled. `Ownable2Step` already makes an accidental hand-over to a wrong address
+    /// recoverable (the wrong address never accepts); renouncing is the one move that is not, so
+    /// it does not exist here.
+    function renounceOwnership() public pure override {
+        revert OwnershipCannotBeRenounced();
+    }
+
+    /// The owner appoints (or replaces) the admin, in one step: the owner is the recovery path if
+    /// the address is wrong, which is what the single-key D-6 handover never had.
+    function setAdmin(address newAdmin) external onlyOwner {
+        if (newAdmin == address(0)) revert InvalidAdmin();
+        emit AdminSet(admin, newAdmin);
+        admin = newAdmin;
+    }
 
     function params() external view override returns (ParamSet memory) {
         return _params;
@@ -172,11 +245,15 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
     /// `unbondingPeriodSeconds` re-dates every unbonding already in flight, in both directions —
     /// X402Stake's maturity check will read it live, as `ProviderStake::unbonding_matured` does
     /// (`update_config.rs:23-26`). Decide which you are doing before you sign.
+    ///
+    /// **Since D-17 the handover half is closed.** `newAdmin` stays in the signature so the ABI
+    /// and every caller that sends `address(0)` are unchanged, but a non-zero value reverts
+    /// [`AdminChangeRequiresOwner`]: appointing the admin is the owner's `setAdmin`.
     function updateConfig(ParamSet calldata p, address newAdmin) external onlyAdmin {
+        if (newAdmin != address(0)) revert AdminChangeRequiresOwner();
         ParamSet memory q = p; // `_validate` takes memory; one copy on a cold path
         _validate(q);
         _params = q;
-        if (newAdmin != address(0)) admin = newAdmin;
         emit ConfigUpdated(admin, q);
     }
 
@@ -280,9 +357,9 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
     /// this contract runs behind an ERC1967 proxy, so a slot inserted above `_params` would
     /// reinterpret live state. `__gap` goes 50 → 49 in the same change.
     mapping(address => VerifierKey) internal verifiers;
-
     /// `events.rs:89-96`, field names kept. `label` is indexed nowhere and stored nowhere; this
     /// event is the only place it exists, which is why the whole data payload matters.
+
     event VerifierRegistered(
         address indexed verifier,
         address indexed admin,
@@ -366,12 +443,9 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
         k.revoked = true;
         k.revokedAt = uint64(block.timestamp);
         // Nothing else in this function writes. `registeredAt` and `expiresAt` SURVIVE a
-        // revocation — deliberately: `verifierExpiry` is on `IX402Config` and
-        // `X402Stake.expireSlash` reads it for a key that may well have been revoked, and the
-        // registration
-        // stamp is the other half of the audit trail this record exists to be. A "tidy up the
-        // slot" edit here changes the reap path in `X402Stake`;
-        // `test_wrongState_revocationCanNeverBeUndone` is what refuses it.
+        // revocation — deliberately: they are the audit trail (when the key was trusted, and
+        // until when it would have been), readable through `verifierKey`.
+        // `test_wrongState_revocationCanNeverBeUndone` is what refuses a "tidy up" edit here.
         emit VerifierRevokedEvent(verifier, msg.sender, k.revokedAt);
     }
 
@@ -380,12 +454,6 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
     /// is what a caller would have to assume without the flag.
     function verifierKey(address verifier) external view returns (VerifierKey memory) {
         return verifiers[verifier];
-    }
-
-    /// `state.rs:224`. Zero for an address that was never enrolled — a value no registration can
-    /// produce, since `expiresAt > now` is enforced.
-    function verifierExpiry(address verifier) external view override returns (uint64) {
-        return verifiers[verifier].expiresAt;
     }
 
     /// `state.rs:248-258` as a predicate. Non-reverting, for `expireSlash`'s "the key can no
@@ -433,5 +501,8 @@ contract X402Config is Initializable, UUPSUpgradeable, IX402Config {
     /// total footprint
     /// is unchanged, which is the property the gate checks — a field appended without paying for
     /// it out of here moves every slot after it.
+    ///
+    /// **Unchanged by D-17**: the owner role's storage is ERC-7201 namespaced
+    /// (`openzeppelin.storage.Ownable`, `openzeppelin.storage.Ownable2Step`), not a slot here.
     uint256[49] private __gap;
 }

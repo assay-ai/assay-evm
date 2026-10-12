@@ -268,16 +268,19 @@ contract BoundariesTest is Fixture {
     /// deadline. Asserted on `setLimitsBySig`, the door a buyer uses when they hold no gas — the
     /// one place where an off-by-one on the deadline would strand exactly the buyer it exists for.
     function test_B17_theMetaTransactionDeadlineAdmitsItsOwnInstant() public {
-        uint64 deadline = uint64(block.timestamp) + 600;
+        // `vm.getBlockTimestamp()`, not `block.timestamp`: under via-IR the optimiser may re-read
+        // TIMESTAMP after the `vm.warp` below, and the deadline would move with the clock.
+        uint64 deadline = uint64(vm.getBlockTimestamp()) + 600;
         bytes32 sep = escrow.DOMAIN_SEPARATOR();
-        bytes memory sig = VoucherSigner.signSetLimits(buyerKey, sep, buyer, 7, 8, 0, deadline);
+        uint64 n = escrow.escrowOf(buyer).authNonce;
+        bytes memory sig = VoucherSigner.signSetLimits(buyerKey, sep, buyer, 7, 8, n, deadline);
 
         vm.warp(uint256(deadline) + 1); // +1
         vm.expectRevert(SignatureExpired.selector);
-        escrow.setLimitsBySig(buyer, 7, 8, 0, deadline, sig);
+        escrow.setLimitsBySig(buyer, 7, 8, n, deadline, sig);
 
         vm.warp(deadline); // exact — the instant belongs to the signature
-        escrow.setLimitsBySig(buyer, 7, 8, 0, deadline, sig);
+        escrow.setLimitsBySig(buyer, 7, 8, n, deadline, sig);
         assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 7);
         assertEq(escrow.escrowOf(buyer).maxPerWindow, 8);
     }

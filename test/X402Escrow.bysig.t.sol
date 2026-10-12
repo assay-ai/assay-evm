@@ -179,16 +179,17 @@ contract X402EscrowBySigTest is Fixture {
         // incident strands, so the pause must not close their door either.
         uint64 deadline = uint64(block.timestamp) + 600;
         bytes memory s1 = VoucherSigner.signSetLimits(
-            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2, 2, 0, deadline
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2, 2, 2, deadline
         );
+        // nonce 2: the two direct decisions above consumed 0 and 1 (D-18).
         vm.prank(relayer);
-        escrow.setLimitsBySig(buyer, 2, 2, 0, deadline, s1);
+        escrow.setLimitsBySig(buyer, 2, 2, 2, deadline, s1);
 
         bytes memory s2 = VoucherSigner.signRequestWithdraw(
-            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000, 1, deadline
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000, 3, deadline
         );
         vm.prank(relayer);
-        escrow.requestWithdrawBySig(buyer, 2_000, 1, deadline, s2);
+        escrow.requestWithdrawBySig(buyer, 2_000, 3, deadline, s2);
 
         assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 2);
         assertEq(escrow.escrowOf(buyer).withdrawRequested, 2_000);
@@ -473,17 +474,17 @@ contract X402EscrowBySigTest is Fixture {
         uint64 deadline = uint64(block.timestamp) + 600;
 
         bytes memory s1 =
-            VoucherSigner.signSetLimits(buyerKey, dom, buyer, 2_000_000, 5_000_000, 0, deadline);
+            VoucherSigner.signSetLimits(buyerKey, dom, buyer, 2_000_000, 5_000_000, 1, deadline);
         vm.prank(relayer);
-        e2.setLimitsBySig(buyer, 2_000_000, 5_000_000, 0, deadline, s1);
+        e2.setLimitsBySig(buyer, 2_000_000, 5_000_000, 1, deadline, s1);
 
         vm.prank(buyer);
         e2.requestWithdraw(1_000);
 
         bytes memory s2 =
-            VoucherSigner.signRequestWithdraw(buyerKey, dom, buyer, 2_000, 1, deadline);
+            VoucherSigner.signRequestWithdraw(buyerKey, dom, buyer, 2_000, 3, deadline);
         vm.prank(relayer);
-        e2.requestWithdrawBySig(buyer, 2_000, 1, deadline, s2);
+        e2.requestWithdrawBySig(buyer, 2_000, 3, deadline, s2);
 
         assertEq(e2.escrowOf(buyer).maxVoucherAmount, 2_000_000);
         assertEq(e2.escrowOf(buyer).withdrawRequested, 2_000);

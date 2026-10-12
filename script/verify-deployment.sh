@@ -49,11 +49,47 @@ lc() { echo "$1" | tr 'A-Z' 'a-z'; }
 # 46630 on 2026-09-22 — while passing nothing on a fork either, because it had never been run
 # against a broadcast. The spans come from the compiler's own `immutableReferences`, so this masks
 # exactly what the constructor writes and nothing an upgrade could hide in.
+#
+# **The spans are taken from the build of the commit that implementation was built at**, not from
+# this tree. A shared library change moves the offsets of a contract that was NOT upgraded — the
+# delegation upgrade (2026-10-12) refactored `Sig`, which X402Stake also links, so Stake's
+# deployed code and this tree's Stake build put their immutables at different offsets, and masking
+# the old code at the new offsets failed a correct deployment. The commit is the contract's own
+# `builtAt` when the record has one (set on upgrade), else the record's `commit`. When that
+# commit's sources equal this tree's, the local build is used; otherwise the commit is exported
+# with `git archive` (lib/ is vendored, so the export builds standalone) and built in $TMP.
+build_dir_at() { # <commit> <path>... -> a directory whose out/ was built at <commit>
+  # This tree when every <path> is identical at <commit> and clean here; otherwise an export of
+  # <commit> built once in $TMP. Without a usable commit it falls back to this tree.
+  local commit="$1" dir; shift
+  if [ -n "$commit" ] && git -C "$HERE" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    if ! git -C "$HERE" diff --quiet "$commit" HEAD -- "$@" \
+        || [ -n "$(git -C "$HERE" status --porcelain -- "$@")" ]; then
+      dir="$TMP/build-$commit"
+      if [ ! -d "$dir" ]; then
+        mkdir -p "$dir"
+        git -C "$HERE" archive "$commit" | tar -x -C "$dir"
+        (cd "$dir" && "$FORGE" build --quiet >/dev/null)
+      fi
+      echo "$dir"
+      return
+    fi
+  fi
+  [ -d "$HERE/out" ] || (cd "$HERE" && "$FORGE" build --quiet >/dev/null)
+  echo "$HERE"
+}
+
+artifact_for() { # <contract> -> path to the artifact built at the contract's recorded commit
+  local c="$1" dir
+  dir=$(build_dir_at "$(jq -r ".contracts.\"$c\".builtAt // .commit // empty" "$REC")" src)
+  [ -f "$dir/out/$c.sol/$c.json" ] || (cd "$dir" && "$FORGE" build --quiet >/dev/null)
+  echo "$dir/out/$c.sol/$c.json"
+}
+
 masked_code() { # <contract> <address>
   local code art starts
   code=$(cast code "$2" --rpc-url "$RPC"); code=${code#0x}
-  art="out/$1.sol/$1.json"
-  [ -f "$art" ] || "$FORGE" build --quiet >/dev/null
+  art=$(artifact_for "$1")
   starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art")
   while read -r start len; do
     [ -n "$start" ] || continue
@@ -115,6 +151,12 @@ done
 #    (forge/cast 1.2.1-nightly 7e68208e) and is checked against EIP-1014 vector 0
 #    (CREATE2(0x0, 0x0, keccak(0x)) = 0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0), so the shell
 #    fallback keccak256(0xff ++ deployer ++ salt ++ initCodeHash)[12:] is not needed.
+#
+#    **After an upgrade the proxy's initcode still names the implementation it was CREATED with**,
+#    not the current one: `implementation` moves with every upgrade, the proxy address never does.
+#    So an upgraded contract keeps its first implementation in `initialImplementation`, and this
+#    check reads that field when present. Without it, the first verify after the first upgrade
+#    (46630, 2026-10-12) failed here on a proxy that was correct.
 CREATE2_DEPLOYER=$(jq -r '.create2Deployer // "0x4e59b44847b379578588920ca78fbf26c0b4956c"' "$REC")
 dep=$(jq -r '.deployer // empty' "$REC")
 [ -n "$dep" ] || fail "the record has no \`deployer\` field — it predates the CREATE2 check. Regenerate it."
@@ -123,15 +165,23 @@ if [ "$(lc "$dep")" = "0x0000000000000000000000000000000000000000" ]; then
 fi
 [ "$(cast code "$CREATE2_DEPLOYER" --rpc-url "$RPC")" != "0x" ] \
   || fail "no code at the CREATE2 deployer $CREATE2_DEPLOYER on chain $CHAIN_ID — every salted proxy in this record was created by it, so the record cannot be right"
+# **The proxy's creation code is built at the record's `commit`**, the deploy commit, not at HEAD.
+# Its CBOR metadata hash covers the remappings and every imported source, so an unrelated change
+# to either moves the initcode hash and with it the CREATE2 address: 558ba11 added two
+# OZ-upgradeable lines to remappings.txt and check 1 then failed on a correct 46630 record. The
+# proxy is never upgraded, so the deploy commit is the only build that can reproduce it.
+PROXY_DIR=$(build_dir_at "$(jq -r '.commit // empty' "$REC")" src lib remappings.txt foundry.toml)
+[ -f "$PROXY_DIR/out/ERC1967Proxy.sol/ERC1967Proxy.json" ] || (cd "$PROXY_DIR" && "$FORGE" build --quiet >/dev/null)
+PROXY_INITCODE=$(jq -er '.bytecode.object' "$PROXY_DIR/out/ERC1967Proxy.sol/ERC1967Proxy.json")
 for c in X402Config X402Stake X402Escrow; do
   proxy=$(jq -er ".contracts.\"$c\".proxy" "$REC")
   salt=$(jq -er ".contracts.\"$c\".salt" "$REC")
   args=$(jq -er ".contracts.\"$c\".initializerArgs" "$REC")
   [ "$args" != "0x" ] || fail "$c has no initializerArgs in the record, so its proxy address cannot be reproduced. Fill it from the deploy (it is abi.encodeCall(initialize, ...)), then re-run."
   init=$(cast keccak "$(cast concat-hex \
-      "$($FORGE inspect ERC1967Proxy bytecode | tr -d '\n')" \
+      "$PROXY_INITCODE" \
       "$(cast abi-encode 'constructor(address,bytes)' \
-          "$(jq -er ".contracts.\"$c\".implementation" "$REC")" "$args")")")
+          "$(jq -er ".contracts.\"$c\".initialImplementation // .contracts.\"$c\".implementation" "$REC")" "$args")")")
   want=$(cast create2 --deployer "$CREATE2_DEPLOYER" --salt "$salt" --init-code-hash "$init")
   [ "$(lc "$want")" = "$(lc "$proxy")" ] || fail \
     "$c proxy is not CREATE2(deployer=$CREATE2_DEPLOYER, salt=$salt, initcode over implementation+initializerArgs) — computed $want, record says $proxy"
@@ -170,10 +220,23 @@ ast=$(jq -er '.asset.address' "$REC")
 [ "$(cast call "$ast" 'decimals()(uint8)' --rpc-url "$RPC")" = "6" ] || fail "asset decimals"
 [ "$(cast code "$ast" --rpc-url "$RPC")" != "0x" ] || fail "the settlement asset has NO CODE"
 
-# The admin the record names still holds the key — which under D-1 is also the upgrade authority
-# of all three. A handover nobody recorded shows up here.
+# The admin the record names still holds the key. A handover nobody recorded shows up here.
 adm=$(jq -er '.admin' "$REC")
 [ "$(lc "$(cast call "$cfg" 'admin()(address)' --rpc-url "$RPC")")" = "$(lc "$adm")" ] || fail "config.admin"
+# D-17: the OWNER is the upgrade authority of all three. A record from before the D-17 upgrade has
+# no `owner`; once the upgrade landed it must carry one, and the live owner must match it.
+own=$(jq -r '.owner // empty' "$REC")
+if [ -n "$own" ]; then
+  [ "$(lc "$(cast call "$cfg" 'owner()(address)' --rpc-url "$RPC")")" = "$(lc "$own")" ] || fail "config.owner"
+  # A standing proposal is harmless until it is accepted, so it WARNS rather than fails: owner()
+  # above is the fail-closed check. Surfaced so a transfer nobody recorded is seen before it lands.
+  pend=$(cast call "$cfg" 'pendingOwner()(address)' --rpc-url "$RPC")
+  if [ "$(lc "$pend")" != "0x0000000000000000000000000000000000000000" ]; then
+    echo "WARN: config.pendingOwner() is $pend — an ownership transfer is proposed and not yet accepted" >&2
+  fi
+elif cast call "$cfg" 'owner()(address)' --rpc-url "$RPC" >/dev/null 2>&1; then
+  fail "the live config has an owner() but the record names none — add .owner (runbook §7.4)"
+fi
 
 # Read from the PROXY, which is the `verifyingContract` every voucher names. If an upgrade ever
 # moved this, every outstanding voucher is already dead — see Upgrade.t.sol (d).
@@ -184,4 +247,4 @@ for c in X402Escrow X402Stake; do
   [ "$(lc "$g")" = "$(lc "$w")" ] || fail "$c DOMAIN_SEPARATOR ($g != $w)"
 done
 
-echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, function surface, wiring, admin, domains, CREATE2 reproduction)"
+echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"

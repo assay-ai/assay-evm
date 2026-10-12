@@ -62,6 +62,32 @@ struct RequestWithdraw {
     uint64 deadline;
 }
 
+/// A payer authorising a DELEGATE key to sign vouchers on their escrow, signed by the payer.
+/// EVM only, like [`SetLimits`]: it exists so an account whose own key cannot leave its wallet
+/// (an embedded wallet, for one) can hand a headless agent a key of its own, bounded by caps
+/// and a horizon, without paying gas. The delegate can sign VOUCHERS and nothing else; every
+/// other door of the escrow still recovers to the payer or reads `msg.sender`.
+///
+/// `nonce` is the escrow's `authNonce`, shared with [`SetLimits`] and [`RequestWithdraw`] —
+/// the argument is at `X402Escrow.authorizeDelegate`.
+struct AuthorizeDelegate {
+    address payer;
+    address delegate;
+    uint64 maxVoucherAmount;
+    uint64 maxPerWindow;
+    uint64 validUntil;
+    uint64 nonce;
+    uint64 deadline;
+}
+
+/// Withdrawing a delegate's authority, signed by the payer. Same nonce, same reasoning.
+struct RevokeDelegate {
+    address payer;
+    address delegate;
+    uint64 nonce;
+    uint64 deadline;
+}
+
 /// Everything X402Config's admin can change, in one struct so `updateConfig` validates it as
 /// a set — the two split shares are only meaningful together (update_config.rs).
 struct ParamSet {
@@ -117,7 +143,7 @@ enum CancelReason {
     VerifierUnavailable
 }
 
-// The four EIP-712 type strings.
+// The six EIP-712 type strings.
 //
 // Each is the canonical encoding of the struct above it: `Name(type field,type field,…)`, no
 // spaces except the one between each type and its name, fields in declaration order. There is
@@ -142,3 +168,11 @@ bytes32 constant SET_LIMITS_TYPEHASH = keccak256(
 
 bytes32 constant REQUEST_WITHDRAW_TYPEHASH =
     keccak256("RequestWithdraw(address buyer,uint64 amount,uint64 nonce,uint64 deadline)");
+
+bytes32 constant AUTHORIZE_DELEGATE_TYPEHASH = keccak256(
+    "AuthorizeDelegate(address payer,address delegate,uint64 maxVoucherAmount,"
+    "uint64 maxPerWindow,uint64 validUntil,uint64 nonce,uint64 deadline)"
+);
+
+bytes32 constant REVOKE_DELEGATE_TYPEHASH =
+    keccak256("RevokeDelegate(address payer,address delegate,uint64 nonce,uint64 deadline)");

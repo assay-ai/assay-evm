@@ -2,7 +2,12 @@
 pragma solidity 0.8.24;
 
 import {
-    Voucher, VOUCHER_TYPEHASH, SET_LIMITS_TYPEHASH, REQUEST_WITHDRAW_TYPEHASH
+    Voucher,
+    VOUCHER_TYPEHASH,
+    SET_LIMITS_TYPEHASH,
+    REQUEST_WITHDRAW_TYPEHASH,
+    AUTHORIZE_DELEGATE_TYPEHASH,
+    REVOKE_DELEGATE_TYPEHASH
 } from "../Types.sol";
 
 /// EIP-712 struct hashing. Each function uses a DISTINCT typehash, which is what closes
@@ -80,5 +85,36 @@ library Voucher712 {
         returns (bytes32)
     {
         return keccak256(abi.encode(REQUEST_WITHDRAW_TYPEHASH, buyer, amount, nonce, deadline));
+    }
+
+    function hashAuthorizeDelegate(
+        address payer,
+        address delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 validUntil,
+        uint64 nonce,
+        uint64 deadline
+    ) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                AUTHORIZE_DELEGATE_TYPEHASH,
+                payer,
+                delegate,
+                maxVoucherAmount,
+                maxPerWindow,
+                validUntil,
+                nonce,
+                deadline
+            )
+        );
+    }
+
+    function hashRevokeDelegate(address payer, address delegate, uint64 nonce, uint64 deadline)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(REVOKE_DELEGATE_TYPEHASH, payer, delegate, nonce, deadline));
     }
 }

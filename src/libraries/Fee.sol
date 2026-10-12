@@ -22,7 +22,7 @@ import {Cast} from "./Cast.sol";
 /// correct only because every caller happens to be careful puts the guard in the wrong place —
 /// and the config, redeem, withdrawal and slash paths each add call sites. The narrowing is
 /// therefore checked
-/// here, in [`narrow`], and reverts [`MathOverflow`].
+/// here, through `Cast.toUint64`, and reverts [`MathOverflow`].
 library Fee {
     /// Splits a redeemed voucher into the platform's fee and the provider's payment.
     ///
@@ -35,7 +35,7 @@ library Fee {
         pure
         returns (uint64 fee, uint64 providerAmount)
     {
-        fee = narrow((uint256(amount) * takeRateBps) / Constants.BPS_DENOMINATOR);
+        fee = Cast.toUint64((uint256(amount) * takeRateBps) / Constants.BPS_DENOMINATOR);
         providerAmount = amount - fee; // checked; fee <= amount because takeRateBps <= 10_000
     }
 
@@ -43,29 +43,6 @@ library Fee {
     /// platform's share are each `bpsOf(applied, …)` and the provider keeps what is left, so the
     /// same "one division per share, remainder by subtraction" shape holds there too.
     function bpsOf(uint64 amount, uint16 bps) internal pure returns (uint64) {
-        return narrow((uint256(amount) * bps) / Constants.BPS_DENOMINATOR);
-    }
-
-    /// The checked narrowing both functions share — `execute_slash.rs:310`'s
-    /// `u64::try_from(scaled).map_err(|_| error!(ErrorCode::MathOverflow))`, and the single site
-    /// where a bps share stops being a `uint256`.
-    ///
-    /// **Which half of this is parity and which half is stricter.** For [`bpsOf`] it is exact
-    /// parity: the Anchor `bps_of` narrows with `u64::try_from` and yields `MathOverflow`. For
-    /// [`splitFee`] it is deliberately **stricter than the reference**: `state.rs:634-635` narrows
-    /// the fee with a bare `as u64`, which in Rust truncates just as silently as the Solidity cast
-    /// did, and the `checked_sub` on the next line only catches the subset of truncations that
-    /// happen to leave `fee > amount`. Both behaviours are identical for every `takeRateBps <=
-    /// BPS_DENOMINATOR`, which is every value the validated config can hold; they differ only
-    /// above it, where this port refuses and the Anchor original returns a silently wrong split.
-    /// Recorded here rather than in a commit message because it is the one place these contracts
-    /// knowingly do not match the program they port.
-    ///
-    /// **The body moved to `Cast.toUint64`** and this is now a one-line forwarder.
-    /// `Window.narrow` was the second copy and `_redeem` was about to be the third; the check
-    /// itself, its error and every behaviour above are unchanged, and `test/Fee.t.sol` is what
-    /// proves that — it drives this path at `type(uint64).max` across the whole bps range.
-    function narrow(uint256 value) private pure returns (uint64) {
-        return Cast.toUint64(value);
+        return Cast.toUint64((uint256(amount) * bps) / Constants.BPS_DENOMINATOR);
     }
 }
