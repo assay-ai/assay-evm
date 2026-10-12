@@ -58,25 +58,32 @@ lc() { echo "$1" | tr 'A-Z' 'a-z'; }
 # `builtAt` when the record has one (set on upgrade), else the record's `commit`. When that
 # commit's sources equal this tree's, the local build is used; otherwise the commit is exported
 # with `git archive` (lib/ is vendored, so the export builds standalone) and built in $TMP.
-artifact_for() { # <contract> -> path to the artifact built at the contract's recorded commit
-  local c="$1" commit tree here_tree dir
-  commit=$(jq -r ".contracts.\"$c\".builtAt // .commit // empty" "$REC")
+build_dir_at() { # <commit> <path>... -> a directory whose out/ was built at <commit>
+  # This tree when every <path> is identical at <commit> and clean here; otherwise an export of
+  # <commit> built once in $TMP. Without a usable commit it falls back to this tree.
+  local commit="$1" dir; shift
   if [ -n "$commit" ] && git -C "$HERE" cat-file -e "$commit^{commit}" 2>/dev/null; then
-    tree=$(git -C "$HERE" rev-parse "$commit:src")
-    here_tree=$(git -C "$HERE" rev-parse "HEAD:src")
-    if [ "$tree" != "$here_tree" ] || [ -n "$(git -C "$HERE" status --porcelain -- src)" ]; then
+    if ! git -C "$HERE" diff --quiet "$commit" HEAD -- "$@" \
+        || [ -n "$(git -C "$HERE" status --porcelain -- "$@")" ]; then
       dir="$TMP/build-$commit"
       if [ ! -d "$dir" ]; then
         mkdir -p "$dir"
         git -C "$HERE" archive "$commit" | tar -x -C "$dir"
         (cd "$dir" && "$FORGE" build --quiet >/dev/null)
       fi
-      echo "$dir/out/$c.sol/$c.json"
+      echo "$dir"
       return
     fi
   fi
-  [ -f "$HERE/out/$c.sol/$c.json" ] || (cd "$HERE" && "$FORGE" build --quiet >/dev/null)
-  echo "$HERE/out/$c.sol/$c.json"
+  [ -d "$HERE/out" ] || (cd "$HERE" && "$FORGE" build --quiet >/dev/null)
+  echo "$HERE"
+}
+
+artifact_for() { # <contract> -> path to the artifact built at the contract's recorded commit
+  local c="$1" dir
+  dir=$(build_dir_at "$(jq -r ".contracts.\"$c\".builtAt // .commit // empty" "$REC")" src)
+  [ -f "$dir/out/$c.sol/$c.json" ] || (cd "$dir" && "$FORGE" build --quiet >/dev/null)
+  echo "$dir/out/$c.sol/$c.json"
 }
 
 masked_code() { # <contract> <address>
@@ -158,13 +165,21 @@ if [ "$(lc "$dep")" = "0x0000000000000000000000000000000000000000" ]; then
 fi
 [ "$(cast code "$CREATE2_DEPLOYER" --rpc-url "$RPC")" != "0x" ] \
   || fail "no code at the CREATE2 deployer $CREATE2_DEPLOYER on chain $CHAIN_ID — every salted proxy in this record was created by it, so the record cannot be right"
+# **The proxy's creation code is built at the record's `commit`**, the deploy commit, not at HEAD.
+# Its CBOR metadata hash covers the remappings and every imported source, so an unrelated change
+# to either moves the initcode hash and with it the CREATE2 address: 558ba11 added two
+# OZ-upgradeable lines to remappings.txt and check 1 then failed on a correct 46630 record. The
+# proxy is never upgraded, so the deploy commit is the only build that can reproduce it.
+PROXY_DIR=$(build_dir_at "$(jq -r '.commit // empty' "$REC")" src lib remappings.txt foundry.toml)
+[ -f "$PROXY_DIR/out/ERC1967Proxy.sol/ERC1967Proxy.json" ] || (cd "$PROXY_DIR" && "$FORGE" build --quiet >/dev/null)
+PROXY_INITCODE=$(jq -er '.bytecode.object' "$PROXY_DIR/out/ERC1967Proxy.sol/ERC1967Proxy.json")
 for c in X402Config X402Stake X402Escrow; do
   proxy=$(jq -er ".contracts.\"$c\".proxy" "$REC")
   salt=$(jq -er ".contracts.\"$c\".salt" "$REC")
   args=$(jq -er ".contracts.\"$c\".initializerArgs" "$REC")
   [ "$args" != "0x" ] || fail "$c has no initializerArgs in the record, so its proxy address cannot be reproduced. Fill it from the deploy (it is abi.encodeCall(initialize, ...)), then re-run."
   init=$(cast keccak "$(cast concat-hex \
-      "$($FORGE inspect ERC1967Proxy bytecode | tr -d '\n')" \
+      "$PROXY_INITCODE" \
       "$(cast abi-encode 'constructor(address,bytes)' \
           "$(jq -er ".contracts.\"$c\".initialImplementation // .contracts.\"$c\".implementation" "$REC")" "$args")")")
   want=$(cast create2 --deployer "$CREATE2_DEPLOYER" --salt "$salt" --init-code-hash "$init")
