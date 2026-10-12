@@ -152,6 +152,12 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// It takes no argument, so there is nothing for whoever lands it to choose. The caller check
     /// is defence in depth: inside `upgradeToAndCall` the caller already passed the OLD
     /// implementation's `_authorizeUpgrade`, which is exactly `msg.sender == admin`.
+    ///
+    /// **Initializer versions.** Config is now at version 2 (this function and `initialize` both
+    /// close it); `X402Stake` and `X402Escrow` are still at version 1 (`initializer`). The NEXT
+    /// Config reinitializer must therefore be `reinitializer(3)`, and the next Stake or Escrow one
+    /// `reinitializer(2)` — a reused number would revert `InvalidInitialization` inside the
+    /// upgrade's `upgradeToAndCall`.
     function initializeV2() external reinitializer(2) {
         address current = admin;
         if (current == address(0)) revert InvalidInitialization();

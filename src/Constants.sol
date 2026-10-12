@@ -165,10 +165,13 @@ library Constants {
     /// view's size rather than on anybody's money. No Anchor counterpart.
     uint256 internal constant MAX_DELEGATES_PER_PAYER = 16;
 
-    /// The longest a relayed (`…BySig`) authorisation may be valid for: `deadline` may be at most
-    /// this far past the block that lands it. The backend signs with 300 s; without a cap, a
-    /// phished signature with a far deadline would stay landable for years. No Anchor
-    /// counterpart — Solana has no relayed doors.
+    /// How far ahead of the landing block a relayed (`…BySig`) authorisation's `deadline` may be:
+    /// it is checked when the call LANDS (`deadline <= block.timestamp + this`), so it bounds how
+    /// early before its deadline a signature can be landed. It is **not** a signature lifetime: a
+    /// signature with a far deadline is refused now but lands in the last hour before that
+    /// deadline. What kills a withheld signature is the shared `authNonce`, which every later
+    /// payer decision consumes. The backend signs with 300 s. No Anchor counterpart — Solana has
+    /// no relayed doors.
     uint64 internal constant MAX_SIGNATURE_LIFETIME_SECONDS = 3600;
 
     /// EIP-2's low-s ceiling, `floor(secp256k1n / 2)`. Enforced on every recover: without

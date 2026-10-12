@@ -690,8 +690,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ) internal {
         if (buyer == address(0)) revert ZeroAddress();
         if (block.timestamp > deadline) revert SignatureExpired();
-        // D-18: a relayed authorisation lives at most `MAX_SIGNATURE_LIFETIME_SECONDS`, so a
-        // phished or withheld signature cannot stay landable for years. `uint256`, no overflow.
+        // D-18: when the call lands, `deadline` may be at most `MAX_SIGNATURE_LIFETIME_SECONDS`
+        // ahead of now. Not a lifetime: a far deadline still lands in its last hour; the shared
+        // `authNonce` is what kills a withheld signature. `uint256`, no overflow.
         if (deadline > block.timestamp + Constants.MAX_SIGNATURE_LIFETIME_SECONDS) {
             revert SignatureDeadlineTooFar();
         }

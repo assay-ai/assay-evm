@@ -78,11 +78,12 @@ this risk and raises the next one.
 key (a Ledger, or a Safe in production), and no longer the operational admin. The owner can replace
 `X402Escrow`'s logic in one transaction with no delay and take every buyer's USDG.
 
-**This is the one residual power any role holds over user funds.** No role has a door that moves
-a token directly: there is no sweep, no rescue, no "excess" transfer, for the owner, the admin or
-anyone else, and for no token (`test/NoTokenDoors.t.sol` pins every token-moving line in `src/`
-and the function it sits in). The only ways a token leaves are a payer-signed voucher, the
-buyer's own `withdraw()`, the provider's own `withdrawStake`, and the two-phase slash.
+**The upgrade is the owner's power over funds, but it is not the only role power over them.** No
+role has a door that transfers a token to itself: there is no sweep, no rescue, no "excess"
+transfer, for the owner, the admin or anyone else, and for no token (`test/NoTokenDoors.t.sol`
+pins every token-moving line in `src/` and the function it sits in). The only ways a token leaves
+are a payer-signed voucher, the buyer's own `withdraw()`, the provider's own `withdrawStake`, and
+the two-phase slash. The ADMIN can still steer two of those through parameters — see §4a.
 
 This is **exactly the exposure the Solana program already carries** through its
 `BPFLoaderUpgradeable` upgrade authority, and parity is why it was chosen (D-1) over the
@@ -96,6 +97,32 @@ moves only in two steps, so a mistyped successor never becomes the owner.
 **What does not bound it:** nothing on chain. No timelock, no pending-implementation slot, by
 decision (D-1). If one is wanted, make an external `TimelockController` (behind a Safe) the owner,
 with a delay longer than `WITHDRAW_DELAY_SECONDS` plus a margin; no contract change is needed.
+
+## 4a. The admin alone can redirect provider stake and fees, through parameters
+
+Found by the independent review of D-17 (S2-1). It predates D-17. No upgrade and no owner are
+involved: every value below passes `_validate`.
+
+- **Provider stake, after 72 h.** The admin can `registerVerifier` a key it holds and raise the
+  slash parameters with `updateConfig` (`slashCapBps` up to 5,000, `slashAgentBps` 10,000,
+  `penaltyAmount` and `verifierDailyCap` at their maxima). A `proposeSlash` naming its own
+  beneficiary then pays out **up to 50% of a provider's at-risk stake** when anyone calls
+  `executeSlash` after the 72 h delay — repeatable per provider and per window.
+  **The remedy is inside the delay:** the owner calls `setAdmin(fresh)`, and the fresh admin calls
+  `revokeVerifier` on the rogue key; `executeSlash` then reverts `VerifierRevoked`.
+- **Fees, immediately.** The admin can set `treasury` to an address it picks and `takeRateBps` up
+  to 3,000 in one `updateConfig`. From the next block **up to 30% of every redeemed voucher** goes
+  there. There is no delay; the bound is `MAX_TAKE_RATE_BPS` and how fast the owner replaces the
+  admin.
+- **Redemption ordering.** The admin can pin `redeemer` to itself, which lets it order (and so
+  void lower-seq) redemptions.
+
+**Monitoring (required, off chain):** alert, paging, on every `ConfigUpdated` and every
+`VerifierRegistered` event from `X402Config`. Each one is either a change the operator made and
+can confirm in minutes, or the start of the scenarios above — and the slash one gives 72 h to act.
+
+No contract change is made for this yet; making `registerVerifier` and a `treasury` / `redeemer`
+change owner-only is the smallest code fix, and it is an open decision.
 
 ## 5. The admin and the upgrade key were the same key — resolved by D-17
 
@@ -342,5 +369,7 @@ Each signature was bounded only by its own deadline, which the chain did not cap
 
 **Now:** every payer decision consumes `authNonce`, direct or relayed. A relayed signature
 whose `deadline` is more than `MAX_SIGNATURE_LIFETIME_SECONDS` (1 h) past the landing block is
-refused (`SignatureDeadlineTooFar`). The cost: a relayed signature still in flight dies when the
+refused (`SignatureDeadlineTooFar`). That caps how early a signature can land, not how long it
+lives: one with a far deadline still lands in the hour before it, unless a later decision has
+consumed `authNonce` — which is what actually kills a withheld signature. The cost: a relayed signature still in flight dies when the
 payer acts directly, and must be signed again.

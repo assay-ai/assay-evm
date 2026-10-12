@@ -3,11 +3,18 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 
-/// **No role can move user funds directly (D-17).** The only ways a token leaves `X402Escrow` or
-/// `X402Stake` are the ones a user's own signature or own call authorises — a signed voucher, the
-/// buyer's `withdraw()`, the provider's `withdrawStake`, and the two-phase slash. The owner's one
-/// residual power over that money is the upgrade itself; there is no sweep, no rescue, no
-/// "excess" transfer, for any role and any token.
+/// **No role has a door that transfers a token to itself (D-17).** The only ways a token leaves
+/// `X402Escrow` or `X402Stake` are a signed voucher, the buyer's `withdraw()`, the provider's
+/// `withdrawStake`, and the two-phase slash; there is no sweep, no rescue, no "excess" transfer,
+/// for any role and any token. The owner's power over that money is the upgrade.
+///
+/// **That is not "no role can redirect money".** The ADMIN, without the owner, holds bounded
+/// indirect powers through parameters (risk register §4a): it can register a verifier and raise
+/// the slash parameters, which allows a slash of up to 50% of a provider's at-risk stake to a
+/// beneficiary it picks after the 72 h delay (the owner stops it inside the delay with
+/// `setAdmin`, then the fresh admin's `revokeVerifier`); and it can repoint the treasury and raise
+/// the take rate to 30%, which takes effect with no delay. This file pins the token-moving LINES;
+/// it cannot see where a parameter sends the money.
 ///
 /// This file is the tripwire for a future change that adds one. It pins, as SOURCE TEXT, every
 /// line in `src/` that can move a token, together with the function it sits in. A new

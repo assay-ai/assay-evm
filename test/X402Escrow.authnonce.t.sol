@@ -8,7 +8,8 @@ import "../src/Errors.sol";
 
 /// D-18: **every payer decision consumes `authNonce`**, direct or relayed, so a relayed
 /// signature the relayer WITHHELD can never land after a later decision and undo it; and a
-/// relayed authorisation lives at most `MAX_SIGNATURE_LIFETIME_SECONDS`.
+/// relayed authorisation's `deadline` may be at most `MAX_SIGNATURE_LIFETIME_SECONDS` ahead of the
+/// block that lands it (a landing-window cap, not a signature lifetime).
 contract X402EscrowAuthNonceTest is Fixture {
     address internal relayer = address(0x7E1A);
     address internal delegate = address(0xDE1E);
