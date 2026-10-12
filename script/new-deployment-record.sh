@@ -119,6 +119,7 @@ cat > "$OUT" <<JSON
   "settings": { "viaIr": true, "optimizerRuns": 200, "evmVersion": "shanghai", "bytecodeHash": "none" },
   "asset": { "address": "$ASSET", "symbol": "$SYM", "decimals": 6 },
   "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  "owner": "0x0000000000000000000000000000000000000000",
   "admin": "0x0000000000000000000000000000000000000000",
   "deployer": "0x0000000000000000000000000000000000000000",
   "create2Deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
@@ -165,6 +166,6 @@ $(abi_json_entries X402Escrow)
 }
 JSON
 echo "wrote $OUT (status: pending-deploy)"
-echo "Fill the six addresses, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
+echo "Fill the six addresses, the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
 echo "two domain separators from Deploy.s.sol's output,"
 echo "flip .status to \"deployed\", then: ./script/verify-deployment.sh $CHAIN_ID $RPC"

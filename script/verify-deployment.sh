@@ -205,10 +205,17 @@ ast=$(jq -er '.asset.address' "$REC")
 [ "$(cast call "$ast" 'decimals()(uint8)' --rpc-url "$RPC")" = "6" ] || fail "asset decimals"
 [ "$(cast code "$ast" --rpc-url "$RPC")" != "0x" ] || fail "the settlement asset has NO CODE"
 
-# The admin the record names still holds the key — which under D-1 is also the upgrade authority
-# of all three. A handover nobody recorded shows up here.
+# The admin the record names still holds the key. A handover nobody recorded shows up here.
 adm=$(jq -er '.admin' "$REC")
 [ "$(lc "$(cast call "$cfg" 'admin()(address)' --rpc-url "$RPC")")" = "$(lc "$adm")" ] || fail "config.admin"
+# D-17: the OWNER is the upgrade authority of all three. A record from before the D-17 upgrade has
+# no `owner`; once the upgrade landed it must carry one, and the live owner must match it.
+own=$(jq -r '.owner // empty' "$REC")
+if [ -n "$own" ]; then
+  [ "$(lc "$(cast call "$cfg" 'owner()(address)' --rpc-url "$RPC")")" = "$(lc "$own")" ] || fail "config.owner"
+elif cast call "$cfg" 'owner()(address)' --rpc-url "$RPC" >/dev/null 2>&1; then
+  fail "the live config has an owner() but the record names none — add .owner (runbook §7.4)"
+fi
 
 # Read from the PROXY, which is the `verifyingContract` every voucher names. If an upgrade ever
 # moved this, every outstanding voucher is already dead — see Upgrade.t.sol (d).
@@ -219,4 +226,4 @@ for c in X402Escrow X402Stake; do
   [ "$(lc "$g")" = "$(lc "$w")" ] || fail "$c DOMAIN_SEPARATOR ($g != $w)"
 done
 
-echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, function surface, wiring, admin, domains, CREATE2 reproduction)"
+echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"

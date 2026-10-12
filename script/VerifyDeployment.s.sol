@@ -63,6 +63,9 @@ contract VerifyDeployment is Script {
         console2.log("X402Stake   impl (live)", _implOf(address(stake)));
         console2.log("X402Escrow  impl (live)", _implOf(address(escrow)));
 
+        // `owner()` exists only after the D-17 upgrade; a version-1 config logs address(0).
+        console2.log("owner                 ", _addrOrZero(address(config), "owner()"));
+        console2.log("pending owner         ", _addrOrZero(address(config), "pendingOwner()"));
         console2.log("admin                 ", config.admin());
         console2.log("paused                ", config.paused());
 
@@ -88,5 +91,10 @@ contract VerifyDeployment is Script {
 
     function _implOf(address proxy) internal view returns (address) {
         return address(uint160(uint256(vm.load(proxy, IMPL_SLOT))));
+    }
+
+    function _addrOrZero(address target, string memory sig) internal view returns (address) {
+        (bool ok, bytes memory ret) = target.staticcall(abi.encodeWithSignature(sig));
+        return ok && ret.length == 32 ? abi.decode(ret, (address)) : address(0);
     }
 }
