@@ -472,8 +472,16 @@ cast send <proxy> "upgradeToAndCall(address,bytes)" <newImplementation> 0x \
   --rpc-url <rpc> --ledger      # the OWNER; the admin is refused (NotOwner / OwnableUnauthorizedAccount)
 ```
 
+With `script/UpgradeByOwner.s.sol` (`run()`, or `safeCalldata()` for a Safe), each flagged proxy
+also needs `EXPECTED_CODEHASH_<NAME>` — the `extcodehash` of `IMPL_<NAME>`
+(`cast keccak $(cast code $IMPL_<NAME> --rpc-url <rpc>)`), taken from the implementation that
+`check-bytecode.sh` / `verify-deployment.sh` matched against the local build. The script refuses
+(`ImplementationCodehashMismatch`) an `IMPL_*` whose code is not that hash, so the owner signs for
+exactly the verified code and not for whatever address ended up in the env.
+
 The `bytes` payload is `0x` unless a reinitialiser is genuinely needed; if it is, it is a
-`reinitializer(n)` function, it is written and reviewed as part of the same change, and its
+`reinitializer(n)` function — **the next Config one is `reinitializer(3)`, the next Stake or Escrow
+one `reinitializer(2)`** (versions after D-17: Config 2, Stake 1, Escrow 1) — it is written and reviewed as part of the same change, and its
 calldata goes here so the state migration and the upgrade are one atomic transaction.
 
 ### Post-checks, immediately, in this order
@@ -520,12 +528,45 @@ signed by the **current admin**, and the owner is created inside it.
    `config.upgradeToAndCall(newConfig, initializeV2())`, which makes owner = admin in the same
    transaction. It then upgrades `stake` and `escrow` (their old code still checks the admin) and,
    with `NEW_OWNER` set, proposes the ownership to the cold key.
+   - **3b. Post-check ON CHAIN.** The script's own asserts ran in forge's local simulation before
+     the broadcast, so they prove the simulation, not the chain. Read what landed, with the three
+     implementation addresses the broadcast printed (`broadcast/UpgradeOwnerSplit.s.sol/46630/run-latest.json`):
+     ```sh
+     RPC=<rpc> PROXY_CONFIG=<c> PROXY_STAKE=<s> PROXY_ESCROW=<e> \
+     IMPL_CONFIG=<newConfig> IMPL_STAKE=<newStake> IMPL_ESCROW=<newEscrow> \
+     EXPECTED_OWNER=<admin> EXPECTED_PENDING_OWNER=<NEW_OWNER> script/postcheck-upgrade.sh
+     ```
+   - **3c. If the broadcast landed only partly.** The upgrades and `transferOwnership` are separate
+     transactions. If the Config upgrade landed and a later one did not, a re-run of
+     `UpgradeOwnerSplit.s.sol` reverts `AlreadyMigrated(owner)` — `owner()` now exists — and must
+     not be forced. Finish from the **same admin key**, which is also the owner at this point
+     (owner = admin until step 4): `UpgradeByOwner.s.sol` with `UPGRADE_STAKE=true` and/or
+     `UPGRADE_ESCROW=true`, `IMPL_*` = the implementations step 3 already deployed (or `deploy()`
+     fresh ones), and their `EXPECTED_CODEHASH_*`. If `pendingOwner()` is still zero, propose with
+     `cast send <configProxy> "transferOwnership(address)" <NEW_OWNER>` from the same key. Re-run
+     3b; it must be green **before** step 4. Until then the not-yet-upgraded Stake/Escrow still
+     check `CONFIG.admin()`, so the admin can still upgrade them — close the gap in the same
+     session.
 4. **Accept** from the cold key: `cast send <configProxy> "acceptOwnership()"` (`--ledger` in
    production). From this block the admin can no longer upgrade anything.
+   - **4b. Rotate the redeemer off the relayer key.** Live `params().redeemer` on 46630 is still
+     the backend relayer key `0x24A2c5823204150fe1bdc5Ce378A704788B345DB`, so the backend's
+     redeemer/relayer key split protects nothing until one of these is done — pick ONE:
+     (a) the admin `updateConfig`s `params().redeemer` to the address of the new
+     `EVM_REDEEMER_KEYS` key, or (b) move the existing `0x24A2…45DB` key into `EVM_REDEEMER_KEYS`
+     and mint a NEW key for `EVM_RELAYER_KEYS` (fund it; runbook §10). The backend now fails closed
+     at its first vault-control check per chain unless the `EVM_REDEEMER_KEYS` address equals the
+     live `params().redeemer` **and** the `EVM_RELAYER_KEYS` address does not. Change the env and
+     the chain in the same window (§11). Do not keep the old key in `EVM_RELAYER_KEYS` with a new
+     redeemer key and no `updateConfig`: that halts every redemption.
 5. **Record**: `implementation`, `implementationRuntimeKeccak`, `builtAt`, `abiKeccak`,
    `abiFunctions` for all three; copy each old `implementation` into `initialImplementation` on
    a contract's first upgrade; add `.owner`; then `./script/verify-deployment.sh` and the
-   backend's `EVM_DEPLOYMENTS` (`owner`, `escrowImplementation`).
+   backend's `EVM_DEPLOYMENTS` (`owner`, `escrowImplementation`). `verify-deployment.sh` and the
+   backend's vault-control check both WARN on a non-zero `pendingOwner()` (a proposal nobody
+   accepted); `owner()` is the fail-closed check.
+6. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `X402Config`
+   (`docs/risk-register.md` §4a — the admin's indirect reach over stake and fees).
 
 ### The one thing an upgrade must never do: change the EIP-712 `name` or `version`
 
