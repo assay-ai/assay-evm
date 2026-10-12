@@ -55,6 +55,9 @@ expect_revert() {
   echo "$out" | grep -qi "$want" || fail "expected $want, got: $(echo "$out" | tail -1)"
 }
 call() { cast call --rpc-url "$RPC" "$@"; }
+# Address equality, case-insensitively: cast prints the checksummed form, and an operator may not.
+lc() { echo "$1" | tr 'A-Z' 'a-z'; }
+same() { [ "$(lc "$1")" = "$(lc "$2")" ]; }
 send_as() { local from="$1"; shift; cast send --rpc-url "$RPC" --unlocked --from "$from" "$@" >/dev/null; }
 
 echo "== starting anvil fork of $UPSTREAM on :$PORT"
@@ -100,6 +103,10 @@ SAMPLE_BUYER=$SAMPLE_BUYER SAMPLE_PROVIDER=$SAMPLE_PROVIDER DEPLOYER_ADDRESS=$DE
   forge script script/UpgradeOwnerSplit.s.sol --rpc-url "$RPC" --broadcast --unlocked --sender "$ADMIN" \
   --slow 2>&1 | grep -E "^\s+(chainId|deployer|admin|pending|X402|escrow|stake|0x)|ONCHAIN EXECUTION COMPLETE|Error|revert" | sed 's/^/   /'
 for p in "$C" "$S" "$E"; do echo "   impl($p) $(impl "$p")"; done
+RPC=$RPC PROXY_CONFIG=$C PROXY_STAKE=$S PROXY_ESCROW=$E EXPECTED_OWNER=$(lc "$ADMIN") \
+EXPECTED_PENDING_OWNER=$(lc "$NEW_OWNER") script/postcheck-upgrade.sh | sed 's/^/   /' \
+  || fail "on-chain post-check (script/postcheck-upgrade.sh)"
+pass "on-chain post-check: owner == admin and pendingOwner == new owner, read from the fork"
 
 echo "== 2. byte-identical state"
 snapshot "$OUT/after"
@@ -111,15 +118,15 @@ else
 fi
 
 echo "== 3. owner = old admin, then the two-step transfer"
-[ "$(call "$C" 'owner()(address)')" = "$ADMIN" ] && pass "owner() == the old admin ($ADMIN)" || fail "owner is not the admin"
-[ "$(call "$C" 'pendingOwner()(address)')" = "$NEW_OWNER" ] && pass "pendingOwner() == new owner" || fail "pending owner"
+same "$(call "$C" 'owner()(address)')" "$ADMIN" && pass "owner() == the old admin ($ADMIN)" || fail "owner is not the admin"
+same "$(call "$C" 'pendingOwner()(address)')" "$NEW_OWNER" && pass "pendingOwner() == new owner" || fail "pending owner"
 expect_revert 'NotOwner()' "$S" 'upgradeToAndCall(address,bytes)' "$(impl "$S" | sed 's/0x000000000000000000000000/0x/')" 0x --from "$NEW_OWNER"
 pass "a PROPOSED owner holds nothing (stake upgrade from it: NotOwner)"
 expect_revert 'OwnableUnauthorizedAccount(address)' "$C" 'acceptOwnership()' --from "$ADMIN"
 pass "only the proposed key can accept (admin: OwnableUnauthorizedAccount)"
 send_as "$NEW_OWNER" "$C" 'acceptOwnership()'
-[ "$(call "$C" 'owner()(address)')" = "$NEW_OWNER" ] && pass "acceptOwnership(): owner() == $NEW_OWNER" || fail "owner did not move"
-[ "$(call "$C" 'admin()(address)')" = "$ADMIN" ] && pass "admin() still $ADMIN" || fail "admin moved"
+same "$(call "$C" 'owner()(address)')" "$NEW_OWNER" && pass "acceptOwnership(): owner() == $NEW_OWNER" || fail "owner did not move"
+same "$(call "$C" 'admin()(address)')" "$ADMIN" && pass "admin() still $ADMIN" || fail "admin moved"
 expect_revert 'OwnershipCannotBeRenounced()' "$C" 'renounceOwnership()' --from "$NEW_OWNER"
 pass "renounceOwnership() reverts for the owner"
 
@@ -135,14 +142,22 @@ ESC_NEXT=$(PROXY_CONFIG=$C PROXY_STAKE=$S PROXY_ESCROW=$E EXPECTED_CHAIN_ID=4663
   forge script script/UpgradeByOwner.s.sol --sig 'deploy()' --rpc-url "$RPC" --broadcast --unlocked \
   --sender "$DEPLOYER" 2>&1 | grep -Eo 'IMPL_ESCROW= *0x[0-9a-fA-F]{40}' | grep -Eo '0x[0-9a-fA-F]{40}')
 echo "   deployer deployed a fresh escrow implementation $ESC_NEXT"
+# The hash the owner pins: in production it is the one check-bytecode.sh verified against the build.
+ESC_HASH=$(cast keccak "$(cast code --rpc-url "$RPC" "$ESC_NEXT" | tr -d '\n')")
 PROXY_CONFIG=$C PROXY_STAKE=$S PROXY_ESCROW=$E EXPECTED_CHAIN_ID=46630 UPGRADE_ESCROW=true IMPL_ESCROW=$ESC_NEXT \
-SAMPLE_BUYER=$SAMPLE_BUYER SAMPLE_PROVIDER=$SAMPLE_PROVIDER \
+SAMPLE_BUYER=$SAMPLE_BUYER SAMPLE_PROVIDER=$SAMPLE_PROVIDER EXPECTED_CODEHASH_ESCROW=0x$(printf '%064x' 1) \
+  forge script script/UpgradeByOwner.s.sol --rpc-url "$RPC" --sender "$NEW_OWNER" > "$OUT/hash.log" 2>&1 || true
+grep -Eq "ImplementationCodehashMismatch|$(sel 'ImplementationCodehashMismatch(address,bytes32,bytes32)')" "$OUT/hash.log" \
+  && pass "UpgradeByOwner.s.sol refuses an IMPL_* whose code hash is not EXPECTED_CODEHASH_*" \
+  || { tail -5 "$OUT/hash.log"; fail "script did not refuse a wrong code hash"; }
+PROXY_CONFIG=$C PROXY_STAKE=$S PROXY_ESCROW=$E EXPECTED_CHAIN_ID=46630 UPGRADE_ESCROW=true IMPL_ESCROW=$ESC_NEXT \
+SAMPLE_BUYER=$SAMPLE_BUYER SAMPLE_PROVIDER=$SAMPLE_PROVIDER EXPECTED_CODEHASH_ESCROW=$ESC_HASH \
   forge script script/UpgradeByOwner.s.sol --rpc-url "$RPC" --broadcast --unlocked --sender "$NEW_OWNER" \
   2>&1 | grep -E "upgraded|Error|revert" | sed 's/^/   /'
-[ "$(impl "$E" | sed 's/0x000000000000000000000000/0x/' | tr A-F a-f)" = "$(echo "$ESC_NEXT" | tr A-F a-f)" ] \
+same "$(impl "$E" | sed 's/0x000000000000000000000000/0x/')" "$ESC_NEXT" \
   && pass "the owner upgraded the escrow (UpgradeByOwner.s.sol run(), its post-checks green)" || fail "owner upgrade"
 PROXY_CONFIG=$C PROXY_STAKE=$S PROXY_ESCROW=$E EXPECTED_CHAIN_ID=46630 UPGRADE_ESCROW=true IMPL_ESCROW=$ESC_NEXT \
-SAMPLE_BUYER=$SAMPLE_BUYER SAMPLE_PROVIDER=$SAMPLE_PROVIDER \
+SAMPLE_BUYER=$SAMPLE_BUYER SAMPLE_PROVIDER=$SAMPLE_PROVIDER EXPECTED_CODEHASH_ESCROW=$ESC_HASH \
   forge script script/UpgradeByOwner.s.sol --rpc-url "$RPC" --sender "$ADMIN" > "$OUT/refuse.log" 2>&1 || true
 grep -Eq "NotTheOwner|$(sel 'NotTheOwner(address,address)')" "$OUT/refuse.log" \
   && pass "UpgradeByOwner.s.sol refuses to run for the admin (NotTheOwner)" || { tail -5 "$OUT/refuse.log"; fail "script did not refuse the admin"; }

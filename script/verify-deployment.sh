@@ -213,6 +213,12 @@ adm=$(jq -er '.admin' "$REC")
 own=$(jq -r '.owner // empty' "$REC")
 if [ -n "$own" ]; then
   [ "$(lc "$(cast call "$cfg" 'owner()(address)' --rpc-url "$RPC")")" = "$(lc "$own")" ] || fail "config.owner"
+  # A standing proposal is harmless until it is accepted, so it WARNS rather than fails: owner()
+  # above is the fail-closed check. Surfaced so a transfer nobody recorded is seen before it lands.
+  pend=$(cast call "$cfg" 'pendingOwner()(address)' --rpc-url "$RPC")
+  if [ "$(lc "$pend")" != "0x0000000000000000000000000000000000000000" ]; then
+    echo "WARN: config.pendingOwner() is $pend — an ownership transfer is proposed and not yet accepted" >&2
+  fi
 elif cast call "$cfg" 'owner()(address)' --rpc-url "$RPC" >/dev/null 2>&1; then
   fail "the live config has an owner() but the record names none — add .owner (runbook §7.4)"
 fi

@@ -11,6 +11,7 @@ import {X402Stake} from "../src/X402Stake.sol";
 error UnexpectedChain(uint256 got, uint256 want);
 error NotTheOwner(address broadcaster, address owner);
 error NotAUupsImplementation(address impl);
+error ImplementationCodehashMismatch(address impl, bytes32 got, bytes32 want);
 error ImplementationSlotMismatch(address proxy);
 error DomainSeparatorMoved(address proxy);
 error SampleMoved(address proxy);
@@ -33,6 +34,11 @@ error StateMoved(string what);
 ///   UPGRADE_CONFIG / UPGRADE_STAKE / UPGRADE_ESCROW   `true` for each proxy to upgrade
 ///   IMPL_CONFIG / IMPL_STAKE / IMPL_ESCROW        (run, safeCalldata) the implementations
 ///   CALL_CONFIG / CALL_STAKE / CALL_ESCROW        (optional) `upgradeToAndCall` data, default 0x
+///   EXPECTED_CODEHASH_CONFIG / _STAKE / _ESCROW   (run, safeCalldata; REQUIRED for each flagged
+///                 proxy) the `extcodehash` of `IMPL_<NAME>`. Take it from the implementation
+///                 that `check-bytecode.sh` / `verify-deployment.sh` matched against the local
+///                 build (`cast keccak $(cast code $IMPL_<NAME>)`), so the owner signs for exactly
+///                 the code that was verified and not for whatever address ended up in the env.
 contract UpgradeByOwner is Script {
     bytes32 internal constant IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -56,11 +62,12 @@ contract UpgradeByOwner is Script {
             address[3] memory proxies,
             address[3] memory impls,
             bytes[3] memory calls,
-            bool[3] memory on
+            bool[3] memory on,
+            bytes32[3] memory hashes
         ) = _plan();
         for (uint256 i = 0; i < 3; i++) {
             if (!on[i]) continue;
-            _assertUups(impls[i]);
+            _assertImplementation(impls[i], hashes[i]);
             console2.log("to  ", proxies[i]);
             console2.logBytes(
                 abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (impls[i], calls[i]))
@@ -81,10 +88,11 @@ contract UpgradeByOwner is Script {
             address[3] memory proxies,
             address[3] memory impls,
             bytes[3] memory calls,
-            bool[3] memory on
+            bool[3] memory on,
+            bytes32[3] memory hashes
         ) = _plan();
         for (uint256 i = 0; i < 3; i++) {
-            if (on[i]) _assertUups(impls[i]);
+            if (on[i]) _assertImplementation(impls[i], hashes[i]);
         }
 
         address sampleBuyer = vm.envAddress("SAMPLE_BUYER");
@@ -131,7 +139,8 @@ contract UpgradeByOwner is Script {
             address[3] memory proxies,
             address[3] memory impls,
             bytes[3] memory calls,
-            bool[3] memory on
+            bool[3] memory on,
+            bytes32[3] memory hashes
         )
     {
         string[3] memory names = ["CONFIG", "STAKE", "ESCROW"];
@@ -141,7 +150,15 @@ contract UpgradeByOwner is Script {
             if (!on[i]) continue;
             impls[i] = vm.envAddress(string.concat("IMPL_", names[i]));
             calls[i] = vm.envOr(string.concat("CALL_", names[i]), bytes(""));
+            hashes[i] = vm.envBytes32(string.concat("EXPECTED_CODEHASH_", names[i]));
         }
+    }
+
+    /// The implementation's runtime code is exactly the one the operator verified
+    /// (`EXPECTED_CODEHASH_<NAME>`), and it is a UUPS implementation.
+    function _assertImplementation(address impl, bytes32 want) internal view {
+        if (impl.codehash != want) revert ImplementationCodehashMismatch(impl, impl.codehash, want);
+        _assertUups(impl);
     }
 
     /// The implementation has code and answers `proxiableUUID()` with the ERC-1967 slot, which
