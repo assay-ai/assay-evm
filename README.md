@@ -23,11 +23,12 @@ Do not use these contracts to hold real funds.
 
 ## These contracts sit behind UUPS proxies
 
-The three contracts are **upgradeable**. The single upgrade authority is `X402Config.admin`, a
-hardware wallet, and upgrades are **immediate** — there is no timelock, no multisig and no
-pending-implementation slot. This was chosen (design decision D-1, see
-`docs/design-decisions.md`) for parity with the Solana program's upgrade authority. Risk register
-§4 and §5 describe the accepted cost.
+The three contracts are **upgradeable**. The single upgrade authority is `X402Config.owner()`,
+a cold key (a Ledger, or a Safe in production) that moves in two steps and can never be renounced.
+A separate operational `admin` sets parameters, pauses and runs the verifier registry, and cannot
+upgrade (D-17). Upgrades are **immediate**: there is no timelock and no pending-implementation
+slot (D-1). **No role can move user funds directly.** The contracts have no sweep and no rescue,
+and the owner's upgrade is the only residual power. Risk register §4 and §5 describe the cost.
 
 **Every address an integrator is given is a PROXY address** — the backend's configuration, a
 voucher's EIP-712 `verifyingContract`, an explorer link. Proxy addresses do not move across an
@@ -35,7 +36,7 @@ upgrade, so a voucher signed before an upgrade still redeems after it. Implement
 are recorded in the per-chain deployment record that `script/new-deployment-record.sh` writes, and change by design.
 
 **Fixing a defect means:** an append-only storage change, a green `./script/check-layout.sh`, and
-an `upgradeToAndCall` from the admin (`docs/deploy-runbook.md` §7). A redeploy is reserved for a
+an `upgradeToAndCall` signed by the owner (`docs/deploy-runbook.md` §7). A redeploy is reserved for a
 layout change that cannot be appended, which is exactly the case the layout gate refuses.
 
 ## The three contracts
@@ -141,7 +142,7 @@ lib/                 vendored forge-std and OpenZeppelin Contracts (see THIRD_PA
 
 | | |
 |---|---|
-| `docs/deploy-runbook.md` | the human procedure: preflight, environment, deploy, verification, the record, the admin handover, upgrades |
+| `docs/deploy-runbook.md` | the human procedure: preflight, environment, deploy, verification, the record, owner and admin changes, upgrades |
 | `docs/risk-register.md` | known, accepted design risks, two of them mainnet preconditions |
 | `docs/design-decisions.md` | the decision ids (`D-1`, `D-7`, ...) cited throughout the code |
 | `docs/divergences.md` | every place this port differs from the Anchor program or the original design, and which side is authoritative |
