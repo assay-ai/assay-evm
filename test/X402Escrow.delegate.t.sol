@@ -3,7 +3,6 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {MockERC1271Wallet} from "./helpers/MockERC1271Wallet.sol";
 import {X402Escrow} from "../src/X402Escrow.sol";
 import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
@@ -12,8 +11,8 @@ import "../src/Errors.sol";
 
 /// Agent payment delegation, x402-aligned: a voucher is authorised by (a) the payer's own key,
 /// (b) a DELEGATE key the payer authorised on chain, within the delegate's own caps and the
-/// escrow's, until `validUntil` and unless revoked, or (c) the payer's EIP-1271 wallet when the
-/// payer has code. The delegate signs vouchers and nothing else.
+/// escrow's, until `validUntil` and unless revoked. Nothing else: there is no EIP-1271 branch
+/// (D-18). The delegate signs vouchers and nothing else.
 contract X402EscrowDelegateTest is Fixture {
     uint256 internal constant DELEGATE_KEY = 0xDE1E6A7E;
     uint256 internal constant OTHER_KEY = 0x07E4;
@@ -694,77 +693,37 @@ contract X402EscrowDelegateTest is Fixture {
         assertEq(escrow.delegationOf(buyer, accomplice).validUntil, 0);
     }
 
-    // --- EIP-1271: a payer with code ----------------------------------------------------------
+    // --- a payer with code: no EIP-1271 (D-18) -----------------------------------------------
 
-    function _wallet() internal returns (MockERC1271Wallet w) {
-        w = new MockERC1271Wallet(vm.addr(WALLET_OWNER_KEY));
+    function _wallet() internal returns (ExecWallet w) {
+        w = new ExecWallet();
         _fund(address(w), 5_000_000);
-        w.approveToken(IERC20(address(usdg)), address(escrow), 5_000_000);
-        w.call(address(escrow), abi.encodeCall(X402Escrow.deposit, (5_000_000)));
-        w.call(
+        w.exec(address(usdg), abi.encodeCall(IERC20.approve, (address(escrow), 5_000_000)));
+        w.exec(address(escrow), abi.encodeCall(X402Escrow.deposit, (5_000_000)));
+        w.exec(
             address(escrow),
             abi.encodeCall(X402Escrow.setLimits, (ESCROW_PER_CALL, ESCROW_PER_WINDOW))
         );
     }
 
-    function _digest(Voucher memory v) internal view returns (bytes32) {
-        return VoucherSigner.digest(ds, VoucherSigner.voucherStructHash(v));
-    }
-
-    function test_erc1271_aWalletPayerIsPaidForWhenItsWalletAccepts() public {
-        MockERC1271Wallet w = _wallet();
-        Voucher memory v = _v(address(w), 250_000, 1);
-        _redeem(v, _signed(WALLET_OWNER_KEY, v));
-        assertEq(escrow.escrowOf(address(w)).balance, 5_000_000 - 250_000);
-        assertEq(usdg.balanceOf(provider), 225_000);
-    }
-
-    function test_erc1271_aNonEcdsaSignatureIsTheWalletsToJudge() public {
-        MockERC1271Wallet w = _wallet();
+    /// The wallet answers the EIP-1271 magic value for EVERY digest and signature, and is still
+    /// never paid for on its own say-so: the escrow no longer asks it.
+    function test_aContractWalletIsNeverAskedToAuthoriseAVoucher() public {
+        ExecWallet w = _wallet();
         Voucher memory v = _v(address(w), 1_000, 1);
-        bytes memory blob = hex"01020304"; // not 65 bytes, not ECDSA
-        _expect(v, blob, SignerIsNotPayer.selector);
-
-        w.approveHash(_digest(v));
-        _redeem(v, blob);
-        assertEq(escrow.escrowOf(address(w)).seqHigh, 1);
-    }
-
-    function test_erc1271_everyWalletRefusalShapeIsSignerIsNotPayer() public {
-        MockERC1271Wallet w = _wallet();
-        Voucher memory v = _v(address(w), 1_000, 1);
-        bytes memory sig = _signed(WALLET_OWNER_KEY, v);
-
-        MockERC1271Wallet.Mode[3] memory bad = [
-            MockERC1271Wallet.Mode.WrongMagic,
-            MockERC1271Wallet.Mode.Reverts,
-            MockERC1271Wallet.Mode.ShortReturn
-        ];
-        for (uint256 i = 0; i < bad.length; i++) {
-            w.setMode(bad[i]);
-            _expect(v, sig, SignerIsNotPayer.selector);
-        }
-        w.setMode(MockERC1271Wallet.Mode.Honest);
-        _expect(v, _signed(OTHER_KEY, v), SignerIsNotPayer.selector);
-        _expect(v, VoucherSigner.malleate(sig), SignerIsNotPayer.selector);
-        _redeem(v, sig);
-    }
-
-    function test_erc1271_aContractWithoutTheInterfaceIsNeverPaidFor() public {
-        // The stake contract has code, an escrow can be funded for it, and it has no
-        // isValidSignature: nothing it could be sent authorises a voucher.
-        address payer_ = address(stakeImpl);
-        _fund(address(this), 1_000_000);
-        usdg.approve(address(escrow), 1_000_000);
-        escrow.depositFor(payer_, 1_000_000);
-        Voucher memory v = _v(payer_, 1_000, 1);
+        _expect(v, _signed(WALLET_OWNER_KEY, v), SignerIsNotPayer.selector);
         _expect(v, _signed(buyerKey, v), SignerIsNotPayer.selector);
-        _expect(v, new bytes(65), SignerIsNotPayer.selector);
+        // A non-ECDSA blob is refused by the strict recovery under its own name.
+        _expect(v, hex"01020304", InvalidSignature.selector);
+        assertEq(escrow.escrowOf(address(w)).seqHigh, 0);
+        assertEq(escrow.escrowOf(address(w)).balance, 5_000_000);
     }
 
-    function test_erc1271_aWalletPayerCanAlsoAuthoriseADelegate() public {
-        MockERC1271Wallet w = _wallet();
-        w.call(
+    /// The supported route for a contract-wallet payer: it authorises a delegate DIRECTLY (that
+    /// door reads `msg.sender`), and the delegate signs.
+    function test_aContractWalletPayerPaysThroughADelegate() public {
+        ExecWallet w = _wallet();
+        w.exec(
             address(escrow),
             abi.encodeCall(
                 X402Escrow.authorizeDelegate, (delegate, D_PER_CALL, D_PER_WINDOW, _until())
@@ -774,9 +733,7 @@ contract X402EscrowDelegateTest is Fixture {
         _redeem(v, _signed(DELEGATE_KEY, v));
         assertEq(escrow.delegationOf(address(w), delegate).spentInWindow, 1_000);
 
-        // A revoked delegate of a wallet payer falls through to the wallet, which refuses it,
-        // and the refusal names the revocation.
-        w.call(address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (delegate)));
+        w.exec(address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (delegate)));
         Voucher memory x = _v(address(w), 1_000, 2);
         _expect(x, _signed(DELEGATE_KEY, x), DelegateIsRevoked.selector);
     }
@@ -857,5 +814,22 @@ contract X402EscrowDelegateTest is Fixture {
         }
         assertEq(escrow.delegationOf(buyer, delegate).spentInWindow, total);
         assertLe(total, D_PER_WINDOW);
+    }
+}
+
+/// A contract-wallet payer: forwards calls, and would accept every EIP-1271 question.
+contract ExecWallet {
+    function exec(address target, bytes calldata data) external returns (bytes memory) {
+        (bool ok, bytes memory ret) = target.call(data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        return ret;
+    }
+
+    function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
+        return 0x1626ba7e;
     }
 }

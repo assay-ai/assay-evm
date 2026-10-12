@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 import {X402Config} from "../src/X402Config.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
 
@@ -49,7 +50,10 @@ contract X402ConfigAdminTest is Test {
     function _deploy(ParamSet memory p, address a) internal returns (X402Config) {
         return X402Config(
             address(
-                new ERC1967Proxy(address(configImpl), abi.encodeCall(X402Config.initialize, (p, a)))
+                new ERC1967Proxy(
+                    address(configImpl),
+                    abi.encodeCall(X402Config.initialize, (p, a, address(0x0A1E)))
+                )
             )
         );
     }
@@ -111,7 +115,7 @@ contract X402ConfigAdminTest is Test {
     /// runtime refuses a second call. This is that refusal.
     function test_wrongState_initializeRunsExactlyOnce() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        config.initialize(_valid(), next);
+        config.initialize(_valid(), next, next);
         assertEq(config.admin(), admin, "the failed re-initialise moved nothing");
     }
 
@@ -435,19 +439,26 @@ contract X402ConfigAdminTest is Test {
     // the upgrade door (D-1)
     // ---------------------------------------------------------------------------------------
 
-    /// The upgrade key **is** `Config.admin`. Tested here, beside the other admin guards, because
-    /// the standing rule is that no guard ships without a test that fails when it is removed.
-    function test_wrongSigner_onlyTheAdminUpgradesConfig() public {
+    /// The upgrade key is `owner()` since D-17 — not `Config.admin`. Tested here, beside the
+    /// admin guards, because no guard ships without a test that fails when it is removed.
+    function test_wrongSigner_onlyTheOwnerUpgradesConfig() public {
         X402Config newImpl = new X402Config();
 
-        vm.prank(next);
-        vm.expectRevert(NotAdmin.selector);
-        config.upgradeToAndCall(address(newImpl), "");
+        address[2] memory refused = [next, admin];
+        for (uint256 i = 0; i < refused.length; i++) {
+            vm.prank(refused[i]);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    OwnableUpgradeable.OwnableUnauthorizedAccount.selector, refused[i]
+                )
+            );
+            config.upgradeToAndCall(address(newImpl), "");
+        }
         assertEq(_implementationOf(address(config)), address(configImpl), "nothing moved");
 
-        vm.prank(admin);
+        vm.prank(address(0x0A1E));
         config.upgradeToAndCall(address(newImpl), "");
-        assertEq(_implementationOf(address(config)), address(newImpl), "the admin's upgrade took");
+        assertEq(_implementationOf(address(config)), address(newImpl), "the owner's upgrade took");
 
         // and the proxy's storage survived it — the `__gap` layout claim, exercised.
         assertEq(config.admin(), admin, "admin survived the upgrade");
@@ -459,7 +470,7 @@ contract X402ConfigAdminTest is Test {
     function test_wrongState_theImplementationCannotBeInitialised() public {
         vm.prank(next);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        configImpl.initialize(_valid(), next);
+        configImpl.initialize(_valid(), next, next);
         assertEq(configImpl.admin(), address(0), "the implementation has no admin, ever");
     }
 

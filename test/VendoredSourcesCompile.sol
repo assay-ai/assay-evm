@@ -62,3 +62,12 @@ import "@openzeppelin/contracts/utils/introspection/IERC165.sol" as utils_intros
 import "@openzeppelin/contracts/utils/math/Math.sol" as utils_math_Math;
 import "@openzeppelin/contracts/utils/math/SafeCast.sol" as utils_math_SafeCast;
 import "@openzeppelin/contracts/utils/math/SignedMath.sol" as utils_math_SignedMath;
+
+// lib/openzeppelin-upgradeable/MANIFEST (D-17). Its `Initializable` import is remapped to the
+// main package's copy — see lib/openzeppelin-upgradeable/VENDOR.md.
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol" as
+    access_Ownable2StepUpgradeable;
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol" as
+    access_OwnableUpgradeable;
+import "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol" as
+    utils_ContextUpgradeable;

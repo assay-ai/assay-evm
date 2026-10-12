@@ -23,8 +23,7 @@ pragma solidity 0.8.24;
 /// from the buyer and nothing else" becomes `msg.sender` plus an EIP-712 signature.
 /// Listed so their absence reads as a decision rather than an oversight.
 ///
-/// Going the other way, `MAX_REDEEM_BATCH` and `SECP256K1_HALF_N` are EVM-only and marked so at
-/// their declarations.
+/// Going the other way, everything under "EVM only" below has no Anchor counterpart.
 library Constants {
     // --- delays and windows ----------------------------------------------------------------
 
@@ -143,6 +142,15 @@ library Constants {
 
     // --- EVM only --------------------------------------------------------------------------
 
+    /// The furthest one redeemed voucher may move a payer's `seqHigh`: a redemption needs
+    /// `seq <= seqHigh + MAX_SEQ_GAP`. Without it a single voucher with `seq = 2^64 - 1` (signed by
+    /// the payer or by any delegate) moves the high-water mark to the top of the type, and every
+    /// later voucher of that payer fails `VoucherSeqNotIncreasing` for ever. A constant, not a
+    /// parameter: the backend allocates seqs one at a time, so a million unredeemed numbers ahead
+    /// of the chain is already far outside normal operation, and a bound an admin could raise is a
+    /// bound a stolen admin key removes. No Anchor counterpart.
+    uint64 internal constant MAX_SEQ_GAP = 1_000_000;
+
     /// No Anchor counterpart: Solana's 1,232-byte packet limit caps a batch implicitly,
     /// and that limit does not exist here, so the bound has to be written down.
     uint256 internal constant MAX_REDEEM_BATCH = 64;
@@ -157,15 +165,11 @@ library Constants {
     /// view's size rather than on anybody's money. No Anchor counterpart.
     uint256 internal constant MAX_DELEGATES_PER_PAYER = 16;
 
-    /// The gas an EIP-1271 wallet's `isValidSignature` may use inside a redemption. Generous for
-    /// real wallets (a Safe or a Kernel-style validator answers in tens of thousands), and a hard
-    /// bound on what one wallet can cost the redeemer — see `X402Escrow._isValidERC1271`.
-    uint256 internal constant ERC1271_GAS_LIMIT = 150_000;
-
-    /// What must still be left after the wallet's capped call for the redemption to finish
-    /// refusing or paying — so the check refuses to START without it rather than letting a short
-    /// gas limit turn into a false `SignerIsNotPayer`.
-    uint256 internal constant ERC1271_GAS_RESERVE = 10_000;
+    /// The longest a relayed (`…BySig`) authorisation may be valid for: `deadline` may be at most
+    /// this far past the block that lands it. The backend signs with 300 s; without a cap, a
+    /// phished signature with a far deadline would stay landable for years. No Anchor
+    /// counterpart — Solana has no relayed doors.
+    uint64 internal constant MAX_SIGNATURE_LIFETIME_SECONDS = 3600;
 
     /// EIP-2's low-s ceiling, `floor(secp256k1n / 2)`. Enforced on every recover: without
     /// it every signature has a second valid encoding, and any structure keyed by a signature's

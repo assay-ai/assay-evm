@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.24;
 
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {X402EscrowV2} from "./helpers/X402EscrowV2.sol";
@@ -57,23 +58,25 @@ contract UpgradeTest is Fixture {
     /// **X402Stake's upgrade door, proved for the first time.** The other two are proved in
     /// `X402Config.admin.t.sol` and the escrow suite; this one had no test at all, which is why the
     /// money contract holding every provider's collateral is the row this file actually adds.
-    function test_wrongSigner_onlyTheAdminUpgradesStake() public {
+    function test_wrongSigner_onlyTheOwnerUpgradesStake() public {
         address v2 = address(new X402Stake());
 
         vm.prank(attacker);
-        vm.expectRevert(NotAdmin.selector);
+        vm.expectRevert(NotOwner.selector);
         stake.upgradeToAndCall(v2, "");
 
-        // The redeemer is not the admin either — the largest key is one key (D-6), and the
-        // redeemer is the one role that is routinely a hot key.
+        // Neither the redeemer (routinely a hot key) nor, since D-17, the admin.
         vm.prank(redeemer);
-        vm.expectRevert(NotAdmin.selector);
+        vm.expectRevert(NotOwner.selector);
+        stake.upgradeToAndCall(v2, "");
+        vm.prank(admin);
+        vm.expectRevert(NotOwner.selector);
         stake.upgradeToAndCall(v2, "");
         assertEq(_implementationOf(address(stake)), address(stakeImpl), "nothing moved");
 
-        vm.prank(admin);
+        vm.prank(owner);
         stake.upgradeToAndCall(v2, "");
-        assertEq(_implementationOf(address(stake)), v2, "the admin moved it");
+        assertEq(_implementationOf(address(stake)), v2, "the owner moved it");
     }
 
     /// The three earlier proofs, re-asserted rather than restated. If `X402Config.admin.t.sol` or
@@ -83,39 +86,57 @@ contract UpgradeTest is Fixture {
         address configV2 = address(new X402Config());
 
         vm.prank(attacker);
-        vm.expectRevert(NotAdmin.selector);
+        vm.expectRevert(NotOwner.selector);
         escrow.upgradeToAndCall(escrowV2, "");
 
         vm.prank(attacker);
-        vm.expectRevert(NotAdmin.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker)
+        );
         config.upgradeToAndCall(configV2, "");
 
+        // D-17: the admin is not an upgrade authority on any of the three.
         vm.prank(admin);
+        vm.expectRevert(NotOwner.selector);
+        escrow.upgradeToAndCall(escrowV2, "");
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, admin)
+        );
+        config.upgradeToAndCall(configV2, "");
+
+        vm.prank(owner);
         escrow.upgradeToAndCall(escrowV2, "");
         assertEq(X402EscrowV2(address(escrow)).version2(), "v2");
 
-        vm.prank(admin);
+        vm.prank(owner);
         config.upgradeToAndCall(configV2, "");
         assertEq(_implementationOf(address(config)), configV2);
     }
 
-    /// The two money contracts read `CONFIG.admin()` LIVE. Handing the admin over therefore hands
-    /// over the upgrade authority of all three in one transaction — the property that makes "one
-    /// key" true (D-1), and the reason D-6's mistyped `newAdmin` is unrecoverable.
+    /// The two money contracts read `CONFIG.owner()` LIVE (D-17). Moving the ownership, in its
+    /// two steps, therefore moves the upgrade authority of all three in the transaction that
+    /// accepts it — and not one step earlier: a PROPOSED owner holds nothing until it accepts.
     ///
-    /// Proved on **X402Stake**, because mutation row E19 already proved it on the escrow.
-    function test_theStakeUpgradeAuthorityFollowsTheConfigAdmin() public {
-        address newAdmin = address(0xA11);
-        ParamSet memory p = config.params(); // read BEFORE the prank: prank arms the NEXT call
-        vm.prank(admin);
-        config.updateConfig(p, newAdmin);
+    /// Proved on **X402Stake**; `X402Escrow.deposit.t.sol` proves it on the escrow.
+    function test_theStakeUpgradeAuthorityFollowsTheConfigOwner() public {
+        address newOwner = address(0xA11);
+        vm.prank(owner);
+        config.transferOwnership(newOwner);
 
         address v2 = address(new X402Stake());
-        vm.prank(admin);
-        vm.expectRevert(NotAdmin.selector);
+        vm.prank(newOwner);
+        vm.expectRevert(NotOwner.selector);
         stake.upgradeToAndCall(v2, "");
 
-        vm.prank(newAdmin);
+        vm.prank(newOwner);
+        config.acceptOwnership();
+
+        vm.prank(owner);
+        vm.expectRevert(NotOwner.selector);
+        stake.upgradeToAndCall(v2, "");
+
+        vm.prank(newOwner);
         stake.upgradeToAndCall(v2, "");
         assertEq(_implementationOf(address(stake)), v2);
     }
@@ -186,7 +207,7 @@ contract UpgradeTest is Fixture {
 
         // The `new` is a CREATE, which is also a call, so it too must precede the prank.
         address v2 = address(new X402EscrowV2());
-        vm.prank(admin);
+        vm.prank(owner);
         escrow.upgradeToAndCall(v2, "");
 
         assertEq(escrow.DOMAIN_SEPARATOR(), sepBefore, "the separator must not move");
@@ -225,7 +246,7 @@ contract UpgradeTest is Fixture {
     /// gap is a budget.
     function test_theAppendedFieldLandsPastTheParentsGapNotInsideIt() public {
         address v2 = address(new X402EscrowV2());
-        vm.prank(admin);
+        vm.prank(owner);
         escrow.upgradeToAndCall(v2, "");
         X402EscrowV2(address(escrow)).markUpgraded();
 
@@ -247,7 +268,7 @@ contract UpgradeTest is Fixture {
         uint128 bondedBefore = stake.stakeOf(provider).bonded;
 
         address v2 = address(new X402Stake());
-        vm.prank(admin);
+        vm.prank(owner);
         stake.upgradeToAndCall(v2, "");
 
         assertEq(stake.DOMAIN_SEPARATOR(), sepBefore, "the attestation domain must not move");
@@ -260,7 +281,7 @@ contract UpgradeTest is Fixture {
     function test_anUpgradePreservesTheParameterSetAndTheAdmin() public {
         ParamSet memory before = config.params();
         address v2 = address(new X402Config());
-        vm.prank(admin);
+        vm.prank(owner);
         config.upgradeToAndCall(v2, "");
         assertEq(abi.encode(config.params()), abi.encode(before), "params");
         assertEq(config.admin(), admin, "admin");
@@ -294,7 +315,7 @@ contract UpgradeTest is Fixture {
         );
 
         address bad = address(new X402EscrowBadDomainV2());
-        vm.prank(admin);
+        vm.prank(owner);
         escrow.upgradeToAndCall(bad, "");
 
         bytes32 sepAfter = X402EscrowBadDomainV2(address(escrow)).DOMAIN_SEPARATOR();
@@ -369,7 +390,7 @@ contract UpgradeTest is Fixture {
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, sepBefore, v);
 
         address silent = address(new X402EscrowSilentDomainV2());
-        vm.prank(admin);
+        vm.prank(owner);
         escrow.upgradeToAndCall(silent, "");
 
         // The alarm every lazy test reads is still silent.
@@ -411,26 +432,39 @@ contract UpgradeTest is Fixture {
     /// by an operator rewriting the record after the gate has named the added signature, which is
     /// a separate act at a separate time. See `script/abi-surface.sh`.
     function test_theConfigFunctionSurfaceIsPinnedByName() public view {
-        string[17] memory expected = [
+        // D-17 added the owner surface (owner, pendingOwner, transferOwnership, acceptOwnership,
+        // renounceOwnership — which always reverts — setAdmin and initializeV2); D-18 removed
+        // verifierExpiry.
+        string[23] memory expected = [
             "UPGRADE_INTERFACE_VERSION()",
+            "acceptOwnership()",
             "admin()",
             "assertCanSign(address)",
             "canSign(address)",
-            "initialize((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)",
+            "initialize((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address,address)",
+            "initializeV2()",
+            "owner()",
             "params()",
             "paused()",
+            "pendingOwner()",
             "proxiableUUID()",
             "registerVerifier(address,bytes32,uint64)",
+            "renounceOwnership()",
             "revokeVerifier(address)",
+            "setAdmin(address)",
             "setPaused(bool)",
             "slashProviderBps()",
+            "transferOwnership(address)",
             "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)",
             "upgradeToAndCall(address,bytes)",
-            "verifierExpiry(address)",
             "verifierKey(address)",
-            "" // the 17th slot is deliberately empty: a 17th function makes this test red
+            "" // the 23rd slot is deliberately empty: a 23rd function makes this test red
         ];
-        _assertSurface("X402Config", 16, _dyn17(expected));
+        string[] memory dyn = new string[](23);
+        for (uint256 i = 0; i < 23; i++) {
+            dyn[i] = expected[i];
+        }
+        _assertSurface("X402Config", 22, dyn);
     }
 
     function test_theStakeFunctionSurfaceIsPinnedByName() public view {
@@ -491,13 +525,6 @@ contract UpgradeTest is Fixture {
             assertTrue(
                 found, string.concat("a pinned external function disappeared: ", expected[j])
             );
-        }
-    }
-
-    function _dyn17(string[17] memory a) internal pure returns (string[] memory out) {
-        out = new string[](17);
-        for (uint256 i = 0; i < 17; i++) {
-            out[i] = a[i];
         }
     }
 

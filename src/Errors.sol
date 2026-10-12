@@ -15,54 +15,34 @@ pragma solidity 0.8.24;
 ///
 /// # The accounting against `error.rs`, in full
 ///
-/// `error.rs` declares **55** `ErrorCode` variants. **50** of them appear below under the same
-/// name, and **33** errors below have no Anchor counterpart at all. The remaining **five** are
-/// listed here, every one of them, so that "the port is complete" is a claim a reader can check
-/// rather than take. (The counts are the output of a set difference over the two files, not an
-/// estimate; if you change either file, redo it rather than adjusting these by one.)
+/// `error.rs` declares **55** `ErrorCode` variants. **47** of them appear below under the same
+/// name, and **34** errors below have no Anchor counterpart at all. The remaining **8** are
+/// absent, and named here so that "the port is complete" is a claim a reader can check. (The
+/// counts are the output of a set difference over the two files, as `script/check-errors.sh`
+/// computes it; if you change either file, redo it rather than adjusting these by one.)
 ///
-/// `MathOverflow` was once in this list and is not any more; the reason it came back is at its
-/// declaration, and the counts above already include it.
+/// - **No EVM condition at all:** `EscrowMismatch` (the EVM voucher has no `pay_to`),
+///   `StakeMintProgramNotSupported` (the asset question here is [`AssetDecimalsNotSix`]),
+///   `EscrowLimitsRequireBuyer` (`setLimits` reads `msg.sender` and `setLimitsBySig` refuses with
+///   [`SignerIsNotBuyer`] first, so "armed limits with no buyer authorisation" cannot arise),
+///   `NotBuyer` (every buyer door is keyed by `msg.sender` or a recovered signer), and
+///   `DestinationIsVault` / `DestinationIsEscrowAta` (`withdraw` and `withdrawStake` take no
+///   destination and pay `msg.sender`, D-15).
+/// - **Absorbed by a truer name:** `MissingBuyerSignature` → [`SignerIsNotPayer`] on the redeem
+///   path and [`SignerIsNotBuyer`] on the escrow-control paths; `MissingVerifierSignature` →
+///   `VerifierNotRegistered` / `VerifierRevoked` / `VerifierKeyExpired`, which `assertCanSign`
+///   raises for the recovered attestation signer. `ecrecover` always yields *some* address, so a
+///   "missing" signature is never the condition — a signature by the wrong key is.
 ///
-/// **Two have no EVM condition at all.**
+/// Five errors with no producer were removed in D-18 rather than kept for name parity
+/// (`AmountExceedsUint64`, `NotBuyer`, `SignerIsNotVerifier`, `EscrowLimitsRequireBuyer`,
+/// `DestinationIsVault`), with `WalletCheckUnderfunded` (EIP-1271) and `Permit2NotConfigured`
+/// (the Permit2 deposit), whose doors went. `docs/divergences.md` carries the history.
 ///
-/// - `EscrowMismatch` (`error.rs:141`, `redeem_voucher.rs:132`) — guards the voucher's `pay_to`
-///   against its payer's escrow PDA. The EVM voucher has no `payTo` field at all (one
-///   contract holds every buyer, so the escrow is determined by `verifyingContract` + `payer`),
-///   so the condition cannot arise.
-/// - `StakeMintProgramNotSupported` (`error.rs:27`, `initialize_config.rs:31`) — "this mint is
-///   SPL Token, not Token-2022". The EVM question about the settlement asset is a different one;
-///   [`AssetDecimalsNotSix`] asks it.
-///
-/// **Three are absorbed by a differently-named error, and the name is the truer one here.**
-///
-/// - `DestinationIsEscrowAta` (`error.rs:179`, `withdraw.rs:99`) → [`DestinationIsVault`]. On
-///   Solana the buyer's escrow and the stake vault are different kinds of token account and get a
-///   check each. Here each is simply "the contract holding the money", one address, one check.
-/// - `MissingVerifierSignature` (`error.rs:74`, `attestation.rs:554`) → [`SignerIsNotVerifier`].
-/// - `MissingBuyerSignature` (`error.rs:138`, `redeem_voucher.rs:142`) → [`SignerIsNotPayer`] on
-///   the redeem path and [`SignerIsNotBuyer`] on the escrow-control paths.
-///
-/// Every other variant keeps its name, including `EscrowLimitsRequireBuyer` (`error.rs:165`,
-/// `open_escrow.rs:96`), whose EVM *mechanism* is a signature rather than an `is_signer` flag but
-/// whose condition is unchanged — see its declaration below.
-///
-/// **Why the two `MissingXSignature` variants change name.** On Solana the check is "does this
-/// transaction carry an ed25519 instruction proving key K signed these bytes?", and its failure
-/// really is a *missing* signature. On EVM there is no such state: `ecrecover` always yields
-/// *some* address, so the only question that can be asked is whether the address it yielded is
-/// the one required. `MissingBuyerSignature` would name a condition the chain cannot produce,
-/// and would read as "no signature was supplied" when what happened is "a valid signature by
-/// the wrong key was supplied" — the difference an incident review needs. The EVM design
-/// settles it independently: its ordered redeem check list names `SignerIsNotPayer` for exactly
-/// this position, so the rename is by design rather than drift. `InvalidSignature`,
-/// `MalleableSignature` and `BadSignatureV` cover the cases where recovery itself fails.
-///
-/// The 33 entries below with no Anchor counterpart are EIP-712 and ERC-20 conditions Solana does
-/// not have, plus the twelve of voucher delegation, which Solana does not have either: signature malleability, `v` normalisation, deadline/nonce replay, fee-on-transfer
-/// tokens, the `uint256` → `uint64` narrowing, the batch bound the EVM has to state explicitly, and
-/// [`WithdrawDelayTooShort`], which is a Rust `const _: () = assert!(…)` that Solidity can only
-/// spell at runtime.
+/// The 34 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+/// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
+/// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
+/// voucher delegation, and the four of the owner/admin split and the seq jump cap.
 ///
 /// The six PDA seed constants in `constants.rs:5-60` have no counterpart in `Constants.sol` for
 /// the same kind of reason; that omission is recorded there, not here.
@@ -70,9 +50,6 @@ pragma solidity 0.8.24;
 // --- generic -----------------------------------------------------------------
 error ZeroAmount();
 error ZeroAddress();
-/// Every amount *argument* is `uint64` (the backend's `MONEY_MAX_ATOMIC_UNITS`), but ERC-20
-/// speaks `uint256`. The narrowing is checked, never truncated.
-error AmountExceedsUint64();
 /// `error.rs:10`. **This entry was previously listed as having no EVM condition, and that was
 /// wrong.** The reasoning was that Solidity 0.8's checked arithmetic reverts with `Panic(0x11)`
 /// before any hand-written check could run, which is true of `+`, `-`, `*` and `/` — and false of
@@ -98,7 +75,16 @@ error NotAdmin();
 /// `ParamSet` omitting `admin` is correct and only looks like a gap.
 error InvalidAdmin();
 error NotRedeemer();
-error NotBuyer();
+/// EVM only. The caller of an upgrade on `X402Stake` or `X402Escrow` is not `CONFIG.owner()`.
+/// (`X402Config`'s own owner-gated doors use OpenZeppelin's `onlyOwner`, which raises
+/// `OwnableUnauthorizedAccount(account)` for the same condition.)
+error NotOwner();
+/// EVM only. `renounceOwnership` is disabled: an owner of `address(0)` would leave all three
+/// contracts unupgradeable and the admin unreplaceable, for ever.
+error OwnershipCannotBeRenounced();
+/// EVM only. `updateConfig(p, newAdmin)` with a non-zero `newAdmin`. Appointing the admin is the
+/// OWNER's power (`setAdmin`); the admin cannot hand its own role on.
+error AdminChangeRequiresOwner();
 
 // --- parameters --------------------------------------------------------------
 error InvalidTakeRateBps();
@@ -128,18 +114,22 @@ error BadSignatureV();
 /// [`Voucher`] is not its `payer`. The EVM design's ordered check list names this error at this
 /// position.
 error SignerIsNotPayer();
-/// `error.rs:74`'s `MissingVerifierSignature` — the recovered signer over a [`SlashAttestation`]
-/// is not a registered, unrevoked, unexpired verifier key.
-error SignerIsNotVerifier();
 /// `error.rs:138`'s `MissingBuyerSignature` on the escrow-control paths — the recovered signer
 /// over a [`SetLimits`] or [`RequestWithdraw`] message is not the `buyer` it names.
 error SignerIsNotBuyer();
 error SignatureExpired();
+/// EVM only (D-18). A relayed authorisation whose `deadline` is more than
+/// `MAX_SIGNATURE_LIFETIME_SECONDS` past the block that lands it.
+error SignatureDeadlineTooFar();
 error BadNonce();
 
 // --- voucher -----------------------------------------------------------------
 error VoucherSeqZero();
 error VoucherSeqNotIncreasing();
+/// EVM only. `seq > seqHigh + Constants.MAX_SEQ_GAP`: one voucher may not move the high-water mark
+/// so far that it strands the payer's sequence space (a `seq` of `2^64 - 1` would void every
+/// later voucher for ever).
+error VoucherSeqGapTooLarge();
 error VoucherExpired();
 error VoucherNotYetValid();
 error InvalidVoucherWindow();
@@ -162,17 +152,6 @@ error VoucherExceedsPerCallLimit();
 error EscrowWindowLimitExceeded();
 error EscrowInsufficient();
 error EscrowLimitsUnchanged();
-/// `error.rs:165`, enforced at `open_escrow.rs:96`:
-/// `buyer.is_signer || (max_voucher_amount == 0 && max_per_window == 0)`. A bare identity may
-/// open a *disarmed* escrow; only the buyer's own signature may open an armed one, so nobody can
-/// pre-arm limits against an address they do not control.
-///
-/// The condition survives the port; only its mechanism changes. Solana reads `is_signer` off the
-/// transaction; here the buyer's consent arrives as an EIP-712 [`SetLimits`] message, which is
-/// the entire reason `SET_LIMITS_TYPEHASH` exists. It is distinct from [`SignerIsNotBuyer`]:
-/// that one fires when a signature *was* supplied and recovered to the wrong address; this one
-/// fires when non-zero limits are being set with no buyer authorisation offered at all.
-error EscrowLimitsRequireBuyer();
 error ProviderBelowMinimumStake();
 error BatchTooLarge();
 error BatchLengthMismatch();
@@ -203,10 +182,6 @@ error DelegateIsExpired();
 error DelegateVoucherExceedsPerCallLimit();
 /// A delegate-signed voucher that would take the delegate's own rolling window past its cap.
 error DelegateWindowLimitExceeded();
-/// The transaction does not carry enough gas for a payer's EIP-1271 wallet to be asked with its
-/// full gas cap. Reverting is the honest answer: refusing the voucher would blame the payer for
-/// the submitter's gas limit.
-error WalletCheckUnderfunded();
 
 // --- escrow withdrawal -------------------------------------------------------
 error WithdrawNotYetAvailable();
@@ -225,11 +200,7 @@ error WithdrawDelayTooShort();
 /// A fee-on-transfer or rebasing token: the balance delta is not the amount asked for. The
 /// program's whole accounting rests on `vault balance == sum of the ledger`.
 error TransferAmountMismatch();
-error Permit2NotConfigured();
 error AssetDecimalsNotSix();
-/// error.rs `DestinationIsVault` — the contract holding the money cannot be the other side of
-/// its own transfer. Covers `DestinationIsEscrowAta` too; see the note at the top of this file.
-error DestinationIsVault();
 
 // --- stake -------------------------------------------------------------------
 error InsufficientBondedStake();

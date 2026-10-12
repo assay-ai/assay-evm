@@ -8,7 +8,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {Fixture} from "./helpers/Fixture.sol";
-import {MockPermit2, ReentrantPermit2} from "./helpers/MockPermit2.sol";
 import {ReentrantUSDG, FalseReturningUSDG, NoReturnUSDG} from "./helpers/MockUSDG.sol";
 import {X402Escrow} from "../src/X402Escrow.sol";
 import {IX402Config} from "../src/interfaces/IX402Config.sol";
@@ -62,9 +61,9 @@ contract X402EscrowDepositTest is Fixture {
     /// A second proxy with a DIFFERENT permit2 and a different asset, so a hard-coded getter
     /// cannot satisfy both instances.
     function test_theStoredAddressesAreThisProxysOwn() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow a = _deployEscrow(address(permit2));
-        assertEq(a.PERMIT2(), address(permit2));
+        address permit2 = address(0x9E2);
+        X402Escrow a = _deployEscrow(permit2);
+        assertEq(a.PERMIT2(), permit2);
         assertEq(escrow.PERMIT2(), address(0), "the fixture's escrow is unchanged");
         assertEq(address(a.ASSET()), address(usdg));
         assertEq(address(a.CONFIG()), address(config));
@@ -611,218 +610,52 @@ contract X402EscrowDepositTest is Fixture {
         assertEq(usdt.balanceOf(buyer), 0);
     }
 
-    // --- the Permit2 door -------------------------------------------------------------------
-
-    function test_wrongState_permit2PathRefusesWhenUnconfigured() public {
-        X402Escrow noPermit = _deployEscrow(address(0));
-        vm.expectRevert(Permit2NotConfigured.selector);
-        noPermit.depositWithPermit2(buyer, 1, 0, block.timestamp + 1, hex"00");
-    }
-
-    /// The only signature-based fund-in on this chain, exercised end to end against a
-    /// MockPermit2 that enforces the two things the real one enforces for this call: the
-    /// signature recovers to `owner`, and the `spender` bound into it is msg.sender (the
-    /// escrow). A relayer submits; the buyer paid gas exactly once, for the approve (D-11).
-    function test_happyPath_permit2DepositCreditsTheSigner() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow withPermit = _deployEscrow(address(permit2));
-        _fund(buyer, 1_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), type(uint256).max); // the one-time approve
-
-        uint256 deadline = block.timestamp + 600;
-        bytes memory sig =
-            permit2.signFor(buyerKey, address(usdg), 1_000_000, 7, deadline, address(withPermit));
-
-        vm.prank(relayer); // a relayer, holding nothing but the signature
-        withPermit.depositWithPermit2(buyer, 1_000_000, 7, deadline, sig);
-
-        assertEq(withPermit.escrowOf(buyer).balance, 1_000_000);
-        assertEq(withPermit.totalEscrowed(), 1_000_000);
-        assertEq(usdg.balanceOf(buyer), 0);
-        assertEq(withPermit.escrowOf(relayer).balance, 0, "the relayer got nothing");
-        assertEq(usdg.balanceOf(address(withPermit)), 1_000_000);
-    }
-
-    /// `owner` is both the account Permit2 checks the signature against and the account the
-    /// escrow credits, so a relayer cannot point the buyer's signature at another escrow.
-    function test_wrongSigner_aPermit2SignatureCannotCreditSomebodyElse() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow withPermit = _deployEscrow(address(permit2));
-        _fund(buyer, 1_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), type(uint256).max);
-
-        uint256 deadline = block.timestamp + 600;
-        bytes memory sig =
-            permit2.signFor(buyerKey, address(usdg), 1_000_000, 7, deadline, address(withPermit));
-
-        vm.prank(relayer);
-        vm.expectRevert(MockPermit2.InvalidSigner.selector);
-        withPermit.depositWithPermit2(stranger, 1_000_000, 7, deadline, sig);
-
-        assertEq(withPermit.escrowOf(stranger).balance, 0);
-        assertEq(usdg.balanceOf(buyer), 1_000_000, "nothing moved");
-    }
-
-    /// The other half of the same rule: the digest binds `msg.sender` as the spender, so a
-    /// signature made for one escrow is not a signature for a second escrow the relayer
-    /// controls — even though both are legitimate deployments of this implementation.
-    function test_wrongSigner_aPermit2SignatureIsBoundToOneEscrow() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow first = _deployEscrow(address(permit2));
-        X402Escrow second = _deployEscrow(address(permit2));
-        _fund(buyer, 1_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), type(uint256).max);
-
-        uint256 deadline = block.timestamp + 600;
-        bytes memory sig =
-            permit2.signFor(buyerKey, address(usdg), 1_000_000, 7, deadline, address(first));
-
-        vm.prank(relayer);
-        vm.expectRevert(MockPermit2.InvalidSigner.selector);
-        second.depositWithPermit2(buyer, 1_000_000, 7, deadline, sig);
-
-        assertEq(second.escrowOf(buyer).balance, 0);
-        assertEq(usdg.balanceOf(buyer), 1_000_000, "nothing moved");
-    }
-
-    /// One signature, one deposit. The nonce is Permit2's, not this contract's, which is why
-    /// the second attempt fails inside the double rather than here.
-    function test_wrongState_aPermit2SignatureCannotBeReplayed() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow withPermit = _deployEscrow(address(permit2));
-        _fund(buyer, 4_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), type(uint256).max);
-
-        uint256 deadline = block.timestamp + 600;
-        bytes memory sig =
-            permit2.signFor(buyerKey, address(usdg), 1_000_000, 7, deadline, address(withPermit));
-
-        vm.prank(relayer);
-        withPermit.depositWithPermit2(buyer, 1_000_000, 7, deadline, sig);
-
-        vm.prank(relayer);
-        vm.expectRevert(MockPermit2.NonceUsed.selector);
-        withPermit.depositWithPermit2(buyer, 1_000_000, 7, deadline, sig);
-
-        assertEq(withPermit.escrowOf(buyer).balance, 1_000_000, "credited once");
-        assertEq(withPermit.totalEscrowed(), 1_000_000);
-    }
-
-    /// The delta assertion guards the Permit2 door too — it is a second call site, so it is a
-    /// second guard, and deleting it has to fail a test of its own.
-    /// `mockTokenOnly`: needs `MockUSDG.setTransferFeeBps` — see above.
-    function test_wrongState_aShortTransferRevertsThroughPermit2() public mockTokenOnly {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow withPermit = _deployEscrow(address(permit2));
-        usdg.setTransferFeeBps(100);
-        _fund(buyer, 1_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), type(uint256).max);
-
-        uint256 deadline = block.timestamp + 600;
-        bytes memory sig =
-            permit2.signFor(buyerKey, address(usdg), 1_000_000, 7, deadline, address(withPermit));
-
-        vm.prank(relayer);
-        vm.expectRevert(TransferAmountMismatch.selector);
-        withPermit.depositWithPermit2(buyer, 1_000_000, 7, deadline, sig);
-
-        assertEq(withPermit.escrowOf(buyer).balance, 0);
-        assertEq(withPermit.totalEscrowed(), 0);
-    }
-
-    function test_wrongState_permit2DepositIsClosedWhilePaused() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow withPermit = _deployEscrow(address(permit2));
-        _fund(buyer, 1_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(permit2), type(uint256).max);
-
-        uint256 deadline = block.timestamp + 600;
-        bytes memory sig =
-            permit2.signFor(buyerKey, address(usdg), 1_000_000, 7, deadline, address(withPermit));
-
-        vm.prank(admin);
-        config.setPaused(true);
-
-        vm.prank(relayer);
-        vm.expectRevert(ProgramPaused.selector);
-        withPermit.depositWithPermit2(buyer, 1_000_000, 7, deadline, sig);
-    }
-
-    function test_wrongState_permit2RefusesZeroAmountAndTheZeroBuyer() public {
-        MockPermit2 permit2 = new MockPermit2();
-        X402Escrow withPermit = _deployEscrow(address(permit2));
-
-        vm.prank(relayer);
-        vm.expectRevert(ZeroAmount.selector);
-        withPermit.depositWithPermit2(buyer, 0, 7, block.timestamp + 600, hex"00");
-
-        vm.prank(relayer);
-        vm.expectRevert(ZeroAddress.selector);
-        withPermit.depositWithPermit2(address(0), 1, 7, block.timestamp + 600, hex"00");
-    }
-
-    /// `PERMIT2` is an arbitrary address this contract calls out to, so the Permit2 door needs
-    /// its own re-entrancy proof: E4 mutates `depositFor` only, and deleting `nonReentrant` from
-    /// this door failed nothing at all until this test existed.
-    function test_wrongState_aReentrantPermit2CannotRecurseIntoDepositWithPermit2() public {
-        ReentrantPermit2 evil = new ReentrantPermit2();
-        X402Escrow re = _deployEscrow(address(evil));
-        evil.setEscrow(address(re), 250_000);
-        _fund(buyer, 4_000_000);
-        vm.prank(buyer);
-        usdg.approve(address(evil), type(uint256).max);
-
-        vm.prank(relayer);
-        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        re.depositWithPermit2(buyer, 1_000_000, 7, block.timestamp + 600, hex"");
-
-        assertEq(re.escrowOf(buyer).balance, 0);
-        assertEq(re.totalEscrowed(), 0);
-        assertEq(usdg.balanceOf(buyer), 4_000_000, "nothing moved");
-    }
-
     // --- the upgrade door -------------------------------------------------------------------
 
-    /// The authority is `CONFIG.admin()`, read live. Nobody else may move the implementation.
-    function test_wrongSigner_onlyTheAdminUpgradesEscrow() public {
+    /// The authority is `CONFIG.owner()`, read live (D-17). Nobody else — not a stranger, not the
+    /// admin — may move the implementation.
+    function test_wrongSigner_onlyTheOwnerUpgradesEscrow() public {
         X402Escrow next = new X402Escrow();
 
         vm.prank(stranger);
-        vm.expectRevert(NotAdmin.selector);
+        vm.expectRevert(NotOwner.selector);
         escrow.upgradeToAndCall(address(next), "");
 
         vm.prank(admin);
+        vm.expectRevert(NotOwner.selector);
+        escrow.upgradeToAndCall(address(next), "");
+
+        vm.prank(owner);
         escrow.upgradeToAndCall(address(next), "");
         assertEq(
             address(uint160(uint256(vm.load(address(escrow), IMPL_SLOT)))),
             address(next),
-            "the admin moved it"
+            "the owner moved it"
         );
     }
 
-    /// Read LIVE, never cached: handing Config to a new admin hands this contract's upgrade
-    /// authority over in the same transaction.
-    function test_theUpgradeAuthorityFollowsConfigsAdmin() public {
-        address nextAdmin = address(0xA11CE);
+    /// Read LIVE, never cached: accepting Config's ownership hands this contract's upgrade
+    /// authority over in the same transaction — and the admin moving changes nothing here.
+    function test_theUpgradeAuthorityFollowsConfigsOwner() public {
+        address nextOwner = address(0xA11CE);
         X402Escrow next = new X402Escrow();
 
-        // Read the params BEFORE the prank: `vm.prank` arms the next call, and an argument
-        // that is itself a call would consume it.
-        ParamSet memory unchangedParams = config.params();
-        vm.prank(admin);
-        config.updateConfig(unchangedParams, nextAdmin);
-
-        vm.prank(admin);
-        vm.expectRevert(NotAdmin.selector);
+        vm.prank(owner);
+        config.setAdmin(address(0xAD2));
+        vm.prank(address(0xAD2));
+        vm.expectRevert(NotOwner.selector);
         escrow.upgradeToAndCall(address(next), "");
 
-        vm.prank(nextAdmin);
+        vm.prank(owner);
+        config.transferOwnership(nextOwner);
+        vm.prank(nextOwner);
+        config.acceptOwnership();
+
+        vm.prank(owner);
+        vm.expectRevert(NotOwner.selector);
+        escrow.upgradeToAndCall(address(next), "");
+
+        vm.prank(nextOwner);
         escrow.upgradeToAndCall(address(next), "");
         assertEq(address(uint160(uint256(vm.load(address(escrow), IMPL_SLOT)))), address(next));
     }

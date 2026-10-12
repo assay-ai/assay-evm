@@ -11,7 +11,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {IX402Config} from "./interfaces/IX402Config.sol";
 import {IX402StakeView} from "./interfaces/IX402StakeView.sol";
 import {IERC20Decimals} from "./interfaces/IERC20Decimals.sol";
-import {IPermit2} from "./interfaces/IPermit2.sol";
 import {Voucher712} from "./libraries/Voucher712.sol";
 import {Sig} from "./libraries/Sig.sol";
 import {Window} from "./libraries/Window.sol";
@@ -22,11 +21,13 @@ import {Voucher, ParamSet} from "./Types.sol";
 import "./Errors.sol";
 
 /// Buyer money. One contract holds every buyer's USDG in one pooled balance, with per-buyer
-/// accounting in storage. Money leaves through exactly two doors — `redeemVoucher`, which
-/// needs an EIP-712 voucher over an exact amount for an exact request, authorised by the buyer
-/// (its own key, a delegate key it authorised on chain within caps, or its EIP-1271 wallet), and
-/// `withdraw()`, which is msg.sender-only. There is no admin path beside them, and there is
-/// no `closeEscrow`: closing would reset `seqHigh` and replay every in-window voucher.
+/// accounting in storage. Money leaves through exactly two doors — `redeemVoucher` (and its
+/// batch), which needs an EIP-712 voucher over an exact amount for an exact request, signed by
+/// the payer's own key or by a delegate key the payer authorised on chain within caps, and
+/// `withdraw()`, which is msg.sender-only. **No role — not the owner, not the admin, not the
+/// redeemer — has a door that moves a token out of this contract**; the owner's only residual
+/// power over this money is the upgrade itself (D-17, `test/NoTokenDoors.t.sol`). There is no
+/// `closeEscrow`: closing would reset `seqHigh` and replay every in-window voucher.
 ///
 /// # What this is a port of
 ///
@@ -39,16 +40,8 @@ import "./Errors.sol";
 /// authority check — a bare identity may open a *disarmed* escrow, only the buyer's own
 /// signature may open an armed one — therefore has nothing to guard at open time and moves
 /// wholly to `setLimits`, whose authority IS `msg.sender`. Its meta-transaction twin
-/// `setLimitsBySig` re-proves that authority from an EIP-712 signature.
-///
-/// **[`EscrowLimitsRequireBuyer`] therefore has no producer, and this line used to predict that
-/// `setLimitsBySig` would be one.** Measured against the shipped code: it is not. That error names
-/// "non-zero limits set with NO buyer authorisation offered at all", and neither door can reach
-/// that state — `setLimits` takes `msg.sender` as the buyer, and `setLimitsBySig` refuses with
-/// [`SignerIsNotBuyer`] before it reaches [`_setLimits`]. The condition is structurally absent
-/// rather than unchecked: on Solana `is_signer` is a flag that can be false while the account is
-/// still present, and here the authority IS the identity the write is keyed by. Recorded in
-/// `docs/divergences.md`.
+/// `setLimitsBySig` re-proves that authority from an EIP-712 signature. (So
+/// `EscrowLimitsRequireBuyer` has no EVM condition — `docs/divergences.md`.)
 ///
 /// **Three `BuyerEscrow` fields are deliberately absent.** `buyer` (`state.rs:530`) is the
 /// mapping key, so storing it again would be a second source for one identity. `bump`
@@ -123,6 +116,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     IX402Config public CONFIG;
     IX402StakeView public STAKE;
     IERC20 public ASSET;
+    /// **Read by nothing since D-18**, which removed the Permit2 deposit door. The slot stays,
+    /// under the same label, because the layout is append-only and this proxy has written it; the
+    /// getter stays so the upgrade scripts can assert it did not move. A fresh deployment may
+    /// pass `address(0)`.
     address public PERMIT2;
 
     /// `internal` rather than `public` because the generated getter for a struct-valued mapping
@@ -176,33 +173,13 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         if (address(asset) == address(0)) revert ZeroAddress();
         if (IERC20Decimals(address(asset)).decimals() != 6) revert AssetDecimalsNotSix();
 
-        // `constants.rs:285` states this as
-        // `const _: () = assert!(WITHDRAW_DELAY_SECONDS > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS)`,
-        // so lowering the delay fails the Rust build. Solidity has no constant assertion, so it
-        // becomes a check here and a test in `test/Types.t.sol`. A buyer's withdrawal must not
-        // mature while a voucher they signed before asking for it is still redeemable.
-        //
-        // It names the DERIVED constant, exactly as the Rust assert does, rather than re-spelling
-        // the three-term sum: `MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS` exists so the 2,220 is written
-        // once, and a second spelling here would go on checking the old form after an edit.
-        //
-        // Every term is a compile-time constant, so the optimiser folds this to nothing today
-        // and it costs no gas. It turns a future edit to `Constants` into a FRESH DEPLOYMENT that
-        // cannot be initialised.
-        //
-        // **And only a fresh one — read this before relying on it.** An earlier wording here said
-        // "a deployment that cannot be initialised", full stop. Under UUPS this function carries
-        // `initializer` and never runs again, so an implementation compiled with a lowered
-        // `WITHDRAW_DELAY_SECONDS` upgrades in cleanly and this check never fires. It guards the
-        // first implementation of a proxy and nothing after it.
-        //
-        // What holds the invariant for every implementation after the first is CI, and it is two
-        // named tests rather than this line:
+        // A buyer's withdrawal must not mature while a voucher they signed before asking for it is
+        // still redeemable (`constants.rs:285`, a Rust build-time assert). Every term is a
+        // constant, so this folds to nothing and only guards a FRESH proxy's first
+        // implementation — `initializer` never runs again on an upgrade. What holds the invariant
+        // for every later implementation is CI:
         // `test/X402Escrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`
-        // (which also asserts by source text that this very check is still here, spelled against
-        // the derived constant) and `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`.
-        // Moving the check into `_authorizeUpgrade` would make it live on every upgrade; it is
-        // left here, matching `constants.rs:285`'s placement, and the gate is named instead.
+        // and `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`.
         if (Constants.WITHDRAW_DELAY_SECONDS <= Constants.MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS) {
             revert WithdrawDelayTooShort();
         }
@@ -213,15 +190,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         PERMIT2 = permit2;
     }
 
-    /// The upgrade door (D-1). The authority is READ FROM CONFIG on every call, never cached:
-    /// moving `Config.admin` moves the upgrade authority of this contract in the same
-    /// transaction, which is the property that keeps "one key" true.
-    ///
-    /// On Solana this authority does not exist at all — the BPF loader holds it and it is a
-    /// different key from `Config.admin`. That divergence is D-1's, recorded at
-    /// `X402Config.admin`'s declaration.
+    /// The upgrade door (D-1, D-17). The authority is `CONFIG.owner()`, READ FROM CONFIG on every
+    /// call and never cached: moving the owner moves the upgrade authority of this contract in
+    /// the same transaction. The admin is NOT an upgrade authority since D-17.
     function _authorizeUpgrade(address) internal view override {
-        if (msg.sender != CONFIG.admin()) revert NotAdmin();
+        if (msg.sender != CONFIG.owner()) revert NotOwner();
     }
 
     function escrowOf(address buyer) external view returns (Escrow memory) {
@@ -233,94 +206,6 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// rather than left to a caller to recompute.
     function DOMAIN_SEPARATOR() external view returns (bytes32) {
         return _domainSeparatorV4();
-    }
-
-    /// The address whose key signed this voucher — the whole authority over a buyer's money.
-    /// `redeem_voucher.rs:137-142` proves the same thing through the ed25519 precompile and
-    /// against `voucher.payer`, "a field of these signed bytes and never an account of the
-    /// instruction" (`attestation.rs:306`). The comparison against `v.payer` is the CALLER's,
-    /// here as there: this function answers "who signed", `redeemVoucher` decides
-    /// whether that is the right somebody and raises [`SignerIsNotPayer`] when it is not.
-    ///
-    /// `view` rather than `pure` because the domain separator reads `block.chainid` and
-    /// `address(this)`.
-    ///
-    /// **Why it is exposed at all: the OFF-CHAIN pre-flight.** The backend and the console recover
-    /// a voucher's signer before spending gas on a redemption that would revert, and every
-    /// recovery property below is then directly testable rather than only reachable through a path
-    /// that also moves money. It grants nothing: recovery is a pure function of arguments the
-    /// caller already holds, and a caller who can call this can compute the same answer off chain.
-    ///
-    /// **`public` rather than `external` buys nothing today, and probably never will.** An earlier
-    /// version of this comment said `redeemVoucher` would call it internally; it does not —
-    /// `_redeem` calls [`_recover`] directly, which is one hash cheaper. So
-    /// `external` would serve the pre-flight identically, and `test/MUTATION-LOG.md` records the
-    /// swap as a surviving degenerate (W2) that the redeem tests will NOT kill either. It stays
-    /// `public` because the published interface says `public` and because an internal caller is
-    /// cheap to add; it is not load-bearing, and nobody should write a test pretending it is.
-    function recoverVoucherSigner(Voucher calldata v, bytes calldata sig)
-        public
-        view
-        returns (address)
-    {
-        return _recover(_hashTypedDataV4(Voucher712.hashVoucher(v)), sig);
-    }
-
-    /// Four guards, in this order, and every one of them is load-bearing:
-    ///   1. exactly 65 bytes — the 64-byte EIP-2098 compact form is refused, so there is
-    ///      exactly ONE acceptable encoding of any signature;
-    ///   2. low-s (EIP-2) — a malleated twin is different bytes for the same voucher, which
-    ///      breaks any idempotency key built on the signature string;
-    ///   3. v in {27, 28};
-    ///   4. signer != address(0) — forget this and garbage "recovers" to the zero address.
-    ///
-    /// **Guard 1 must come first**, or `calldataload` reads words that are not the signature.
-    ///
-    /// **The relative order of guards 2 and 3 is a PREFERENCE, not an invariant, and a reader of
-    /// this comment used to be told otherwise.** It was justified as "low-s before `v`, so a
-    /// malleated twin is diagnosed as malleable rather than as whatever its flipped `v` happens to
-    /// trip" — but a twin's `v` is always 27 or 28, so it reaches guard 2 under either order. The
-    /// two spellings differ only on bytes that are simultaneously high-s and `v ∉ {27,28}`, where
-    /// they name two different true defects. Measured: exchanging them passes the whole suite
-    /// (`test/MUTATION-LOG.md` rows S8/W1, confirmed by a review). Nobody
-    /// should write a test that pins one of two equally correct diagnoses.
-    ///
-    /// **Guards 2 and 4 duplicate checks OZ's `tryRecover` makes, and both duplications are
-    /// deliberate.** OZ answers `RecoverError.InvalidSignatureS` and `RecoverError.InvalidSignature`
-    /// for the same two conditions; checking first is what lets each condition keep its own name
-    /// from `Errors.sol` instead of collapsing into one. `test/MUTATION-LOG.md` records guard 4 as
-    /// an *equivalent mutant* — nothing can distinguish it from the `err` disjunct beside it —
-    /// rather than pretending a test proves it.
-    ///
-    /// **Read that last paragraph with its condition attached: it holds ONLY while
-    /// `ECDSA.tryRecover` is the call below.** "Name-only" and "equivalent" are statements about
-    /// this pair of lines *together with OZ*, never about the guards alone. Replace `tryRecover`
-    /// with a bare `ecrecover` — behaviour-preserving on its own, measured — and guard 2 becomes
-    /// the ONLY thing refusing a malleated twin and guard 4 the only thing refusing
-    /// `address(0)`. So the two changes are safe apart and unsafe together, which is exactly the
-    /// pair a future engineer citing those log rows would make. Anyone who drops OZ here owns
-    /// both guards from that moment on.
-    ///
-    /// **There is no `ecrecover` anywhere else in this codebase, and there must not be** — the
-    /// four guards are only guards if every recovery goes through this function.
-    /// `test_recoveryHappensAtExactlyOneCallSiteInSrc` is what enforces it, by counting
-    /// occurrences across `src/` rather than trusting this sentence.
-    ///
-    /// **That move has been made.** The body is now `src/libraries/Sig.sol` and this is the
-    /// one-line forwarder it left behind, so `X402Stake` shares the four guards *through the
-    /// library* — it cannot call this `internal` function directly, and an earlier version of
-    /// this comment claimed it would. Every paragraph above still describes the implementation;
-    /// it simply lives one file over, and the gate's allowed filename moved with it in the same
-    /// commit. The forwarder stays so that no call site in this contract changed.
-    ///
-    /// Its Solana counterpart is `ed25519_instruction_proves` (`attestation.rs:563-622`), which
-    /// is longer for a reason that does not apply here: there the *parser* is the attack surface,
-    /// since the precompile's offsets can point into another instruction's data, so it refuses
-    /// everything but the canonical self-contained layout rather than following a pointer. On EVM
-    /// `ecrecover` takes the digest by value, so there is no pointer to chase — what is left is
-    /// the encoding ambiguity ed25519 does not have.
-    function _recover(bytes32 digest, bytes calldata sig) internal pure returns (address) {
-        return Sig.recover(digest, sig);
     }
 
     function deposit(uint64 amount) external {
@@ -376,55 +261,14 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         _credit(buyer, amount);
     }
 
-    /// USDG implements neither EIP-3009 nor EIP-2612 (measured — `docs/chain-facts.md`), so
-    /// Permit2 is the only signature-based fund-in. It needs a one-time `approve(PERMIT2, max)`
-    /// from the buyer, which is a transaction — there is no gasless FIRST deposit on this chain
-    /// (D-11).
-    ///
-    /// **`buyer` is the signer, never the caller.** Permit2 checks the signature against the
-    /// `owner` argument and binds `msg.sender` — this contract — into the digest as the spender.
-    /// Crediting `owner` is therefore the only crediting rule under which a relayer cannot point
-    /// somebody else's signature at an account it controls, and a signature made for one escrow
-    /// cannot be replayed against another.
-    ///
-    /// Checks → interaction → effects, for the same measured-delta reason as [`depositFor`] and
-    /// with the same warning attached: nothing here pays out, and the payout paths must not copy
-    /// it.
-    function depositWithPermit2(
-        address buyer,
-        uint64 amount,
-        uint256 nonce,
-        uint256 deadline,
-        bytes calldata signature
-    ) external nonReentrant {
-        if (PERMIT2 == address(0)) revert Permit2NotConfigured();
-        if (CONFIG.paused()) revert ProgramPaused();
-        if (buyer == address(0)) revert ZeroAddress();
-        if (amount == 0) revert ZeroAmount();
-
-        uint256 before = ASSET.balanceOf(address(this));
-        IPermit2(PERMIT2).permitTransferFrom(
-            IPermit2.PermitTransferFrom({
-                permitted: IPermit2.TokenPermissions({token: address(ASSET), amount: amount}),
-                nonce: nonce,
-                deadline: deadline
-            }),
-            IPermit2.SignatureTransferDetails({to: address(this), requestedAmount: amount}),
-            buyer,
-            signature
-        );
-        if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
-        _credit(buyer, amount);
-    }
-
     /// **The `balanceOf` rule for this whole contract, stated at the site that motivates it.**
-    /// There are FOUR `balanceOf` reads here — two in this function and two in
-    /// [`depositWithPermit2`] — and every one of them is half of a before/after pair around a
-    /// single transfer. **No read is ever a solvency assertion, and none may be added.** Solvency
+    /// There are TWO `balanceOf` reads here, both in this function, and they are the two halves of
+    /// a before/after pair around a single transfer. **No read is ever a solvency assertion, and
+    /// none may be added.** Solvency
     /// is [`totalEscrowed`] and the per-buyer balances, nothing else: USDG is an upgradeable
     /// Paxos proxy with a blocklist, so a blocklisted contract's `balanceOf` and its entitlements
     /// disagree, and an assertion built on the former would refuse EVERY withdrawal rather than
-    /// the one actually blocked. A fifth read is allowed only if it is another delta half.
+    /// the one actually blocked. A third read is allowed only if it is another delta half.
     ///
     /// The delta itself makes a fee-on-transfer surprise fail loudly rather than silently
     /// under-credit.
@@ -487,8 +331,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// already served (`redeem_voucher.rs:19-24`).
     ///
     /// **The whole authority over the money is the buyer's authorisation of the EIP-712 voucher**
-    /// — its own signature, a delegate's within the caps the buyer set on chain, or its EIP-1271
-    /// wallet's answer (`_voucherAuthority`) — proved against
+    /// — its own signature, or a delegate's within the caps the buyer set on chain
+    /// (`_voucherAuthority`) — proved against
     /// `v.payer`, which is also the escrow's mapping key: the account spent and the key required
     /// name one party.
     ///
@@ -568,7 +412,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// `setLimitsBySig` is the meta-transaction twin, which re-proves the same
     /// authority from a signature and shares [`_setLimits`] with this one.
+    ///
+    /// **It consumes `authNonce`**, like every payer decision (D-18): a `SetLimitsBySig` signature
+    /// the relayer withheld can then never land after this call and undo it.
     function setLimits(uint64 maxVoucherAmount, uint64 maxPerWindow) external nonReentrant {
+        escrows[msg.sender].authNonce += 1;
         _setLimits(msg.sender, maxVoucherAmount, maxPerWindow);
     }
 
@@ -591,8 +439,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// be recomputing a number a redeploy can move under it.
     event WithdrawRequested(address indexed buyer, uint64 amount, uint64 availableAt);
 
-    /// The relayed twin of [`setLimits`], and one of exactly TWO relayed doors in this contract.
-    /// The relayer key can never move USDG: every money-moving path is authorised by
+    /// The relayed twin of [`setLimits`], one of the FOUR relayed doors in this contract (with
+    /// `requestWithdrawBySig`, `authorizeDelegateBySig` and `revokeDelegateBySig`). The relayer key
+    /// can never move USDG: every money-moving path is authorised by
     /// `msg.sender == buyer`, by a buyer EIP-712 signature over an exact amount, or by a
     /// registered verifier's attestation plus 72 hours. This one exists because a buyer
     /// *lowering* a ceiling — the safety direction, and the one an incident needs — must never be
@@ -636,11 +485,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// It does NOT block [`redeemVoucher`], exactly as the Anchor original does not: a voucher the
     /// buyer signs *after* the request is the platform's risk, not the buyer's.
+    ///
+    /// **It consumes `authNonce`**, like every payer decision (D-18): a withheld
+    /// `RequestWithdrawBySig` can then never cancel or restart this request.
     function requestWithdraw(uint64 amount) external nonReentrant {
+        escrows[msg.sender].authNonce += 1;
         _requestWithdraw(msg.sender, amount);
     }
 
-    /// The relayed twin, and the second and last of the two. Starting a clock moves no money,
+    /// The relayed twin of [`requestWithdraw`]. Starting a clock moves no money,
     /// so a compromised relayer that could land one of these can delay nothing and take nothing:
     /// the worst it can do with a signature the buyer really produced is *start the buyer's own
     /// exit*, and the buyer cancels it with `requestWithdraw(0)`.
@@ -731,8 +584,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// # There is deliberately no `withdrawBySig`
     ///
-    /// The design gives relayed twins to [`setLimitsBySig`] and [`requestWithdrawBySig`] and stops
-    /// there. [`requestWithdraw`] already served the one-hour delay, so by the time this function
+    /// The relayed doors are the two escrow-control twins and the two delegation twins, and they
+    /// stop there. [`requestWithdraw`] already served the one-hour delay, so by the time this function
     /// is callable **the brake is spent**: a phished `withdrawBySig` signature would drain the
     /// escrow immediately with nothing left to stop it, where a phished `requestWithdraw`
     /// signature only starts a clock the buyer can cancel. To take money here an attacker needs
@@ -807,13 +660,13 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// The `nonce` and the `deadline` are INSIDE the signed struct, so a leaked relayer key can
     /// neither replay an authorisation nor extend one — it can only carry, once, the exact
-    /// message the buyer already agreed to. Each door hashes a DISTINCT typehash
-    /// (`Voucher712`'s three), so an authorisation collected at one door cannot be presented at
-    /// another; that is the EIP-712 form of `attestation.rs:126`'s
+    /// message the buyer already agreed to. Each door hashes a DISTINCT typehash (four of them in
+    /// `Voucher712`), so an authorisation collected at one door cannot be presented at another; that is the EIP-712 form of `attestation.rs:126`'s
     /// `assert!(ATTESTATION_MESSAGE_LEN != VOUCHER_MESSAGE_LEN)`, and strictly stronger, because
     /// two lengths can be made to collide by a future field and two typehashes cannot.
     ///
-    /// **One nonce serves both doors.** `authNonce` is a single counter on the escrow, not one
+    /// **One nonce serves every payer decision** — the four relayed doors here and the four direct
+    /// ones, which bump it too (D-18). `authNonce` is a single counter on the escrow, not one
     /// per message kind, so a signature the buyer produced for `SetLimits` at nonce `n` and a
     /// signature they produced for `RequestWithdraw` at the same `n` are alternatives: landing
     /// either one voids the other. Per-kind nonces would let a relayer hold one of each and
@@ -824,7 +677,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// redeem path.
     /// It leaks nothing — `escrowOf` already returns `authNonce` to anybody who asks.
     ///
-    /// `buyer == address(0)` is belt over brace: [`_recover`] refuses a recovery to the zero
+    /// `buyer == address(0)` is belt over brace: [`Sig.recover`] refuses a recovery to the zero
     /// address, so no signature can ever satisfy `signer == address(0)`. It is here so the
     /// refusal names the argument that is wrong instead of the signature that could not have
     /// been right.
@@ -837,10 +690,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ) internal {
         if (buyer == address(0)) revert ZeroAddress();
         if (block.timestamp > deadline) revert SignatureExpired();
+        // D-18: a relayed authorisation lives at most `MAX_SIGNATURE_LIFETIME_SECONDS`, so a
+        // phished or withheld signature cannot stay landable for years. `uint256`, no overflow.
+        if (deadline > block.timestamp + Constants.MAX_SIGNATURE_LIFETIME_SECONDS) {
+            revert SignatureDeadlineTooFar();
+        }
 
         Escrow storage e = escrows[buyer];
         if (nonce != e.authNonce) revert BadNonce();
-        if (_recover(_hashTypedDataV4(structHash), sig) != buyer) revert SignerIsNotBuyer();
+        if (Sig.recover(_hashTypedDataV4(structHash), sig) != buyer) revert SignerIsNotBuyer();
 
         e.authNonce = nonce + 1;
     }
@@ -933,11 +791,12 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         Escrow storage e = escrows[v.payer];
         if (v.seq == 0) revert VoucherSeqZero();
         if (v.seq <= e.seqHigh) revert VoucherSeqNotIncreasing();
+        // D-17: the jump cap. `v.seq > e.seqHigh` was just checked, so the difference cannot wrap.
+        if (v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) revert VoucherSeqGapTooLarge();
 
         // `redeem_voucher.rs:137-142`, widened for delegation. [`_voucherAuthority`] is the whole
-        // authority over the money: the payer's key, a delegate the payer authorised, or the
-        // payer's own EIP-1271 wallet. It returns the delegate, or `address(0)` when the payer
-        // itself authorised the voucher.
+        // authority over the money: the payer's key, or a delegate the payer authorised. It
+        // returns the delegate, or `address(0)` when the payer itself signed.
         address delegate =
             _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);
 
@@ -1020,107 +879,38 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     // --- voucher delegation ------------------------------------------------------------------
 
-    /// The voucher's authority, in the order x402 facilitators apply it off chain:
+    /// The voucher's authority (D-16, narrowed by D-18). Exactly one of:
     ///
-    ///   (a) an ECDSA signature by `payer` itself — unchanged;
+    ///   (a) an ECDSA signature by `payer` itself;
     ///   (b) an ECDSA signature by a DELEGATE that `payer` authorised here, not revoked and not
-    ///       past `validUntil` (its caps are [`_redeem`]'s to apply, beside the escrow's);
-    ///   (c) when `payer` has code, the payer's own EIP-1271 `isValidSignature(digest, sig)`
-    ///       answering `0x1626ba7e`, by [`_isValidERC1271`] (a capped STATICCALL, so
-    ///       the wallet cannot write state from inside a redemption).
+    ///       past `validUntil` (its caps are [`_redeem`]'s to apply, beside the escrow's).
     ///
-    /// Returns the delegate for (b) and `address(0)` for (a) and (c).
+    /// Returns the delegate for (b) and `address(0)` for (a). Recovery is the strict
+    /// [`Sig.recover`], so a malformed signature keeps the name its guard gives it
+    /// (`InvalidSignature`, `MalleableSignature`, `BadSignatureV`). Otherwise the refusal is the
+    /// most specific true one: a known delegate that was revoked or has lapsed is named as such;
+    /// anything else is [`SignerIsNotPayer`].
     ///
-    /// **For an account without code a malformed signature keeps the name it always had**
-    /// (`InvalidSignature`, `MalleableSignature`, `BadSignatureV`), raised by the strict recovery,
-    /// so the EOA rule is the old rule plus (b). An account WITH code (a contract wallet, or an
-    /// EIP-7702 account) falls through to its wallet instead, which may answer for a signature that
-    /// is not ECDSA-shaped at all.
-    ///
-    /// The refusal, when nothing authorises the voucher, is the most specific true one: a known
-    /// delegate that was revoked or has lapsed is named as such; anything else is
-    /// [`SignerIsNotPayer`].
-    ///
-    /// ERC-6492 (signatures of not-yet-deployed wallets) is deliberately NOT accepted: it needs
-    /// the redemption to deploy the wallet first, which is a state change and a call to an
-    /// arbitrary factory inside the money path. A counterfactual wallet deploys, then signs.
+    /// **There is no EIP-1271 branch (D-18).** It was the only call to payer-chosen code in the
+    /// money path, inside the batch loop, and no product path used it. A contract-wallet payer
+    /// calls `authorizeDelegate` directly (it reads `msg.sender`) and lets a delegate sign. An
+    /// EIP-7702 account signs with its own key under (a).
     function _voucherAuthority(address payer, bytes32 digest, bytes calldata sig, uint64 nowTs)
         internal
         view
         returns (address)
     {
-        // (a) — first, and without touching the payer's account: the common case (the payer
-        // signed) must not pay a cold EXTCODESIZE (2,600 gas, EIP-2929) on every redemption.
-        address signer = Sig.tryRecover(digest, sig);
+        address signer = Sig.recover(digest, sig);
         if (signer == payer) return address(0);
 
-        // An account without code has only ECDSA keys, so a signature that did not recover is
-        // refused here under the name its guard gives it — exactly as before delegation existed.
-        // `_recover` cannot return for such a signature: it applies the same four guards
-        // `tryRecover` just failed. The payer's code is read only on these refusal and EIP-1271
-        // paths, never when the payer or an active delegate signed.
-        if (signer == address(0) && payer.code.length == 0) _recover(digest, sig);
-
-        // (b)
-        uint8 refusal; // 0 SignerIsNotPayer, 1 DelegateIsRevoked, 2 DelegateIsExpired
-        if (signer != address(0)) {
-            Delegation storage d = delegations[payer][signer];
-            if (d.validUntil != 0) {
-                if (d.revoked) refusal = 1;
-                else if (nowTs > d.validUntil) refusal = 2;
-                else return signer;
-            }
+        Delegation storage d = delegations[payer][signer];
+        if (d.validUntil != 0) {
+            if (d.revoked) revert DelegateIsRevoked();
+            if (nowTs > d.validUntil) revert DelegateIsExpired();
+            return signer;
         }
-
-        // (c)
-        if (payer.code.length != 0 && _isValidERC1271(payer, digest, sig)) {
-            return address(0);
-        }
-
-        if (refusal == 1) revert DelegateIsRevoked();
-        if (refusal == 2) revert DelegateIsExpired();
         revert SignerIsNotPayer();
     }
-
-    /// The EIP-1271 call of (c): a STATICCALL (the wallet cannot write state from inside a
-    /// redemption), with two bounds OpenZeppelin's `SignatureChecker` does not have, because the
-    /// wallet is code the payer controls and the redemption is the platform's transaction:
-    ///
-    /// - **a gas cap**, `Constants.ERC1271_GAS_LIMIT`. Uncapped, the wallet receives 63/64 of all
-    ///   remaining gas and can burn it — reverting a whole `redeemVoucherBatch`, honest payers'
-    ///   vouchers with it, at the redeemer's expense, from a wallet that answered honestly when it
-    ///   was checked before the call was served;
-    /// - **at most 32 bytes of return data copied.** `bytes memory result` copies everything the
-    ///   wallet returns, and a wallet can return enough to make the copy itself run out of gas.
-    ///
-    /// The answer is valid only if the call succeeded, returned at least a full word, and that word
-    /// is exactly `bytes32(0x1626ba7e)` — the check `SignatureChecker` makes.
-    ///
-    /// **The cap must not become a false refusal.** Under EIP-150 a callee receives at most 63/64
-    /// of what is left, so with too little gas a correct wallet would fail and the voucher would be
-    /// refused as `SignerIsNotPayer` — a terminal answer — for a reason that is the caller's. So the
-    /// check refuses to start without enough gas for the full cap, with `WalletCheckUnderfunded`,
-    /// which reverts the transaction and says what is wrong.
-    function _isValidERC1271(address wallet, bytes32 digest, bytes calldata sig)
-        internal
-        view
-        returns (bool valid)
-    {
-        uint256 cap = Constants.ERC1271_GAS_LIMIT;
-        if (gasleft() < cap + cap / 63 + Constants.ERC1271_GAS_RESERVE) {
-            revert WalletCheckUnderfunded();
-        }
-        bytes memory data = abi.encodeWithSelector(ERC1271_MAGIC_VALUE, digest, sig);
-        bytes4 magic = ERC1271_MAGIC_VALUE;
-        assembly ("memory-safe") {
-            // Return data goes to scratch space (0x00-0x20): never more than one word is copied.
-            let success := staticcall(cap, wallet, add(data, 0x20), mload(data), 0x00, 0x20)
-            valid := and(success, and(gt(returndatasize(), 0x1f), eq(mload(0x00), magic)))
-        }
-    }
-
-    /// EIP-1271's magic value, which is also the `isValidSignature(bytes32,bytes)` selector.
-    bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
     event DelegateAuthorized(
         address indexed payer,

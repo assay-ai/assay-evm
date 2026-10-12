@@ -7,7 +7,7 @@ import {MathOverflow} from "../Errors.sol";
 ///
 /// It exists because `src/libraries/Window.sol` asked for the copies to be collapsed, and because
 /// the redeem path then grew a third: two bare `uint64(spent)` casts on the money path, argued at
-/// the line on *exactly* the ground `Window.narrow` had already considered and rejected. That rule
+/// the line on *exactly* the ground `Window.decay` had already considered and rejected. That rule
 /// is worth restating, because a fourth copy or a fourth
 /// exception is the same mistake again:
 ///

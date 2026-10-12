@@ -32,6 +32,8 @@ error EscrowConfigMismatch();
 error EscrowStakeMismatch();
 error AssetMismatch();
 error AdminMismatch();
+error OwnerMismatch();
+error DeployerWouldKeepARole(address deployer);
 error DeployedPaused();
 error ImplementationSlotMismatch();
 
@@ -71,6 +73,9 @@ contract Deploy is Script {
         address asset = vm.envAddress("USDG_ADDRESS");
         address permit2 = vm.envAddress("PERMIT2_ADDRESS");
         address admin = vm.envAddress("ADMIN_ADDRESS");
+        // D-17: the owner is the upgrade authority and appoints the admin. Cold, and NOT the key
+        // that broadcasts this script — after the deploy the deployer holds no role at all.
+        address owner = vm.envAddress("OWNER_ADDRESS");
 
         _assertTheAssetIsReal(asset);
 
@@ -87,13 +92,18 @@ contract Deploy is Script {
             slashCapBps: uint16(vm.envUint("SLASH_CAP_BPS"))
         });
 
+        (, address deployer,) = vm.readCallers();
+        if (owner == deployer || admin == deployer || p.redeemer == deployer) {
+            revert DeployerWouldKeepARole(deployer);
+        }
+
         vm.startBroadcast();
 
         address configImpl = address(new X402Config());
         X402Config config = X402Config(
             address(
                 new ERC1967Proxy{salt: _salt("Config")}(
-                    configImpl, abi.encodeCall(X402Config.initialize, (p, admin))
+                    configImpl, abi.encodeCall(X402Config.initialize, (p, admin, owner))
                 )
             )
         );
@@ -138,6 +148,7 @@ contract Deploy is Script {
             revert AssetMismatch();
         }
         if (config.admin() != admin) revert AdminMismatch();
+        if (config.owner() != owner || config.pendingOwner() != address(0)) revert OwnerMismatch();
         if (config.paused()) revert DeployedPaused();
 
         // And the ERC-1967 implementation slot of each proxy names the implementation this script
@@ -160,6 +171,8 @@ contract Deploy is Script {
         console2.log("X402Stake   impl      ", stakeImpl);
         console2.log("X402Escrow  proxy     ", address(escrow));
         console2.log("X402Escrow  impl      ", escrowImpl);
+        console2.log("owner                 ", owner);
+        console2.log("admin                 ", admin);
         console2.log("asset                 ", asset);
         console2.log("permit2               ", permit2);
         console2.log("escrow domainSep (proxy)");

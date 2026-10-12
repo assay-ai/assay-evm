@@ -27,9 +27,12 @@ interface IX402Config {
     /// say-so and never a door that returns money to its owner (`set_paused.rs:13-22`).
     function paused() external view returns (bool);
 
-    /// `Config.admin` — `state.rs:23`. Also the upgrade authority for all three contracts
-    /// (D-1), because the other two read this live rather than storing their own copy.
+    /// `Config.admin` — `state.rs:23`. The operational key. NOT the upgrade authority since D-17.
     function admin() external view returns (address);
+
+    /// The upgrade authority for all three contracts (D-17), because the other two read this
+    /// live rather than storing their own copy. Two-step transferable, never renounceable.
+    function owner() external view returns (address);
 
     /// `VerifierKey::assert_can_sign` as a predicate — `state.rs:248`.
     function canSign(address verifier) external view returns (bool);
@@ -37,7 +40,4 @@ interface IX402Config {
     /// `VerifierKey::assert_can_sign` — `state.rs:248`. Reverts `VerifierRevoked` or
     /// `VerifierKeyExpired` rather than returning false, so a caller cannot ignore it.
     function assertCanSign(address verifier) external view;
-
-    /// `VerifierKey.expires_at` — `state.rs:224`.
-    function verifierExpiry(address verifier) external view returns (uint64);
 }

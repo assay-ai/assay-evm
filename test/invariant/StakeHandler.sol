@@ -67,7 +67,8 @@ contract StakeHandler is Test {
         config = X402Config(
             address(
                 new ERC1967Proxy(
-                    address(new X402Config()), abi.encodeCall(X402Config.initialize, (p, ADMIN))
+                    address(new X402Config()),
+                    abi.encodeCall(X402Config.initialize, (p, ADMIN, address(0x0A1E)))
                 )
             )
         );

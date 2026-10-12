@@ -24,7 +24,7 @@ import "./Errors.sol";
 /// reference to X402Escrow — the only edge between them points the other way and is a view.
 ///
 /// Deployed behind an ERC1967Proxy and upgraded through UUPS (D-1), with the same single
-/// authority: `CONFIG.admin()`, a Ledger, immediate, no timelock. The proxy address is the
+/// authority: `CONFIG.owner()` (D-17), a Ledger or a Safe, immediate, no timelock. The proxy address is the
 /// verifier's EIP-712 `verifyingContract`, so an upgrade does not invalidate an attestation
 /// that is already in flight.
 ///
@@ -113,9 +113,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         ASSET = asset;
     }
 
-    /// The upgrade door (D-1): one key, read live from CONFIG, no timelock.
+    /// The upgrade door (D-1, D-17): `CONFIG.owner()`, read live, no timelock. Not the admin.
     function _authorizeUpgrade(address) internal view override {
-        if (msg.sender != CONFIG.admin()) revert NotAdmin();
+        if (msg.sender != CONFIG.owner()) revert NotOwner();
     }
 
     // --- views ----------------------------------------------------------------------------

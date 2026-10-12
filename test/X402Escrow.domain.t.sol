@@ -7,6 +7,8 @@ import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {X402Escrow} from "../src/X402Escrow.sol";
 import {Voucher712} from "../src/libraries/Voucher712.sol";
+import {Sig} from "../src/libraries/Sig.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {
     Voucher,
     VOUCHER_TYPEHASH,
@@ -45,6 +47,21 @@ contract Voucher712Harness {
     }
 }
 
+/// The escrow's voucher digest recovered through the one `Sig.recover`, exactly as `_redeem`
+/// does. `X402Escrow.recoverVoucherSigner` was removed in D-18 (nothing called it); this harness
+/// keeps the recovery properties below testable without moving money.
+contract VoucherRecoverer {
+    function recoverVoucherSigner(X402Escrow e, Voucher calldata v, bytes calldata sig)
+        external
+        view
+        returns (address)
+    {
+        return Sig.recover(
+            MessageHashUtils.toTypedDataHash(e.DOMAIN_SEPARATOR(), Voucher712.hashVoucher(v)), sig
+        );
+    }
+}
+
 /// The EIP-712 domain and the four recovery guards.
 ///
 /// # What this file is defending
@@ -76,6 +93,7 @@ contract Voucher712Harness {
 /// two boundary tests that pin `>` and `∈ {27, 28}` rather than merely exercising them.
 contract X402EscrowDomainTest is Fixture {
     Voucher712Harness internal hasher;
+    VoucherRecoverer internal recoverer;
 
     /// Robinhood Chain: 46630 is the testnet, 4663 is mainnet (`docs/chain-facts.md`). The pair
     /// is named
@@ -87,6 +105,7 @@ contract X402EscrowDomainTest is Fixture {
     function setUp() public virtual override {
         super.setUp();
         hasher = new Voucher712Harness();
+        recoverer = new VoucherRecoverer();
     }
 
     function _voucher() internal view returns (Voucher memory v) {
@@ -107,8 +126,9 @@ contract X402EscrowDomainTest is Fixture {
     /// malleability guard does NOT fire" — so they read the selector directly. Returns
     /// `bytes4(0)` when the call succeeded.
     function _selectorOf(Voucher memory v, bytes memory sig) internal view returns (bytes4) {
-        (bool ok, bytes memory ret) =
-            address(escrow).staticcall(abi.encodeCall(X402Escrow.recoverVoucherSigner, (v, sig)));
+        (bool ok, bytes memory ret) = address(recoverer).staticcall(
+            abi.encodeCall(VoucherRecoverer.recoverVoucherSigner, (escrow, v, sig))
+        );
         if (ok) return bytes4(0);
         return bytes4(ret);
     }
@@ -121,8 +141,9 @@ contract X402EscrowDomainTest is Fixture {
         returns (bool ok, bytes4 selector, address signer)
     {
         bytes memory ret;
-        (ok, ret) =
-            address(escrow).staticcall(abi.encodeCall(X402Escrow.recoverVoucherSigner, (v, sig)));
+        (ok, ret) = address(recoverer).staticcall(
+            abi.encodeCall(VoucherRecoverer.recoverVoucherSigner, (escrow, v, sig))
+        );
         if (ok) return (true, bytes4(0), abi.decode(ret, (address)));
         return (false, bytes4(ret), address(0));
     }
@@ -159,7 +180,7 @@ contract X402EscrowDomainTest is Fixture {
     function test_happyPath_recoversThePayer() public view {
         Voucher memory v = _voucher();
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, escrow.DOMAIN_SEPARATOR(), v);
-        assertEq(escrow.recoverVoucherSigner(v, sig), buyer);
+        assertEq(recoverer.recoverVoucherSigner(escrow, v, sig), buyer);
     }
 
     /// Recovery is the exact inverse of signing for *any* key and *any* voucher, not only the
@@ -188,7 +209,7 @@ contract X402EscrowDomainTest is Fixture {
             expiresAt: expiresAt
         });
         bytes memory sig = VoucherSigner.signVoucher(pk, escrow.DOMAIN_SEPARATOR(), v);
-        assertEq(escrow.recoverVoucherSigner(v, sig), signer);
+        assertEq(recoverer.recoverVoucherSigner(escrow, v, sig), signer);
     }
 
     // --- the four guards --------------------------------------------------------------------
@@ -202,7 +223,7 @@ contract X402EscrowDomainTest is Fixture {
         bytes memory twin = VoucherSigner.malleate(sig);
         assertTrue(keccak256(twin) != keccak256(sig), "the twin must be different bytes");
         vm.expectRevert(MalleableSignature.selector);
-        escrow.recoverVoucherSigner(v, twin);
+        recoverer.recoverVoucherSigner(escrow, v, twin);
     }
 
     /// The twin really is a twin — `ecrecover` accepts it and yields the same address. Without
@@ -231,7 +252,7 @@ contract X402EscrowDomainTest is Fixture {
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, escrow.DOMAIN_SEPARATOR(), v);
         sig[64] = bytes1(uint8(29));
         vm.expectRevert(BadSignatureV.selector);
-        escrow.recoverVoucherSigner(v, sig);
+        recoverer.recoverVoucherSigner(escrow, v, sig);
     }
 
     /// ecrecover returns address(0) for garbage. Forget the check and any garbage
@@ -248,7 +269,7 @@ contract X402EscrowDomainTest is Fixture {
         bytes memory garbage = abi.encodePacked(bytes32(0), bytes32(uint256(1)), uint8(27));
         assertEq(garbage.length, 65, "the length guard must not be what refuses this");
         vm.expectRevert(InvalidSignature.selector);
-        escrow.recoverVoucherSigner(v, garbage);
+        recoverer.recoverVoucherSigner(escrow, v, garbage);
     }
 
     /// Exactly ONE acceptable encoding. The 64-byte EIP-2098 compact form is refused on
@@ -262,7 +283,7 @@ contract X402EscrowDomainTest is Fixture {
             compact[i] = sig[i];
         }
         vm.expectRevert(InvalidSignature.selector);
-        escrow.recoverVoucherSigner(v, compact);
+        recoverer.recoverVoucherSigner(escrow, v, compact);
     }
 
     /// The other side of the length guard, and the one that actually proves it.
@@ -278,7 +299,7 @@ contract X402EscrowDomainTest is Fixture {
         bytes memory tooLong = abi.encodePacked(sig, bytes1(0xFF));
         assertEq(tooLong.length, 66);
         vm.expectRevert(InvalidSignature.selector);
-        escrow.recoverVoucherSigner(v, tooLong);
+        recoverer.recoverVoucherSigner(escrow, v, tooLong);
     }
 
     // --- the two boundaries -----------------------------------------------------------------
@@ -327,8 +348,8 @@ contract X402EscrowDomainTest is Fixture {
         Voucher memory v = _voucher();
         uint256 attacker = 0xBADBAD;
         bytes memory sig = VoucherSigner.signVoucher(attacker, escrow.DOMAIN_SEPARATOR(), v);
-        assertEq(escrow.recoverVoucherSigner(v, sig), vm.addr(attacker));
-        assertTrue(escrow.recoverVoucherSigner(v, sig) != buyer);
+        assertEq(recoverer.recoverVoucherSigner(escrow, v, sig), vm.addr(attacker));
+        assertTrue(recoverer.recoverVoucherSigner(escrow, v, sig) != buyer);
     }
 
     // --- forgery ----------------------------------------------------------------------------
@@ -520,11 +541,11 @@ contract X402EscrowDomainTest is Fixture {
         Voucher memory v = _voucher();
         bytes32 sepOnTestnet = escrow.DOMAIN_SEPARATOR();
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, sepOnTestnet, v);
-        assertEq(escrow.recoverVoucherSigner(v, sig), buyer);
+        assertEq(recoverer.recoverVoucherSigner(escrow, v, sig), buyer);
 
         vm.chainId(MAINNET);
         assertTrue(escrow.DOMAIN_SEPARATOR() != sepOnTestnet, "the separator must follow chainId");
-        assertTrue(escrow.recoverVoucherSigner(v, sig) != buyer, "cross-chain replay");
+        assertTrue(recoverer.recoverVoucherSigner(escrow, v, sig) != buyer, "cross-chain replay");
     }
 
     /// CROSS-CONTRACT REPLAY. Two deployments, one chain. A second PROXY — which is what a
@@ -535,8 +556,8 @@ contract X402EscrowDomainTest is Fixture {
 
         Voucher memory v = _voucher();
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, escrow.DOMAIN_SEPARATOR(), v);
-        assertEq(escrow.recoverVoucherSigner(v, sig), buyer);
-        assertTrue(other.recoverVoucherSigner(v, sig) != buyer, "cross-contract replay");
+        assertEq(recoverer.recoverVoucherSigner(escrow, v, sig), buyer);
+        assertTrue(recoverer.recoverVoucherSigner(other, v, sig) != buyer, "cross-contract replay");
     }
 
     /// THE ENCODER MUTATION TEST. Flip exactly one signed field and the recovery must move.
@@ -586,7 +607,7 @@ contract X402EscrowDomainTest is Fixture {
 
         for (uint256 i = 0; i < 8; i++) {
             assertTrue(
-                escrow.recoverVoucherSigner(mutated[i], sig) != buyer,
+                recoverer.recoverVoucherSigner(escrow, mutated[i], sig) != buyer,
                 "a signed field was not actually signed"
             );
         }
@@ -715,7 +736,7 @@ contract X402EscrowDomainTest is Fixture {
         bytes32 sep = escrow.DOMAIN_SEPARATOR();
         bytes memory sig = VoucherSigner.signSetLimits(buyerKey, sep, buyer, 250_000, 1, 1, 0);
         assertTrue(
-            escrow.recoverVoucherSigner(_voucher(), sig) != buyer,
+            recoverer.recoverVoucherSigner(escrow, _voucher(), sig) != buyer,
             "a SetLimits signature was presented at the redeem door"
         );
     }

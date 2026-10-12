@@ -47,7 +47,7 @@ contract DeployTest is Test {
             address(
                 new ERC1967Proxy(
                     address(new X402Config()),
-                    abi.encodeCall(X402Config.initialize, (_params(), ADMIN))
+                    abi.encodeCall(X402Config.initialize, (_params(), ADMIN, address(0x0A1E)))
                 )
             )
         );
@@ -56,7 +56,7 @@ contract DeployTest is Test {
 
         vm.prank(ATTACKER);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        config.initialize(_params(), ATTACKER);
+        config.initialize(_params(), ATTACKER, ATTACKER);
         assertEq(config.admin(), ADMIN, "and still the deployer's admin");
     }
 
@@ -76,13 +76,13 @@ contract DeployTest is Test {
 
         // Transaction 1.5 — the attacker's, in between.
         vm.prank(ATTACKER);
-        config.initialize(_params(), ATTACKER);
+        config.initialize(_params(), ATTACKER, ATTACKER);
         assertEq(config.admin(), ATTACKER, "the system belongs to whoever landed first");
 
         // Transaction 2 — the deployer's, now too late, and it fails with an error that names the
         // initializer rather than the theft.
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        config.initialize(_params(), ADMIN);
+        config.initialize(_params(), ADMIN, ADMIN);
 
         // And the consequence, spelled out: the attacker upgrades the parameter contract.
         address next = address(new X402Config());
@@ -142,7 +142,8 @@ contract DeployTest is Test {
         X402Config config = X402Config(
             address(
                 new ERC1967Proxy(
-                    recordedImpl, abi.encodeCall(X402Config.initialize, (_params(), ADMIN))
+                    recordedImpl,
+                    abi.encodeCall(X402Config.initialize, (_params(), ADMIN, address(0x0A1E)))
                 )
             )
         );
@@ -153,7 +154,7 @@ contract DeployTest is Test {
 
         // An upgrade nobody wrote down.
         address newImpl = address(new X402Config());
-        vm.prank(ADMIN);
+        vm.prank(address(0x0A1E)); // the owner (D-17)
         config.upgradeToAndCall(newImpl, "");
 
         assertFalse(
