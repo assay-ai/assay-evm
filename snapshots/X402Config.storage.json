@@ -1,7 +1,7 @@
 {
   "storage": [
     {
-      "astId": 2067,
+      "astId": 2076,
       "contract": "src/X402Config.sol:X402Config",
       "label": "admin",
       "offset": 0,
@@ -9,7 +9,7 @@
       "type": "t_address"
     },
     {
-      "astId": 2071,
+      "astId": 2080,
       "contract": "src/X402Config.sol:X402Config",
       "label": "paused",
       "offset": 20,
@@ -17,23 +17,23 @@
       "type": "t_bool"
     },
     {
-      "astId": 2075,
+      "astId": 2084,
       "contract": "src/X402Config.sol:X402Config",
       "label": "_params",
       "offset": 0,
       "slot": "1",
-      "type": "t_struct(ParamSet)1989_storage"
+      "type": "t_struct(ParamSet)1998_storage"
     },
     {
-      "astId": 2535,
+      "astId": 2544,
       "contract": "src/X402Config.sol:X402Config",
       "label": "verifiers",
       "offset": 0,
       "slot": "4",
-      "type": "t_mapping(t_address,t_struct(VerifierKey)2529_storage)"
+      "type": "t_mapping(t_address,t_struct(VerifierKey)2538_storage)"
     },
     {
-      "astId": 2775,
+      "astId": 2784,
       "contract": "src/X402Config.sol:X402Config",
       "label": "arbiter",
       "offset": 0,
@@ -41,7 +41,7 @@
       "type": "t_address"
     },
     {
-      "astId": 2778,
+      "astId": 2787,
       "contract": "src/X402Config.sol:X402Config",
       "label": "_slashDelaySeconds",
       "offset": 20,
@@ -49,7 +49,7 @@
       "type": "t_uint64"
     },
     {
-      "astId": 2783,
+      "astId": 2792,
       "contract": "src/X402Config.sol:X402Config",
       "label": "_blocked",
       "offset": 0,
@@ -57,7 +57,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 2978,
+      "astId": 3009,
       "contract": "src/X402Config.sol:X402Config",
       "label": "__gap",
       "offset": 0,
@@ -89,20 +89,20 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_struct(VerifierKey)2529_storage)": {
+    "t_mapping(t_address,t_struct(VerifierKey)2538_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct X402Config.VerifierKey)",
       "numberOfBytes": "32",
-      "value": "t_struct(VerifierKey)2529_storage"
+      "value": "t_struct(VerifierKey)2538_storage"
     },
-    "t_struct(ParamSet)1989_storage": {
+    "t_struct(ParamSet)1998_storage": {
       "encoding": "inplace",
       "label": "struct ParamSet",
       "numberOfBytes": "96",
       "members": [
         {
-          "astId": 1970,
+          "astId": 1979,
           "contract": "src/X402Config.sol:X402Config",
           "label": "treasury",
           "offset": 0,
@@ -110,7 +110,7 @@
           "type": "t_address"
         },
         {
-          "astId": 1972,
+          "astId": 1981,
           "contract": "src/X402Config.sol:X402Config",
           "label": "redeemer",
           "offset": 0,
@@ -118,7 +118,7 @@
           "type": "t_address"
         },
         {
-          "astId": 1974,
+          "astId": 1983,
           "contract": "src/X402Config.sol:X402Config",
           "label": "unbondingPeriodSeconds",
           "offset": 20,
@@ -126,7 +126,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 1976,
+          "astId": 1985,
           "contract": "src/X402Config.sol:X402Config",
           "label": "minimumStake",
           "offset": 0,
@@ -134,7 +134,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 1978,
+          "astId": 1987,
           "contract": "src/X402Config.sol:X402Config",
           "label": "penaltyAmount",
           "offset": 8,
@@ -142,7 +142,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 1980,
+          "astId": 1989,
           "contract": "src/X402Config.sol:X402Config",
           "label": "verifierDailyCap",
           "offset": 16,
@@ -150,7 +150,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 1982,
+          "astId": 1991,
           "contract": "src/X402Config.sol:X402Config",
           "label": "takeRateBps",
           "offset": 24,
@@ -158,7 +158,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 1984,
+          "astId": 1993,
           "contract": "src/X402Config.sol:X402Config",
           "label": "slashAgentBps",
           "offset": 26,
@@ -166,7 +166,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 1986,
+          "astId": 1995,
           "contract": "src/X402Config.sol:X402Config",
           "label": "slashPlatformBps",
           "offset": 28,
@@ -174,7 +174,7 @@
           "type": "t_uint16"
         },
         {
-          "astId": 1988,
+          "astId": 1997,
           "contract": "src/X402Config.sol:X402Config",
           "label": "slashCapBps",
           "offset": 30,
@@ -183,13 +183,13 @@
         }
       ]
     },
-    "t_struct(VerifierKey)2529_storage": {
+    "t_struct(VerifierKey)2538_storage": {
       "encoding": "inplace",
       "label": "struct X402Config.VerifierKey",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 2516,
+          "astId": 2525,
           "contract": "src/X402Config.sol:X402Config",
           "label": "registeredAt",
           "offset": 0,
@@ -197,7 +197,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 2519,
+          "astId": 2528,
           "contract": "src/X402Config.sol:X402Config",
           "label": "expiresAt",
           "offset": 8,
@@ -205,7 +205,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 2522,
+          "astId": 2531,
           "contract": "src/X402Config.sol:X402Config",
           "label": "revokedAt",
           "offset": 16,
@@ -213,7 +213,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 2525,
+          "astId": 2534,
           "contract": "src/X402Config.sol:X402Config",
           "label": "registered",
           "offset": 24,
@@ -221,7 +221,7 @@
           "type": "t_bool"
         },
         {
-          "astId": 2528,
+          "astId": 2537,
           "contract": "src/X402Config.sol:X402Config",
           "label": "revoked",
           "offset": 25,

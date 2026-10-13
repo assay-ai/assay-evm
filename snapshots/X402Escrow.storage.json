@@ -25,23 +25,23 @@
       "type": "t_uint256"
     },
     {
-      "astId": 7193,
+      "astId": 7202,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "CONFIG",
       "offset": 0,
       "slot": "3",
-      "type": "t_contract(IX402Config)9312"
+      "type": "t_contract(IX402Config)9321"
     },
     {
-      "astId": 7196,
+      "astId": 7205,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "STAKE",
       "offset": 0,
       "slot": "4",
-      "type": "t_contract(IX402StakeView)9323"
+      "type": "t_contract(IX402StakeView)9332"
     },
     {
-      "astId": 7199,
+      "astId": 7208,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "ASSET",
       "offset": 0,
@@ -49,7 +49,7 @@
       "type": "t_contract(IERC20)947"
     },
     {
-      "astId": 7202,
+      "astId": 7211,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "PERMIT2",
       "offset": 0,
@@ -57,15 +57,15 @@
       "type": "t_address"
     },
     {
-      "astId": 7208,
+      "astId": 7217,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "escrows",
       "offset": 0,
       "slot": "7",
-      "type": "t_mapping(t_address,t_struct(Escrow)7173_storage)"
+      "type": "t_mapping(t_address,t_struct(Escrow)7182_storage)"
     },
     {
-      "astId": 7211,
+      "astId": 7220,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "totalEscrowed",
       "offset": 0,
@@ -73,15 +73,15 @@
       "type": "t_uint128"
     },
     {
-      "astId": 7219,
+      "astId": 7228,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "delegations",
       "offset": 0,
       "slot": "9",
-      "type": "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)7189_storage))"
+      "type": "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)7198_storage))"
     },
     {
-      "astId": 7225,
+      "astId": 7234,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "delegateList",
       "offset": 0,
@@ -89,7 +89,7 @@
       "type": "t_mapping(t_address,t_array(t_address)dyn_storage)"
     },
     {
-      "astId": 9221,
+      "astId": 9230,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "__gap",
       "offset": 0,
@@ -125,12 +125,12 @@
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IX402Config)9312": {
+    "t_contract(IX402Config)9321": {
       "encoding": "inplace",
       "label": "contract IX402Config",
       "numberOfBytes": "20"
     },
-    "t_contract(IX402StakeView)9323": {
+    "t_contract(IX402StakeView)9332": {
       "encoding": "inplace",
       "label": "contract IX402StakeView",
       "numberOfBytes": "20"
@@ -142,39 +142,39 @@
       "numberOfBytes": "32",
       "value": "t_array(t_address)dyn_storage"
     },
-    "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)7189_storage))": {
+    "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)7198_storage))": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => mapping(address => struct X402Escrow.Delegation))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_address,t_struct(Delegation)7189_storage)"
+      "value": "t_mapping(t_address,t_struct(Delegation)7198_storage)"
     },
-    "t_mapping(t_address,t_struct(Delegation)7189_storage)": {
+    "t_mapping(t_address,t_struct(Delegation)7198_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct X402Escrow.Delegation)",
       "numberOfBytes": "32",
-      "value": "t_struct(Delegation)7189_storage"
+      "value": "t_struct(Delegation)7198_storage"
     },
-    "t_mapping(t_address,t_struct(Escrow)7173_storage)": {
+    "t_mapping(t_address,t_struct(Escrow)7182_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct X402Escrow.Escrow)",
       "numberOfBytes": "32",
-      "value": "t_struct(Escrow)7173_storage"
+      "value": "t_struct(Escrow)7182_storage"
     },
     "t_string_storage": {
       "encoding": "bytes",
       "label": "string",
       "numberOfBytes": "32"
     },
-    "t_struct(Delegation)7189_storage": {
+    "t_struct(Delegation)7198_storage": {
       "encoding": "inplace",
       "label": "struct X402Escrow.Delegation",
       "numberOfBytes": "64",
       "members": [
         {
-          "astId": 7176,
+          "astId": 7185,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "maxVoucherAmount",
           "offset": 0,
@@ -182,7 +182,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7178,
+          "astId": 7187,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "maxPerWindow",
           "offset": 8,
@@ -190,7 +190,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7180,
+          "astId": 7189,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "spentInWindow",
           "offset": 16,
@@ -198,7 +198,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7182,
+          "astId": 7191,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "windowStartedAt",
           "offset": 24,
@@ -206,7 +206,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7184,
+          "astId": 7193,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "validUntil",
           "offset": 0,
@@ -214,7 +214,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7186,
+          "astId": 7195,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "listPosition",
           "offset": 8,
@@ -222,7 +222,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 7188,
+          "astId": 7197,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "revoked",
           "offset": 12,
@@ -231,13 +231,13 @@
         }
       ]
     },
-    "t_struct(Escrow)7173_storage": {
+    "t_struct(Escrow)7182_storage": {
       "encoding": "inplace",
       "label": "struct X402Escrow.Escrow",
       "numberOfBytes": "128",
       "members": [
         {
-          "astId": 7150,
+          "astId": 7159,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "balance",
           "offset": 0,
@@ -245,7 +245,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 7152,
+          "astId": 7161,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "seqHigh",
           "offset": 16,
@@ -253,7 +253,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7154,
+          "astId": 7163,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "authNonce",
           "offset": 24,
@@ -261,7 +261,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7156,
+          "astId": 7165,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "maxVoucherAmount",
           "offset": 0,
@@ -269,7 +269,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7158,
+          "astId": 7167,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "maxPerWindow",
           "offset": 8,
@@ -277,7 +277,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7160,
+          "astId": 7169,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "spentInWindow",
           "offset": 16,
@@ -285,7 +285,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7162,
+          "astId": 7171,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "windowStartedAt",
           "offset": 24,
@@ -293,7 +293,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7164,
+          "astId": 7173,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "withdrawRequested",
           "offset": 0,
@@ -301,7 +301,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7166,
+          "astId": 7175,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "withdrawAvailableAt",
           "offset": 8,
@@ -309,7 +309,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7168,
+          "astId": 7177,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "totalRedeemed",
           "offset": 16,
@@ -317,7 +317,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 7170,
+          "astId": 7179,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "totalWithdrawn",
           "offset": 0,
@@ -325,7 +325,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 7172,
+          "astId": 7181,
           "contract": "src/X402Escrow.sol:X402Escrow",
           "label": "totalFunded",
           "offset": 16,
