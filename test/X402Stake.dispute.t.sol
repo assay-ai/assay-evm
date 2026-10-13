@@ -216,7 +216,7 @@ contract X402StakeDisputeTest is Fixture {
 
         // An upheld record cannot be disputed again (F2: explicitly, by `disputedAt != 0`).
         vm.prank(provider);
-        vm.expectRevert(AlreadyDisputed.selector);
+        vm.expectRevert(SlashAlreadyDisputed.selector);
         stake.disputeSlash(ID);
 
         stake.executeSlash(ID);
@@ -239,12 +239,21 @@ contract X402StakeDisputeTest is Fixture {
         // F2: the ruling does not pull execution before the frozen executableAt.
         vm.warp(stake.slashRecordOf(ID).executableAt);
 
-        // The key's daily cap, read live at execution, now binds below the reservation.
+        // The key's daily cap, read live at execution, now binds below the reservation (the
+        // penalty ceiling comes down with it: audit C7 keeps penaltyAmount <= verifierDailyCap).
         ParamSet memory p = config.params();
+        p.penaltyAmount = 400_000;
         p.verifierDailyCap = 400_000;
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
+        // The cap write-off rule: a window-cut payment waits for the grace's last day.
+        vm.expectRevert(SlashWindowNotDrained.selector);
+        stake.executeSlash(ID);
+        vm.warp(
+            uint256(stake.slashRecordOf(ID).executableAt) + Constants.SLASH_EXECUTION_GRACE_SECONDS
+                - Constants.SLASH_WINDOW_SECONDS
+        );
         stake.executeSlash(ID);
         assertEq(stake.slashRecordOf(ID).applied, 400_000, "clamped by the verifier cap");
         assertEq(stake.stakeOf(provider).pendingSlash, 1_000_000, "the rest released");
@@ -268,21 +277,23 @@ contract X402StakeDisputeTest is Fixture {
             stake.upholdSlash(ID);
         }
 
-        // With no arbiter appointed, nobody can uphold.
+        // A replaced arbiter loses the door at once (it can never be unset: audit A M-2).
         vm.prank(admin);
-        config.setArbiter(address(0));
+        config.setArbiter(address(0xA4B2));
         vm.prank(arbiter);
         vm.expectRevert(NotArbiter.selector);
         stake.upholdSlash(ID);
         assertEq(uint256(_status(ID)), uint256(SlashStatus.Disputed));
     }
 
-    /// `setArbiter` refuses a live verifier (I4), so the per-record check is reached by a key
-    /// enrolled as a verifier AFTER its appointment as arbiter — and it still holds.
+    /// `setArbiter` refuses a live verifier (I4) and `registerVerifier` refuses the arbiter
+    /// (audit A L-3), so the per-record check is reached only by a verifier REVOKED after its
+    /// judgement and then appointed arbiter — and it still holds.
     function test_wrongSigner_anArbiterThatIsTheRecordsVerifierCannotUphold() public {
-        _arbiterAlsoEnrolledAsVerifier();
+        _enrolArbKey();
         _proposeSignedBy(ID, ARB_PK);
         _dispute(ID);
+        _revokeAndAppointArbKey();
         vm.prank(vm.addr(ARB_PK));
         vm.expectRevert(ArbiterIsVerifier.selector);
         stake.upholdSlash(ID);
@@ -290,11 +301,17 @@ contract X402StakeDisputeTest is Fixture {
 
     uint256 internal constant ARB_PK = 0xA4B1A4B1;
 
-    function _arbiterAlsoEnrolledAsVerifier() internal {
-        address a = vm.addr(ARB_PK);
+    function _enrolArbKey() internal {
+        vm.prank(admin);
+        config.registerVerifier(
+            vm.addr(ARB_PK), bytes32("arb-as-verifier"), uint64(block.timestamp) + 90 days
+        );
+    }
+
+    function _revokeAndAppointArbKey() internal {
         vm.startPrank(admin);
-        config.setArbiter(a);
-        config.registerVerifier(a, bytes32("arb-as-verifier"), uint64(block.timestamp) + 90 days);
+        config.revokeVerifier(vm.addr(ARB_PK));
+        config.setArbiter(vm.addr(ARB_PK));
         vm.stopPrank();
     }
 
@@ -784,7 +801,7 @@ contract X402StakeDisputeTest is Fixture {
         stake.executeSlash(ID);
         // …and no second dispute, although the window is still open by the clock.
         vm.prank(provider);
-        vm.expectRevert(AlreadyDisputed.selector);
+        vm.expectRevert(SlashAlreadyDisputed.selector);
         stake.disputeSlash(ID);
 
         vm.warp(frozen);
@@ -879,11 +896,13 @@ contract X402StakeDisputeTest is Fixture {
         assertEq(uint256(_status(ID)), uint256(SlashStatus.Cancelled));
     }
 
-    /// I1: with no arbiter, nobody can uphold and the dispute wins at the timeout — the reason
-    /// the runbook appoints the arbiter in the same session as the upgrade.
+    /// I1: before the FIRST appointment (the state right after the upgrade; `setArbiter(0)` is
+    /// refused since audit A M-2, so it cannot be re-entered) nobody can uphold and the dispute
+    /// wins at the timeout — the reason the runbook appoints the arbiter in the upgrade session.
+    /// The pre-appointment slot is reproduced with `vm.store` (Config slot 5: arbiter + delay).
     function test_review_I1_noArbiterMeansEveryDisputeWins() public {
-        vm.prank(admin);
-        config.setArbiter(address(0));
+        vm.store(address(config), bytes32(uint256(5)), bytes32(0));
+        assertEq(config.arbiter(), address(0));
         _propose(ID);
         _dispute(ID);
         vm.prank(admin);
@@ -934,9 +953,10 @@ contract X402StakeDisputeTest is Fixture {
 
     /// The per-record ArbiterIsVerifier check, in the batch form.
     function test_review_I4_theBatchKeepsThePerRecordArbiterIsVerifierCheck() public {
-        _arbiterAlsoEnrolledAsVerifier();
+        _enrolArbKey();
         _proposeSignedBy(ID, ARB_PK);
         _dispute(ID);
+        _revokeAndAppointArbKey();
         bytes32[] memory one = new bytes32[](1);
         one[0] = ID;
         vm.prank(vm.addr(ARB_PK));

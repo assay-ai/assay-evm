@@ -1853,3 +1853,22 @@ verifier AFTER its appointment, because `setArbiter` refuses a live verifier. Al
 | D12 | `_dispute`: `if (rec.disputedAt != 0) revert AlreadyDisputed();` | deleted | same | **DIES**: `[FAIL: next call did not revert as expected]` — an upheld record still inside its frozen delay is disputed a second time |
 | D13 | `setArbiter`: `newArbiter == admin \|\| …` | admin term dropped | `X402Config.arbiter.t.sol::test_wrongArgs_setArbiterRefusesTheAdminAndALiveVerifier` | **DIES**: `[FAIL: next call did not revert as expected]` |
 | D14 | `setArbiter`: `… \|\| (k.registered && !k.revoked)` | verifier term dropped | same | **DIES**: `[FAIL: next call did not revert as expected]` |
+
+### Audit round (audits A, B, C and D of `a4f97ab`)
+
+The auditors' proofs are regressions in `test/X402Stake.audit.t.sol` and, for audit D, the
+adopted suite `test/invariant/audit-d/` (findings inverted to `test_regression_AD*`). Nine rows
+die; D17 is an equivalent mutant.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| D15 | `executeSlash`: the cap write-off refusal `applied < owed && nowTs < executableAt + GRACE - WINDOW` → `SlashWindowNotDrained` | `false &&` prefixed | `test_audit_M1_aWindowCutPaymentIsRefusedUntilTheWindowDrains` | **DIES**: `[FAIL: next call did not revert as expected]` — the provider's dust execution one second after the window reopens lands again |
+| D16 | same, the last-day boundary `<` | `<` → `<=` | `test_audit_theLastDayOfTheGraceAllowsAPartialPayment` | **DIES**: `[FAIL: SlashWindowNotDrained()]` — the boundary instant belongs to the partial payment |
+| D17 | `owed = min(reserved, atRisk)` | → `owed = reserved` | whole suite (non-invariant) | **SURVIVED** — `519 tests passed`. **Equivalent mutant.** `atRisk >= pendingSlash >= reserved` on every reachable state: a reservation is cut to the free balance at proposal, and an execution lowers `atRisk` by `taken <= reserved` while lowering `pendingSlash` by the whole `reserved`. So `atRisk < reserved` cannot arise and both spellings compute the same `owed`. Kept because the rule is stated in those terms ("a smaller stake still pays what it has") and `invariant_atRiskCoversPendingSlash` holds the premise |
+| D18 | `setArbiter`: `newArbiter == address(0)` | term dropped | `test_audit_M2_theArbiterCanNeverBeUnset` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D19 | `setAdmin`: `newAdmin == arbiter` | term dropped | `test_audit_L3_theAdminCanNeverBecomeTheArbiter` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D20 | `registerVerifier`: `verifier == arbiter` | term dropped | `test_audit_B12_aVerifierIsNeverTheAdminOrTheArbiter` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D21 | `setBlocked`: `if (!value) revert ArbiterCannotUnblock();` | deleted | `test_audit_B10_theTwoMisleadingErrorsHaveTheirOwnNames` | **DIES**: `[FAIL: next call did not revert as expected]` — the arbiter unblocks |
+| D22 | `_validate`: `minimumStake * slashCapBps / BPS == 0` → `InvalidMinimumStake` | deleted | `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D23 | `_validate`: `penaltyAmount > verifierDailyCap` → `InvalidVerifierDailyCap` | deleted | `test_audit_C7_aPenaltyAboveTheDailyCapIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D24 | `_validate`: `redeemer == arbiter` → `RedeemerIsArbiter` | deleted | `AuditDFindings.t.sol::test_regression_AD1b_theArbiterIsNeverTheRedeemer` | **DIES**: `[FAIL: next call did not revert as expected]` |

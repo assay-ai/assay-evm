@@ -219,21 +219,23 @@ contract X402ConfigAdminTest is Test {
         p.slashAgentBps = 1;
         p.slashPlatformBps = 0;
         p.slashCapBps = 1;
-        p.minimumStake = 1;
+        p.minimumStake = 10_000; // the smallest a 1-bps cap can slash (audit C7)
         p.verifierDailyCap = 1;
+        p.penaltyAmount = 1; // a penalty fits one key-day (audit C7)
         X402Config floor_ = _deploy(p, admin);
         assertEq(floor_.params().slashCapBps, 1, "a one-bps cap is a cap");
         assertEq(floor_.params().takeRateBps, 0, "a zero take rate is not refused");
     }
 
-    /// `penalty_amount` is deliberately unbounded in `state.rs` — `0` **is** on-chain shadow
-    /// mode, and there is no absurd upper value for a token amount. This test fails the moment
-    /// anybody adds a bound to it in either direction.
-    function test_boundary_penaltyAmountIsBoundedAtNeitherEnd() public {
+    /// `penalty_amount` is unbounded in `state.rs` — `0` **is** on-chain shadow mode. Since
+    /// audit C7 its only ceiling is `verifierDailyCap` (one judgement must fit one key-day);
+    /// there is no other bound in either direction.
+    function test_boundary_penaltyAmountIsBoundedOnlyByTheDailyCap() public {
         ParamSet memory p = _valid();
         p.penaltyAmount = 0;
         assertEq(_deploy(p, admin).params().penaltyAmount, 0, "zero penalty is shadow mode");
 
+        p.verifierDailyCap = type(uint64).max;
         p.penaltyAmount = type(uint64).max;
         assertEq(
             _deploy(p, admin).params().penaltyAmount, type(uint64).max, "no ceiling on the penalty"

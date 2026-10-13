@@ -136,10 +136,12 @@ library Constants {
     /// point past which the parameter has stopped being a take rate.
     uint16 internal constant MAX_TAKE_RATE_BPS = 3_000;
 
-    /// constants.rs:132 — `MAX_SLASH_CAP_BPS: u16 = 5_000`. Because
-    /// `taken <= atRisk * slashCapBps / 10_000`, a full window of maximal judgement leaves the
-    /// provider at least half of what they held when it started. That is arithmetic rather than
-    /// an operator's restraint, which is why the ceiling exists at all.
+    /// constants.rs:132 — `MAX_SLASH_CAP_BPS: u16 = 5_000`. It bounds ONE record's frozen
+    /// `capAllowance` and the provider's meter per rolling window. It is **not** "the provider
+    /// keeps half": the window decays linearly, so up to about twice the cap can be applied in any
+    /// 24 h, it re-arms every window, and at 5 000 bps a provider can lose all of its stake in a
+    /// day (audit C, C7). The bound on a provider's total loss is the number of legitimate
+    /// judgements, not this constant.
     uint16 internal constant MAX_SLASH_CAP_BPS = 5_000;
 
     /// constants.rs:63 — `BPS_DENOMINATOR: u64 = 10_000`. Narrowed to `uint16` here because every

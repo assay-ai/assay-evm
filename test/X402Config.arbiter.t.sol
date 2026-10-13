@@ -20,7 +20,7 @@ contract X402ConfigArbiterTest is Fixture {
 
     // === arbiter =============================================================================
 
-    function test_happyPath_theAdminAppointsAndRemovesTheArbiter() public {
+    function test_happyPath_theAdminAppointsAndReplacesTheArbiter() public {
         assertEq(config.arbiter(), address(0), "no arbiter until appointed");
 
         vm.expectEmit(address(config));
@@ -30,10 +30,15 @@ contract X402ConfigArbiterTest is Fixture {
         assertEq(config.arbiter(), arbiter);
 
         vm.expectEmit(address(config));
-        emit ArbiterSet(arbiter, address(0));
+        emit ArbiterSet(arbiter, someone);
         vm.prank(admin);
+        config.setArbiter(someone);
+        assertEq(config.arbiter(), someone, "replaced");
+
+        // Never removed (audit A M-2): address(0) is refused.
+        vm.prank(admin);
+        vm.expectRevert(InvalidArbiter.selector);
         config.setArbiter(address(0));
-        assertEq(config.arbiter(), address(0), "address(0) means no arbiter");
     }
 
     function test_wrongSigner_onlyTheAdminSetsTheArbiter() public {
@@ -75,7 +80,7 @@ contract X402ConfigArbiterTest is Fixture {
         assertTrue(config.blocked(someone));
 
         vm.prank(arbiter);
-        vm.expectRevert(NotAdmin.selector);
+        vm.expectRevert(ArbiterCannotUnblock.selector);
         config.setBlocked(someone, false);
         assertTrue(config.blocked(someone), "still blocked");
     }

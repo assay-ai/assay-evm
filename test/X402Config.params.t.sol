@@ -81,8 +81,10 @@ contract X402ConfigParamsTest is Test {
             treasury: address(0xB0A7),
             redeemer: address(0xD0E5),
             unbondingPeriodSeconds: 30 * 86_400,
-            minimumStake: 1,
-            penaltyAmount: type(uint64).max,
+            // The smallest minimum a 1-bps cap can still slash (audit C7: 10 000 * 1 / 10 000 = 1),
+            // and a penalty that fits one key-day (audit C7: penaltyAmount <= verifierDailyCap).
+            minimumStake: 10_000,
+            penaltyAmount: 2,
             verifierDailyCap: 2,
             takeRateBps: 0,
             slashAgentBps: 1,
@@ -428,17 +430,16 @@ contract X402ConfigParamsTest is Test {
 
         // a penalty larger than the whole minimum stake. `state.rs:68-75` bounds `penalty_amount`
         // at neither end; what bounds the damage is `slashCapBps`, a fraction of the stake held.
+        // (`minimumStake` 10 is the smallest a 1 000-bps cap can still slash, audit C7.)
         p = _valid();
-        p.minimumStake = 1;
+        p.minimumStake = 10;
         p.penaltyAmount = type(uint64).max;
+        p.verifierDailyCap = type(uint64).max;
         _accepted(p, "the penalty may exceed the minimum stake");
 
-        // a daily cap smaller than a single penalty — one judgement a day, which is a policy, not
-        // an error.
-        p = _valid();
-        p.penaltyAmount = 1_000_000;
-        p.verifierDailyCap = 1;
-        _accepted(p, "the verifier daily cap may be smaller than one penalty");
+        // A daily cap smaller than a single penalty WAS accepted here; since audit C7 it is a
+        // deliberate refusal (one judgement could never be paid in full), tested in
+        // `X402Stake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused`.
 
         // an unbonding period that is not a whole number of days.
         p = _valid();

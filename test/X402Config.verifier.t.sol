@@ -661,7 +661,8 @@ contract X402ConfigVerifierTest is Test {
         config.registerVerifier(
             second, bytes32(type(uint256).max), uint64(block.timestamp) + 365 * 86_400
         );
-        // The admin may enrol itself; nothing forbids the two roles overlapping.
+        // The admin may NOT enrol itself since audit A L-3 / B B12: one key, one role.
+        vm.expectRevert(VerifierIsAdminOrArbiter.selector);
         config.registerVerifier(admin, LABEL, uint64(block.timestamp) + 1_000);
         // A duplicate label across two keys. Labels are not identifiers.
         config.registerVerifier(stranger, LABEL, uint64(block.timestamp) + 1_000);
@@ -669,7 +670,6 @@ contract X402ConfigVerifierTest is Test {
 
         assertTrue(config.canSign(verifier), "empty label");
         assertTrue(config.canSign(second), "max label, max lifetime");
-        assertTrue(config.canSign(admin), "the admin as a verifier");
         assertTrue(config.canSign(stranger), "a duplicate label");
     }
 }

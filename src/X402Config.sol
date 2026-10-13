@@ -188,8 +188,9 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
 
     /// The owner appoints (or replaces) the admin, in one step: the owner is the recovery path if
     /// the address is wrong, which is what the single-key D-6 handover never had.
+    /// Refuses the current arbiter too: the admin and the arbiter stay two keys.
     function setAdmin(address newAdmin) external onlyOwner {
-        if (newAdmin == address(0)) revert InvalidAdmin();
+        if (newAdmin == address(0) || newAdmin == arbiter) revert InvalidAdmin();
         emit AdminSet(admin, newAdmin);
         admin = newAdmin;
     }
@@ -273,6 +274,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     function _validate(ParamSet memory p) internal view {
         if (p.treasury == address(0)) revert MissingBeneficiary();
         if (p.redeemer == address(0)) revert MissingRedeemer();
+        // One key, one role (audit D AD-1b): the redeemer is never the arbiter.
+        if (p.redeemer == arbiter) revert RedeemerIsArbiter();
         if (p.takeRateBps > Constants.MAX_TAKE_RATE_BPS) revert InvalidTakeRateBps();
         // `uint32` because the sum of two `uint16` overflows `uint16` — `state.rs:180` widens to
         // `u32` for the same reason. Checked arithmetic would panic rather than revert with the
@@ -297,7 +300,13 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
                 < uint256(slashDelaySeconds()) + Constants.SLASH_PATH_MARGIN_SECONDS
         ) revert UnbondingPeriodTooShort();
         if (p.minimumStake == 0) revert InvalidMinimumStake();
+        // A provider at the minimum must be slashable: its cap allowance may not round to 0.
+        if (uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR == 0) {
+            revert InvalidMinimumStake();
+        }
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
+        // One maximal judgement must fit in one key-day, or it could never be paid in full.
+        if (p.penaltyAmount > p.verifierDailyCap) revert InvalidVerifierDailyCap();
     }
 
     // -------------------------------------------------------------------------------------
@@ -406,6 +415,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         // failure look like a registered verifier at the `X402Stake` call site.
         if (verifier == address(0)) revert ZeroAddress();
         if (verifiers[verifier].registered) revert VerifierAlreadyRegistered();
+        // One key, one role: the verifier is never the admin or the arbiter.
+        if (verifier == admin || verifier == arbiter) revert VerifierIsAdminOrArbiter();
 
         uint64 nowTs = uint64(block.timestamp);
         // `register_verifier.rs:52-55`, both ends: strictly future, and no further out than the
@@ -435,7 +446,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// It is deliberately NOT timelocked and deliberately irreversible. **This is the single
     /// control the two-phase slash exists to make usable**: `X402Stake.executeSlash` re-checks
     /// [`assertCanSign`] on the record's verifier at execution time, so revoking a key voids every
-    /// judgement it signed that is still inside its 72-hour delay — including ones already
+    /// judgement it signed that is still inside its slash delay — including ones already
     /// proposed. A revocation that could be undone, or one that had to wait out a delay of its
     /// own, would give that re-check nothing to find.
     ///
@@ -533,15 +544,20 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     event SlashDelaySet(uint64 previousDelay, uint64 newDelay);
     event BlockedSet(address indexed account, bool blocked, address indexed by);
 
-    /// `address(0)` removes the arbiter: disputes then wait for the admin's cancel or for
-    /// `DISPUTE_TIMEOUT_SECONDS`, and nothing can uphold one.
+    /// **`address(0)` is refused**: with no arbiter a dispute is a free 30-day veto (audit A
+    /// M-2). A lost or compromised arbiter is REPLACED, never removed. (Before the first
+    /// appointment the slot reads `address(0)`; the runbook appoints it in the upgrade session.)
     ///
-    /// Refuses ([`InvalidArbiter`]) the current admin and any registered, non-revoked verifier:
+    /// Refuses ([`InvalidArbiter`]) the current admin, the current redeemer and any registered,
+    /// non-revoked verifier:
     /// the arbiter is a separate person. A key enrolled as a verifier AFTER the appointment is
     /// still caught per record by `X402Stake`'s `ArbiterIsVerifier`.
     function setArbiter(address newArbiter) external onlyAdmin {
         VerifierKey storage k = verifiers[newArbiter];
-        if (newArbiter == admin || (k.registered && !k.revoked)) revert InvalidArbiter();
+        if (
+            newArbiter == address(0) || newArbiter == admin || newArbiter == _params.redeemer
+                || (k.registered && !k.revoked)
+        ) revert InvalidArbiter();
         emit ArbiterSet(arbiter, newArbiter);
         arbiter = newArbiter;
     }
@@ -576,7 +592,10 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// The admin blocks and unblocks; the arbiter may only block. Blocking stops the address at
     /// every door [`assertActive`] guards and moves none of its money.
     function setBlocked(address account, bool value) external {
-        if (msg.sender != admin && (!value || msg.sender != arbiter)) revert NotAdmin();
+        if (msg.sender != admin) {
+            if (msg.sender != arbiter) revert NotAdmin();
+            if (!value) revert ArbiterCannotUnblock();
+        }
         if (account == address(0)) revert ZeroAddress();
         _blocked[account] = value;
         emit BlockedSet(account, value, msg.sender);

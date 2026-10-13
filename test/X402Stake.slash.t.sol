@@ -15,6 +15,9 @@ contract X402StakeSlashTest is Fixture {
     address internal verifierAddr;
     address internal beneficiary = address(0xA6E7);
     uint64 internal constant BOND = 1_000_000_000; // 1,000 USDG
+    /// The start of a record's last `SLASH_WINDOW_SECONDS` of grace, measured from executableAt.
+    uint64 internal constant LAST_DAY =
+        Constants.SLASH_EXECUTION_GRACE_SECONDS - Constants.SLASH_WINDOW_SECONDS;
 
     function setUp() public virtual override {
         super.setUp();
@@ -711,7 +714,9 @@ contract X402StakeSlashTest is Fixture {
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
-        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
+        // The clamps run in the grace's last day: earlier, a window-cut payment is refused
+        // (`SlashWindowNotDrained`, the cap write-off rule; `X402Stake.audit.t.sol`).
+        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS + LAST_DAY);
 
         stake.executeSlash(bytes32("r1")); // applied 1_000_000; the key's window now holds it
         stake.executeSlash(bytes32("r2")); // keyRemaining 500_000 → applied clamps to 500_000
@@ -735,7 +740,9 @@ contract X402StakeSlashTest is Fixture {
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
-        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
+        // The clamps run in the grace's last day: earlier, a window-cut payment is refused
+        // (`SlashWindowNotDrained`, the cap write-off rule; `X402Stake.audit.t.sol`).
+        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS + LAST_DAY);
         stake.executeSlash(bytes32("r1"));
         vm.expectRevert(VerifierDailyCapExceeded.selector);
         stake.executeSlash(bytes32("r2"));
@@ -776,7 +783,9 @@ contract X402StakeSlashTest is Fixture {
         _propose(bytes32("r2"), 400_000);
         _propose(bytes32("r3"), 400_000);
 
-        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
+        // The clamps run in the grace's last day: earlier, a window-cut payment is refused
+        // (`SlashWindowNotDrained`, the cap write-off rule; `X402Stake.audit.t.sol`).
+        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS + LAST_DAY);
         stake.executeSlash(bytes32("r1"));
         stake.executeSlash(bytes32("r2"));
         stake.executeSlash(bytes32("r3"));
@@ -804,7 +813,9 @@ contract X402StakeSlashTest is Fixture {
             assertEq(stake.slashRecordOf(ids[i]).capAllowance, 1_500_000);
         }
 
-        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
+        // The clamps run in the grace's last day: earlier, a window-cut payment is refused
+        // (`SlashWindowNotDrained`, the cap write-off rule; `X402Stake.audit.t.sol`).
+        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS + LAST_DAY);
         stake.executeSlash(bytes32("c1"));
         stake.executeSlash(bytes32("c2"));
         vm.expectRevert(SlashCapExceeded.selector);
@@ -869,7 +880,8 @@ contract X402StakeSlashTest is Fixture {
         _propose(bytes32("r2"), 400_000);
         _propose(bytes32("r3"), 400_000);
 
-        uint64 tLow = uint64(block.timestamp) + Constants.SLASH_DELAY_SECONDS;
+        // In the grace's last day, where a window-cut payment is admitted (cap write-off rule).
+        uint64 tLow = uint64(block.timestamp) + Constants.SLASH_DELAY_SECONDS + LAST_DAY;
         uint64 tHigh = tLow + 10_000;
 
         vm.warp(tHigh);

@@ -352,7 +352,7 @@ duplicate id reverts the batch, so pre-filter with `slashRecordOf`).
 ### 6.5 The arbiter, the blocklist and the slash delay (D-19)
 
 ```sh
-cast send <configProxy> "setArbiter(address)" <arbiter> --rpc-url <rpc> --ledger      # ADMIN; 0x0 removes it
+cast send <configProxy> "setArbiter(address)" <arbiter> --rpc-url <rpc> --ledger      # ADMIN; 0x0 refused: replace, never remove
 cast send <configProxy> "setBlocked(address,bool)" <addr> true --rpc-url <rpc> --ledger # admin or arbiter; only the admin may send false
 cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledger    # ADMIN; [600, unbondingPeriodSeconds - 691200]
 ```
@@ -370,6 +370,15 @@ cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledg
       verifier is stopped only by `revokeVerifier`, which is ADMIN-only; the arbiter's tool against
       a forged slash is `cancelSlash`.
 
+- [ ] The slash delay applies to NEW proposals only. **Production keeps it at 72 h or more**; the
+      10-minute minimum is for testing, and a short delay is a short dispute window.
+- [ ] Roles stay separate: `setAdmin` refuses the arbiter, `registerVerifier` refuses the admin
+      and the arbiter, `setArbiter` refuses `0x0`, the admin, the redeemer and any live verifier,
+      and `updateConfig` refuses a `redeemer` equal to the arbiter.
+- [ ] **A stolen admin key alone can take provider stake within the caps** (it registers a
+      verifier, sets the arbiter, lowers the delay and sets params). Accepted by the owner on
+      2026-10-14 because the admin wallet is held as securely as the owner wallet; risk register §4a.
+
 ### 6.6 Retiring a verifier key (F4)
 
 A record's verifier is re-checked at `executeSlash`, and an unusable key releases the record
@@ -379,8 +388,26 @@ retired by rotation stays **registered, not revoked, and unexpired** for at leas
 `slashDelaySeconds() + 30 d + 7 d` (≈ 40 days at the 72 h default) after its LAST proposal; stop
 the backend signing with it, do not revoke it. **Revoke only a compromised key.** When enrolling,
 set `expiresAt` far enough out to cover that tail.
-- [ ] The slash delay applies to NEW proposals only. Keep it at 72 h on mainnet; a short delay is a
-      short dispute window.
+
+### 6.7 Executing slashes, pauses and parameter changes
+
+- **The cap write-off rule.** `executeSlash` refuses `SlashWindowNotDrained` when the provider's
+  or the key's rolling window would cut the payment below `min(reserved, atRisk)`; the record stays
+  Pending. Retry as the window drains (it reopens linearly over 24 h). In the last 24 h before
+  `executableAt + 7 d` a partial payment is accepted, so execute well before then.
+- **A pause longer than 7 days voids slashes.** The grace and the 30-day dispute timeout keep
+  running while paused; `executeSlash` is closed and `expireSlash` is open to anyone. **Before a
+  long pause, and again right after the unpause**, list every Pending or upheld record whose
+  `executableAt + 7 d` (or Disputed record whose `disputedAt + 30 d`) falls inside the pause, and
+  execute or re-propose them. The provider's rolling window is not frozen by a pause either.
+- **Before unpausing after a long pause**, consider raising `unbondingPeriodSeconds` temporarily
+  (`updateConfig`), so a provider whose slashes the pause voided cannot exit before they are
+  re-proposed (audit B B6).
+- **Parameters re-price records in flight.** The split, the `treasury` and the `verifierDailyCap`
+  are read at execution time, not at proposal: an `updateConfig` changes what every pending record
+  will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
+  frozen.
+- **Key expiry.** The backend runs a key-expiry monitor (§6.6 gives the tail a key must cover).
 
 ### 6.3 Changing the owner or the admin (D-17)
 

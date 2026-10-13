@@ -436,7 +436,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// `requestWithdrawBySig`, `authorizeDelegateBySig` and `revokeDelegateBySig`). The relayer key
     /// can never move USDG: every money-moving path is authorised by
     /// `msg.sender == buyer`, by a buyer EIP-712 signature over an exact amount, or by a
-    /// registered verifier's attestation plus 72 hours. This one exists because a buyer
+    /// registered verifier's attestation plus the slash delay. This one exists because a buyer
     /// *lowering* a ceiling — the safety direction, and the one an incident needs — must never be
     /// blocked by not holding gas. `withdraw` does not get a twin, ever; the argument is at its
     /// declaration.

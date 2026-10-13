@@ -336,7 +336,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     }
 
     /// `propose_slash.rs`. Phase one: prove the verifier's signature, reserve the stake, start
-    /// the 72-hour clock. **Moves no money.**
+    /// the slash-delay clock (`CONFIG.slashDelaySeconds()`, 72 h by default). **Moves no money.**
     ///
     /// **Permissionless to SUBMIT: the authority is the signature, not the sender.** On Solana
     /// the `VerifierKey` PDA is passed and `require_signed_by` proves that key signed. Here
@@ -392,8 +392,8 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
         // What this judgement may EVER be paid: the penalty, cut to the ceiling, cut to what
         // other standing judgements have not already reserved. Reservations stack up to the
-        // whole stake — a leaked key can freeze a provider's exit for the ten days until the
-        // records expire or the key is revoked. It cannot take it.
+        // whole stake — a leaked key can freeze a provider's exit until the records expire
+        // (delay + 7 d, or the 30-day dispute timeout) or the key is revoked. It cannot take it.
         uint128 free = atRisk > s.pendingSlash ? atRisk - s.pendingSlash : 0;
         uint64 reserved = a.penalty;
         if (reserved > capAllowance) reserved = capAllowance;
@@ -472,7 +472,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// the key can still sign, and the penalty is paid under both caps.
     ///
     /// **Permissionless.** Being front-run for the privilege of paying gas is harmless — the
-    /// judgement, its beneficiary and its amount were all fixed 72 hours ago, and every one of
+    /// judgement, its beneficiary and its amount were all fixed at proposal, and every one of
     /// them is read from the record rather than from the caller.
     ///
     /// **THE CRUX OF THE WHOLE TWO-PHASE DESIGN is `CONFIG.assertCanSign(rec.verifier)`.** A key
@@ -530,13 +530,24 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         if (keyRemaining == 0) revert VerifierDailyCapExceeded();
 
         // Never more than was reserved, than either window admits, or than the provider still
-        // holds. Any of the three binding leaves `penalty - applied` discharged, not carried;
-        // the request id is spent either way.
+        // holds. What is not paid is discharged, not carried; the request id is spent either way.
         uint64 atRiskCapped = atRisk > type(uint64).max ? type(uint64).max : Cast.toUint64(atRisk);
-        uint64 applied = rec.reserved;
+        uint64 owed = rec.reserved < atRiskCapped ? rec.reserved : atRiskCapped;
+        uint64 applied = owed;
         if (applied > windowRemaining) applied = windowRemaining;
         if (applied > keyRemaining) applied = keyRemaining;
-        if (applied > atRiskCapped) applied = atRiskCapped;
+        // **The cap write-off rule.** A payment cut by a rolling WINDOW (the provider's or the
+        // key's) — not by a smaller stake — is refused until the last `SLASH_WINDOW_SECONDS` of
+        // the grace: otherwise the party being judged picks the instant the window is measured
+        // and discharges the judgement for dust a second after the window reopens. The record
+        // stays Pending and is retried as the window drains; in the final day a partial payment
+        // is allowed, so a record is still paid something before it expires.
+        if (
+            applied < owed
+                && nowTs
+                    < uint256(rec.executableAt) + Constants.SLASH_EXECUTION_GRACE_SECONDS
+                        - Constants.SLASH_WINDOW_SECONDS
+        ) revert SlashWindowNotDrained();
 
         uint64 agentAmount = Fee.bpsOf(applied, p.slashAgentBps);
         uint64 platformAmount = Fee.bpsOf(applied, p.slashPlatformBps);
@@ -711,7 +722,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// and a pause (or a block) that stopped it would let the slash ripen undisputed.
     ///
     /// **Exactly one dispute per record**, explicitly: a record with `disputedAt != 0` is refused
-    /// with [`AlreadyDisputed`], so an upheld record whose frozen `executableAt` is still ahead
+    /// with [`SlashAlreadyDisputed`], so an upheld record whose frozen `executableAt` is still ahead
     /// cannot be disputed again.
     ///
     /// **The provider is never worse off for disputing early.** An uphold never makes the record
@@ -733,7 +744,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         SlashRecord storage rec = slashRecords[requestId];
         if (rec.status != SlashStatus.Pending) revert SlashNotPending();
         if (msg.sender != rec.provider) revert NotSlashedProvider();
-        if (rec.disputedAt != 0) revert AlreadyDisputed();
+        if (rec.disputedAt != 0) revert SlashAlreadyDisputed();
         if (block.timestamp >= rec.executableAt) revert DisputeWindowClosed();
 
         uint64 nowTs = uint64(block.timestamp);
