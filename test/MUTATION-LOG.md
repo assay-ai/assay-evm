@@ -1819,3 +1819,21 @@ things it has checked rather than assumed.
   and referenced from `depositStakeFor`: the pause closes a door whose only purpose is served by
   another door the pause has already closed, and never one that lets a party take their own money
   back or restore their own standing.
+
+---
+
+## The dispute upgrade (D-19)
+
+Each mutation applied alone to the committed source, the named test run, the file restored
+byte-exact. All eight die for the stated reason.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| D1 | `_dispute`: `if (msg.sender != rec.provider) revert NotSlashedProvider();` | deleted | `X402Stake.dispute.t.sol::test_wrongSigner_onlyTheSlashedProviderMayDispute` | **DIES**: `[FAIL: next call did not revert as expected]` — anybody could freeze a provider's judgement |
+| D2 | `_uphold`: `if (arb == rec.verifier) revert ArbiterIsVerifier();` | deleted | `test_wrongSigner_anArbiterThatIsTheRecordsVerifierCannotUphold` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D3 | `_dispute`: `block.timestamp >= rec.executableAt` | `>=` → `>` | `test_boundary_disputeClosesAtExecutableAt` | **DIES**: `[FAIL: next call did not revert as expected]` — the shared instant belongs to `executeSlash`, not to the dispute |
+| D4 | `expireSlash`: a `Disputed` record times out on `disputedAt + DISPUTE_TIMEOUT_SECONDS` | → `executableAt + SLASH_EXECUTION_GRACE_SECONDS` | `test_disputeThenThirtyDaysThenAnybodyExpires` | **DIES**: `[FAIL: next call did not revert as expected]` — the ordinary grace would release a dispute after ten days |
+| D5 | `setBlocked`: `msg.sender != admin && (!value \|\| msg.sender != arbiter)` | → `msg.sender != admin && msg.sender != arbiter` | `X402Config.arbiter.t.sol::test_theArbiterMayBlockButNeverUnblock` | **DIES**: `[FAIL: next call did not revert as expected]` — the arbiter could unblock |
+| D6 | `assertActive`: `_blocked[a] \|\| _blocked[b] \|\| _blocked[c]` | third slot dropped | `AddressBlocklist.t.sol::test_redemptionRefusesABlockedPayerPayeeOrDelegate` | **DIES**: `[FAIL: next call did not revert as expected]` — a blocked delegate's voucher would redeem |
+| D7 | `_assertBatch`: `if (n > Constants.MAX_SLASH_BATCH) revert BatchTooLarge();` | deleted | `test_wrongArgs_anEmptyAndAnOversizeBatchAreRefused` | **DIES**: `[FAIL: Error != expected error: SlashNotPending() != BatchTooLarge()]` |
+| D8 | `_release`: accepts `Pending` **or** `Disputed` | `Disputed` dropped | `test_happyPath_theAdminCancelsADisputedRecord` | **DIES**: `[FAIL: SlashNotPending()]` — a disputed record could be released only by the 30-day timeout |
