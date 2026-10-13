@@ -519,6 +519,14 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
 
     /// The blocklist. One mapping, one slot. Read by the money contracts through
     /// [`assertActive`]; nothing here can move a blocked party's funds.
+    ///
+    /// **It binds the SUBJECTS of a door — buyer, payer, payee (provider), delegate, provider,
+    /// funder — never the operators around them**: not a relayer landing a `…BySig`, not the
+    /// redeemer or a keeper calling `proposeSlash` / `executeSlash` / `expireSlash`, not the slash
+    /// beneficiary or the treasury, not the admin or the arbiter, and **not the verifier**.
+    /// Blocking a verifier address does not stop its signatures: a forging verifier is stopped
+    /// only by `revokeVerifier`, which is admin-only. The arbiter's own tool against a forged
+    /// slash is `X402Stake.cancelSlash`.
     mapping(address => bool) internal _blocked;
 
     event ArbiterSet(address indexed previousArbiter, address indexed newArbiter);
@@ -527,7 +535,13 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
 
     /// `address(0)` removes the arbiter: disputes then wait for the admin's cancel or for
     /// `DISPUTE_TIMEOUT_SECONDS`, and nothing can uphold one.
+    ///
+    /// Refuses ([`InvalidArbiter`]) the current admin and any registered, non-revoked verifier:
+    /// the arbiter is a separate person. A key enrolled as a verifier AFTER the appointment is
+    /// still caught per record by `X402Stake`'s `ArbiterIsVerifier`.
     function setArbiter(address newArbiter) external onlyAdmin {
+        VerifierKey storage k = verifiers[newArbiter];
+        if (newArbiter == admin || (k.registered && !k.revoked)) revert InvalidArbiter();
         emit ArbiterSet(arbiter, newArbiter);
         arbiter = newArbiter;
     }

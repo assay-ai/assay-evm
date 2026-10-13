@@ -384,7 +384,9 @@ no sweep — so the worst case is funds held in place until the owner replaces t
 
 **A stolen arbiter key** can block addresses (never unblock), cancel any pending or disputed
 slash, and uphold a disputed one — which returns it to the ordinary `executeSlash` with every
-cap and the verifier re-check intact; it chooses no amount and no beneficiary. The admin replaces
+cap and the verifier re-check intact; it chooses no amount and no beneficiary, it cannot make a
+record executable before its frozen `executableAt`, and it cannot rule after the 30-day timeout
+(review F1/F2, fixed). The admin replaces
 it with `setArbiter`. It is never the verifier of the record it upholds.
 
 **A stolen admin key can shorten the slash delay to 10 minutes** (`setSlashDelay`), which is
@@ -396,3 +398,15 @@ still reserve stake and freeze an exit (§11), now for up to `DISPUTE_TIMEOUT_SE
 after a dispute nobody rules on, instead of the ten days of §11; the arbiter's `cancelSlash` or
 a `revokeVerifier` ends it at once.
 
+**The blocklist binds subjects, not operators (review F3, documented).** It refuses a blocked
+buyer, payer, payee/provider, delegate or funder. It does not refuse a relayer, the redeemer, a
+keeper calling `proposeSlash` / `executeSlash` / `expireSlash`, the slash beneficiary, the
+treasury, the admin, the arbiter or the verifier address. **Blocking a verifier does not stop its
+signatures**: a forging verifier is stopped only by `revokeVerifier`, which only the admin can
+call. The arbiter's own answer to a forged slash is `cancelSlash`.
+
+**A key retired mid-dispute voids the ruling (review F4, runbook rule).** A Disputed record can
+stay open 30 days, plus the 7-day grace after an uphold; if its verifier key expires or is
+revoked in that span, the provider wins without a ruling. Runbook §6.6: rotated keys stay
+registered and unexpired for delay + 30 d + 7 d after their last proposal; only a compromised
+key is revoked.

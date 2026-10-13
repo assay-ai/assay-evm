@@ -1837,3 +1837,19 @@ byte-exact. All eight die for the stated reason.
 | D6 | `assertActive`: `_blocked[a] \|\| _blocked[b] \|\| _blocked[c]` | third slot dropped | `AddressBlocklist.t.sol::test_redemptionRefusesABlockedPayerPayeeOrDelegate` | **DIES**: `[FAIL: next call did not revert as expected]` — a blocked delegate's voucher would redeem |
 | D7 | `_assertBatch`: `if (n > Constants.MAX_SLASH_BATCH) revert BatchTooLarge();` | deleted | `test_wrongArgs_anEmptyAndAnOversizeBatchAreRefused` | **DIES**: `[FAIL: Error != expected error: SlashNotPending() != BatchTooLarge()]` |
 | D8 | `_release`: accepts `Pending` **or** `Disputed` | `Disputed` dropped | `test_happyPath_theAdminCancelsADisputedRecord` | **DIES**: `[FAIL: SlashNotPending()]` — a disputed record could be released only by the 30-day timeout |
+
+### Review round (security review of the dispute upgrade, F1, F2, I4)
+
+The reviewer's proof tests are now regressions in `X402Stake.dispute.t.sol` (`test_review_*`),
+`X402Config.arbiter.t.sol` and `AddressBlocklist.t.sol`, asserting the fixed behaviour (F1, F2,
+I4) or the documented scope (F3, F4, I1). D2 is now proved through an arbiter enrolled as a
+verifier AFTER its appointment, because `setArbiter` refuses a live verifier. All six die.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| D9 | `_uphold`: `block.timestamp >= disputedAt + DISPUTE_TIMEOUT_SECONDS` → `DisputeTimedOut` | deleted | `test_review_F1_upholdAfterTheDisputeTimeoutIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` — the reviewer's day-40 uphold lands again |
+| D10 | same | `>=` → `>` | `test_review_F1_theTimeoutInstantBelongsToExpireAlone` | **DIES**: `[FAIL: next call did not revert as expected]` — both doors open at the instant |
+| D11 | `_uphold`: `if (nowTs > rec.executableAt) rec.executableAt = nowTs;` | → unconditional `rec.executableAt = nowTs;` | `test_review_F2_upholdNeverPullsExecutionBeforeTheFrozenDelay` | **DIES**: `[FAIL: log != expected log]` — `SlashUpheld.executableAt` is now, not the frozen instant (the execute-before-frozen assertion below it would follow) |
+| D12 | `_dispute`: `if (rec.disputedAt != 0) revert AlreadyDisputed();` | deleted | same | **DIES**: `[FAIL: next call did not revert as expected]` — an upheld record still inside its frozen delay is disputed a second time |
+| D13 | `setArbiter`: `newArbiter == admin \|\| …` | admin term dropped | `X402Config.arbiter.t.sol::test_wrongArgs_setArbiterRefusesTheAdminAndALiveVerifier` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D14 | `setArbiter`: `… \|\| (k.registered && !k.revoked)` | verifier term dropped | same | **DIES**: `[FAIL: next call did not revert as expected]` |

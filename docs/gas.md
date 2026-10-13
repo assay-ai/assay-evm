@@ -302,19 +302,24 @@ not optional.
 ## The slash batches (D-19), at `MAX_SLASH_BATCH = 64`
 
 `test/X402Stake.dispute.t.sol::test_measure_slashBatchesAtSixtyFour` — 64 pending records of one
-provider, each batch called once over all 64, warm Config:
+provider, each batch called once over all 64. **Cold** is `--isolate` (each call its own
+transaction, every slot cold — the figure a real transaction pays); **warm** is the same test in
+one test transaction, kept for comparison.
 
-| call | total gas | per record |
-|---|---:|---:|
-| `disputeSlashBatch(64)` | 1 605 710 | 25 089 |
-| `upholdSlashBatch(64)` | 220 354 | 3 443 |
-| `cancelSlashBatch(64)` | 275 874 | 4 311 |
+| call | cold (`--isolate`) | per record | warm |
+|---|---:|---:|---:|
+| `disputeSlashBatch(64)` | **2 103 534** | 32 868 | 1 608 654 |
+| `upholdSlashBatch(64)` | **856 586** | 13 384 | 224 706 |
+| `cancelSlashBatch(64)` | **781 754** | 12 215 | 275 874 |
 
 `disputeSlashBatch` is the expensive one because it writes `disputedAt` into each record's sixth
-slot, zero to non-zero. 64 stays the cap: the largest batch is about 1.6 M gas.
+slot, zero to non-zero. Distinct providers add about 2.1 k each for a cold stake slot. 64 stays
+the cap: the worst batch is about 2.1 M gas, 6.6 % of Robinhood Chain's 32 M `maxTxGasLimit`.
+Measured after the review fixes (uphold reads `disputedAt` and keeps the frozen `executableAt`).
 
 ```sh
-forge test --match-test test_measure_slashBatchesAtSixtyFour -vv
+forge test --isolate --match-test test_measure_slashBatchesAtSixtyFour -vv   # cold
+forge test --match-test test_measure_slashBatchesAtSixtyFour -vv             # warm
 ```
 
 D-19 also adds one `CONFIG.assertActive` static call per voucher to `_redeem` (the blocklist
@@ -330,9 +335,9 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `X402Config` | 7,344 | 29.9% | 7,553 |
+| `X402Config` | 7,420 | 30.2% | 7,629 |
 | `X402Escrow` | 17,443 | 71.0% | 18,870 |
-| `X402Stake` | 15,042 | 61.2% | 16,469 |
+| `X402Stake` | 15,136 | 61.6% | 16,563 |
 
 Re-measured for D-19 (the dispute upgrade); the commit before it measured X402Config 6,136,
 X402Escrow 16,202 and X402Stake 13,041.

@@ -222,4 +222,20 @@ contract AddressBlocklistTest is Fixture {
         stake.withdrawStake(BOND / 2);
         assertEq(stake.stakeOf(provider).unbonding, 0);
     }
+
+    /// F3 (documented scope): the blocklist binds the buyer, not the relayer that lands its
+    /// signature.
+    function test_review_F3_aBlockedRelayerStillRelaysForAnUnblockedBuyer() public {
+        address relayer = address(0xBADBAD);
+        vm.prank(admin);
+        config.setBlocked(relayer, true);
+        uint64 n = escrow.escrowOf(buyer).authNonce;
+        uint64 deadline = uint64(block.timestamp) + 600;
+        bytes memory rwSig = VoucherSigner.signRequestWithdraw(
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 1, n, deadline
+        );
+        vm.prank(relayer);
+        escrow.requestWithdrawBySig(buyer, 1, n, deadline, rwSig);
+        assertEq(escrow.escrowOf(buyer).withdrawRequested, 1);
+    }
 }

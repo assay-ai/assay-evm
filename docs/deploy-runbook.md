@@ -329,8 +329,8 @@ backend's configuration is per-deployment, and never derivable from the chain id
 ```
 proposeSlash (anyone, verifier-signed) ──► Pending ──executeSlash (anyone, after executableAt)──► Executed
                                              │  ▲
-          disputeSlash (provider, before     │  │ upholdSlash (arbiter; executable from now)
-          executableAt; never paused)        ▼  │
+          disputeSlash (provider, before     │  │ upholdSlash (arbiter, before disputedAt + 30 d;
+          executableAt, once; never paused)  ▼  │   executable from max(frozen executableAt, now))
                                            Disputed
 Pending or Disputed ──cancelSlash (admin or arbiter)──► Cancelled  (Withdrawn)
 Pending  ──expireSlash (anyone: key unusable, or executableAt + 7 d)──► Cancelled  (VerifierUnavailable | Expired)
@@ -338,7 +338,11 @@ Disputed ──expireSlash (anyone: key unusable, or disputedAt + 30 d)──►
 ```
 
 `executableAt = proposedAt + slashDelaySeconds()` (72 h unless the admin set it, §6.5), frozen at
-proposal; the provider's dispute window is that delay. The reservation (`pendingSlash`) holds from
+proposal; the provider's dispute window is that delay. A record is disputed at most once
+(`AlreadyDisputed`). **The provider is never worse off for disputing early**: an uphold never
+makes a record executable before its frozen `executableAt`, and the 7-day grace runs from the
+`executableAt` the uphold leaves. At `disputedAt + 30 d` the uphold closes (`DisputeTimedOut`) in
+the same instant expire opens. The reservation (`pendingSlash`) holds from
 proposal until `Executed` or `Cancelled`, through a dispute. **Operator console:** an overturn or a
 suspend is the ARBITER's `cancelSlash`, not the admin's; a ruling against the provider is
 `upholdSlash`, after which anyone (the backend) calls `executeSlash` within 7 days. Many records
@@ -353,10 +357,28 @@ cast send <configProxy> "setBlocked(address,bool)" <addr> true --rpc-url <rpc> -
 cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledger    # ADMIN; [600, unbondingPeriodSeconds - 691200]
 ```
 
-- [ ] The arbiter is **not** the verifier and not any key the backend holds (`upholdSlash` refuses
-      an arbiter equal to the record's verifier; nothing stops a backend key, so check by hand).
+- [ ] The arbiter is **not** the verifier and not any key the backend holds. `setArbiter` refuses
+      the admin and any registered, non-revoked verifier (`InvalidArbiter`), and `upholdSlash`
+      still refuses an arbiter equal to the record's verifier; nothing stops a backend key that
+      is not a verifier, so check by hand.
 - [ ] A blocked address can still `revokeDelegate` and `disputeSlash`; nothing moves its funds.
       Unblocking is the admin's alone.
+- [ ] **The blocklist binds the subjects of a door** — buyer, payer, payee/provider, delegate,
+      funder — **never the operators**: not relayers, the redeemer, keepers calling
+      `propose`/`execute`/`expireSlash`, the slash beneficiary, the treasury, the admin, the
+      arbiter or **the verifier**. Blocking a verifier does nothing to its signatures. A forging
+      verifier is stopped only by `revokeVerifier`, which is ADMIN-only; the arbiter's tool against
+      a forged slash is `cancelSlash`.
+
+### 6.6 Retiring a verifier key (F4)
+
+A record's verifier is re-checked at `executeSlash`, and an unusable key releases the record
+(`expireSlash`, `VerifierUnavailable`). A dispute can keep a record open for up to 30 days and an
+uphold adds the 7-day grace, so a rotation inside that span voids a timely ruling. **Rule:** a key
+retired by rotation stays **registered, not revoked, and unexpired** for at least
+`slashDelaySeconds() + 30 d + 7 d` (≈ 40 days at the 72 h default) after its LAST proposal; stop
+the backend signing with it, do not revoke it. **Revoke only a compromised key.** When enrolling,
+set `expiresAt` far enough out to cover that tail.
 - [ ] The slash delay applies to NEW proposals only. Keep it at 72 h on mainnet; a short delay is a
       short dispute window.
 
@@ -613,8 +635,11 @@ and Stake as APPEND-ONLY, Escrow as identical) and no initializer runs (`CALL_*`
 must land FIRST: the new Stake and Escrow call `CONFIG.assertActive`, `slashDelaySeconds` and
 `arbiter`, so behind the old Config their deposit, exit and slash doors revert.
 `UpgradeByOwner.s.sol` upgrades in the order Config, Stake, Escrow and refuses
-(`ConfigMustBeUpgradedFirst`) a Stake or Escrow upgrade behind a Config that lacks them. For a Safe,
-propose the three `safeCalldata()` lines as ONE batch, in that order.
+(`ConfigMustBeUpgradedFirst`) a Stake or Escrow upgrade behind a Config that lacks them — but that
+check and the codehash pins run only in forge's simulation. **On a Safe, send the three
+`safeCalldata()` lines as ONE MultiSend transaction, in that order**, never as three Safe
+transactions: executed out of order they brick the Stake deposit, exit and propose doors and every
+Escrow door until Config lands.
 
 1. Layout gate against the deployed commit: `./script/check-layout-branch.sh <deployed commit>`.
 2. `deploy()` with `UPGRADE_CONFIG=true UPGRADE_STAKE=true UPGRADE_ESCROW=true`; take each
@@ -622,7 +647,8 @@ propose the three `safeCalldata()` lines as ONE batch, in that order.
 3. Rehearse on an anvil fork with the owner impersonated, then `run()` (or the Safe batch).
 4. Post-check on chain: `script/postcheck-upgrade.sh` with the three `IMPL_*`,
    `EXPECTED_SLASH_DELAY=259200` and `EXPECTED_ARBITER=0x0000000000000000000000000000000000000000`.
-5. §6.5: appoint the arbiter. Record `abiKeccak` / `abiFunctions` for Config (+7 functions) and
+5. **In the same session as the upgrade**, §6.5: appoint the arbiter. Until it is set nobody can
+   uphold, and every dispute filed in the gap wins at its 30-day timeout. Record `abiKeccak` / `abiFunctions` for Config (+7 functions) and
    Stake (+5: disputeSlash, upholdSlash and the three batch forms); Escrow's surface is unchanged.
 6. **Tell the backend and frontend** before step 3: the exits now revert `ProgramPaused` while
    paused, and every guarded door reverts `AddressBlocked` for a blocked party.

@@ -213,4 +213,26 @@ contract X402ConfigArbiterTest is Fixture {
         );
         config.setAdmin(arbiter);
     }
+
+    /// I4: the arbiter is a separate person — never the admin, never a live verifier. A revoked
+    /// verifier address is no longer a verifier and may be appointed.
+    function test_wrongArgs_setArbiterRefusesTheAdminAndALiveVerifier() public {
+        address v = address(0x7E57);
+        vm.startPrank(admin);
+        config.registerVerifier(v, bytes32("v"), uint64(block.timestamp) + 30 days);
+        vm.expectRevert(InvalidArbiter.selector);
+        config.setArbiter(admin);
+        vm.expectRevert(InvalidArbiter.selector);
+        config.setArbiter(v);
+
+        // Expired but not revoked is still a registered, non-revoked verifier: refused.
+        vm.warp(block.timestamp + 31 days);
+        vm.expectRevert(InvalidArbiter.selector);
+        config.setArbiter(v);
+
+        config.revokeVerifier(v);
+        config.setArbiter(v);
+        vm.stopPrank();
+        assertEq(config.arbiter(), v);
+    }
 }

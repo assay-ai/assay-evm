@@ -710,8 +710,13 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// **Neither pause- nor blocklist-gated**: it only protects the provider, it moves no money,
     /// and a pause (or a block) that stopped it would let the slash ripen undisputed.
     ///
-    /// Exactly one dispute per record: `Disputed` is never re-entered, because the only way back
-    /// to `Pending` is `upholdSlash`, which sets `executableAt` to now and so closes the window.
+    /// **Exactly one dispute per record**, explicitly: a record with `disputedAt != 0` is refused
+    /// with [`AlreadyDisputed`], so an upheld record whose frozen `executableAt` is still ahead
+    /// cannot be disputed again.
+    ///
+    /// **The provider is never worse off for disputing early.** An uphold never makes the record
+    /// executable before the `executableAt` frozen at proposal (`max(frozen, now)`), so the
+    /// admin's window to see a forged judgement and revoke its key survives a dispute.
     function disputeSlash(bytes32 requestId) external nonReentrant {
         _dispute(requestId);
     }
@@ -728,6 +733,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         SlashRecord storage rec = slashRecords[requestId];
         if (rec.status != SlashStatus.Pending) revert SlashNotPending();
         if (msg.sender != rec.provider) revert NotSlashedProvider();
+        if (rec.disputedAt != 0) revert AlreadyDisputed();
         if (block.timestamp >= rec.executableAt) revert DisputeWindowClosed();
 
         uint64 nowTs = uint64(block.timestamp);
@@ -737,8 +743,13 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     }
 
     /// The arbiter rules against the provider: the record goes back to `Pending`, executable
-    /// from now, and the ordinary [`executeSlash`] — with its verifier re-check and both caps —
-    /// must still run inside the grace window. The arbiter chooses nothing else: amount,
+    /// from `max(frozen executableAt, now)` — never earlier than it would have been undisputed —
+    /// and the ordinary [`executeSlash`], with its verifier re-check and both caps, must still
+    /// run inside the 7-day grace counted from that `executableAt`.
+    ///
+    /// **Only before the dispute timed out.** At and after `disputedAt + DISPUTE_TIMEOUT_SECONDS`
+    /// this refuses [`DisputeTimedOut`] and only `expireSlash` works: the two doors share that
+    /// instant with no overlap and no gap, the same convention as `executeSlash`/`expireSlash`. The arbiter chooses nothing else: amount,
     /// beneficiary and verifier are the record's. To rule FOR the provider it calls
     /// [`cancelSlash`].
     ///
@@ -765,12 +776,15 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     function _uphold(bytes32 requestId, address arb) internal {
         SlashRecord storage rec = slashRecords[requestId];
         if (rec.status != SlashStatus.Disputed) revert SlashNotDisputed();
+        if (block.timestamp >= uint256(rec.disputedAt) + Constants.DISPUTE_TIMEOUT_SECONDS) {
+            revert DisputeTimedOut();
+        }
         if (arb == rec.verifier) revert ArbiterIsVerifier();
 
         uint64 nowTs = uint64(block.timestamp);
         rec.status = SlashStatus.Pending;
-        rec.executableAt = nowTs;
-        emit SlashUpheld(requestId, rec.provider, arb, nowTs);
+        if (nowTs > rec.executableAt) rec.executableAt = nowTs;
+        emit SlashUpheld(requestId, rec.provider, arb, rec.executableAt);
     }
 
     /// The one way out of `Pending` or `Disputed` that returns the reservation whole. Each

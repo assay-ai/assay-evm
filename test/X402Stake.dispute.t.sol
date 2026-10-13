@@ -214,9 +214,9 @@ contract X402StakeDisputeTest is Fixture {
         assertEq(r.reserved, 1_000_000, "the arbiter changes no amount");
         assertEq(r.beneficiary, beneficiary, "nor the beneficiary");
 
-        // An upheld record cannot be disputed again: the window closed at the ruling.
+        // An upheld record cannot be disputed again (F2: explicitly, by `disputedAt != 0`).
         vm.prank(provider);
-        vm.expectRevert(DisputeWindowClosed.selector);
+        vm.expectRevert(AlreadyDisputed.selector);
         stake.disputeSlash(ID);
 
         stake.executeSlash(ID);
@@ -236,6 +236,8 @@ contract X402StakeDisputeTest is Fixture {
         stake.upholdSlash(ID);
         stake.upholdSlash(bytes32("d2"));
         vm.stopPrank();
+        // F2: the ruling does not pull execution before the frozen executableAt.
+        vm.warp(stake.slashRecordOf(ID).executableAt);
 
         // The key's daily cap, read live at execution, now binds below the reservation.
         ParamSet memory p = config.params();
@@ -275,14 +277,40 @@ contract X402StakeDisputeTest is Fixture {
         assertEq(uint256(_status(ID)), uint256(SlashStatus.Disputed));
     }
 
+    /// `setArbiter` refuses a live verifier (I4), so the per-record check is reached by a key
+    /// enrolled as a verifier AFTER its appointment as arbiter — and it still holds.
     function test_wrongSigner_anArbiterThatIsTheRecordsVerifierCannotUphold() public {
-        _propose(ID);
+        _arbiterAlsoEnrolledAsVerifier();
+        _proposeSignedBy(ID, ARB_PK);
         _dispute(ID);
-        vm.prank(admin);
-        config.setArbiter(verifierAddr);
-        vm.prank(verifierAddr);
+        vm.prank(vm.addr(ARB_PK));
         vm.expectRevert(ArbiterIsVerifier.selector);
         stake.upholdSlash(ID);
+    }
+
+    uint256 internal constant ARB_PK = 0xA4B1A4B1;
+
+    function _arbiterAlsoEnrolledAsVerifier() internal {
+        address a = vm.addr(ARB_PK);
+        vm.startPrank(admin);
+        config.setArbiter(a);
+        config.registerVerifier(a, bytes32("arb-as-verifier"), uint64(block.timestamp) + 90 days);
+        vm.stopPrank();
+    }
+
+    function _proposeSignedBy(bytes32 id, uint256 pk) internal {
+        SlashAttestation memory a = SlashAttestation({
+            requestId: id,
+            provider: provider,
+            beneficiary: beneficiary,
+            status: uint8(ResponseClass.DataFail),
+            penalty: 1_000_000,
+            policy: keccak256("policy v1"),
+            issuedAt: uint64(block.timestamp),
+            expiresAt: uint64(block.timestamp) + 3 * 86_400
+        });
+        bytes memory sig = VoucherSigner.signAttestation(pk, stake.DOMAIN_SEPARATOR(), a);
+        stake.proposeSlash(a, sig);
     }
 
     function test_wrongState_upholdNeedsADisputedRecord() public {
@@ -508,7 +536,11 @@ contract X402StakeDisputeTest is Fixture {
         stake.cancelSlashBatch(b);
         for (uint256 i = 0; i < 3; i++) {
             assertEq(uint256(_status(a[i])), uint256(SlashStatus.Pending));
-            assertEq(stake.slashRecordOf(a[i]).executableAt, uint64(block.timestamp));
+            // F2: the frozen executableAt, not "now" — nothing was pulled forward.
+            assertEq(
+                stake.slashRecordOf(a[i]).executableAt,
+                uint64(block.timestamp) + Constants.SLASH_DELAY_SECONDS
+            );
         }
         assertEq(uint256(_status(b[0])), uint256(SlashStatus.Cancelled));
         assertEq(uint256(_status(b[1])), uint256(SlashStatus.Cancelled));
@@ -608,10 +640,7 @@ contract X402StakeDisputeTest is Fixture {
             stake.upholdSlashBatch(ids);
         }
         vm.prank(admin);
-        config.setArbiter(verifierAddr);
-        vm.prank(verifierAddr);
-        vm.expectRevert(ArbiterIsVerifier.selector);
-        stake.upholdSlashBatch(ids);
+        config.setArbiter(address(0xA4B2)); // replace the arbiter
 
         address[3] memory notCanceller = [provider, owner, arbiter]; // arbiter was replaced
         for (uint256 i = 0; i < notCanceller.length; i++) {
@@ -678,5 +707,240 @@ contract X402StakeDisputeTest is Fixture {
         stake.cancelSlashBatch(ids);
         emit log_named_uint("cancelSlashBatch(64)", g - gasleft());
         assertEq(stake.stakeOf(provider).pendingSlash, 0);
+    }
+
+    // === review regressions (docs/…/security-review-dispute-upgrade: F1-F4, I1) ==============
+
+    /// F1: a stale dispute can only expire. The reviewer's proof upheld at +40 d and slashed.
+    function test_review_F1_upholdAfterTheDisputeTimeoutIsRefused() public {
+        _propose(ID);
+        _dispute(ID);
+        uint256 disputedAt = stake.slashRecordOf(ID).disputedAt;
+        vm.warp(disputedAt + Constants.DISPUTE_TIMEOUT_SECONDS + 10 days);
+        vm.prank(arbiter);
+        vm.expectRevert(DisputeTimedOut.selector);
+        stake.upholdSlash(ID);
+        stake.expireSlash(ID);
+        assertEq(uint256(_status(ID)), uint256(SlashStatus.Cancelled));
+        assertEq(usdg.balanceOf(beneficiary), 0, "nothing was paid");
+    }
+
+    /// F1: the boundary. One second before the timeout only uphold works; at the instant only
+    /// expire works. The reviewer's proof had both doors open at the instant.
+    function test_review_F1_theTimeoutInstantBelongsToExpireAlone() public {
+        _propose(ID);
+        _propose(bytes32("d2"));
+        _dispute(ID);
+        _dispute(bytes32("d2"));
+        uint256 disputedAt = stake.slashRecordOf(ID).disputedAt;
+
+        vm.warp(disputedAt + Constants.DISPUTE_TIMEOUT_SECONDS - 1);
+        vm.expectRevert(SlashNotExpired.selector);
+        stake.expireSlash(bytes32("d2"));
+        vm.prank(arbiter);
+        stake.upholdSlash(bytes32("d2"));
+
+        vm.warp(disputedAt + Constants.DISPUTE_TIMEOUT_SECONDS);
+        vm.prank(arbiter);
+        vm.expectRevert(DisputeTimedOut.selector);
+        stake.upholdSlash(ID);
+        stake.expireSlash(ID);
+        assertEq(uint256(_status(ID)), uint256(SlashStatus.Cancelled));
+    }
+
+    /// F1 in the batch form: one timed-out id reverts the batch, and the good one before it is
+    /// untouched.
+    function test_review_F1_aTimedOutIdRevertsTheUpholdBatch() public {
+        _propose(ID);
+        _dispute(ID);
+        vm.warp(stake.slashRecordOf(ID).disputedAt + Constants.DISPUTE_TIMEOUT_SECONDS);
+        _propose(bytes32("fresh"));
+        _dispute(bytes32("fresh"));
+
+        bytes32[] memory ids = new bytes32[](2);
+        ids[0] = bytes32("fresh");
+        ids[1] = ID;
+        vm.prank(arbiter);
+        vm.expectRevert(DisputeTimedOut.selector);
+        stake.upholdSlashBatch(ids);
+        assertEq(uint256(_status(bytes32("fresh"))), uint256(SlashStatus.Disputed));
+    }
+
+    /// F2: an early dispute never pulls execution forward. The reviewer's proof executed
+    /// 259 140 s before the frozen executableAt.
+    function test_review_F2_upholdNeverPullsExecutionBeforeTheFrozenDelay() public {
+        _propose(ID);
+        uint64 frozen = stake.slashRecordOf(ID).executableAt;
+        vm.warp(block.timestamp + 1 minutes);
+        _dispute(ID);
+
+        vm.expectEmit(address(stake));
+        emit SlashUpheld(ID, provider, arbiter, frozen);
+        vm.prank(arbiter);
+        stake.upholdSlash(ID);
+        assertEq(stake.slashRecordOf(ID).executableAt, frozen, "max(frozen, now) = frozen");
+
+        vm.expectRevert(SlashNotYetExecutable.selector);
+        stake.executeSlash(ID);
+        // …and no second dispute, although the window is still open by the clock.
+        vm.prank(provider);
+        vm.expectRevert(AlreadyDisputed.selector);
+        stake.disputeSlash(ID);
+
+        vm.warp(frozen);
+        stake.executeSlash(ID);
+        assertEq(uint256(_status(ID)), uint256(SlashStatus.Executed));
+    }
+
+    /// F2: an uphold after the frozen instant makes it executable from now, with the 7-day grace
+    /// counted from that new executableAt.
+    function test_review_F2_aLateUpholdCountsTheGraceFromTheRuling() public {
+        _propose(ID);
+        _dispute(ID);
+        vm.warp(block.timestamp + 10 days);
+        vm.prank(arbiter);
+        stake.upholdSlash(ID);
+        uint64 ruled = stake.slashRecordOf(ID).executableAt;
+        assertEq(ruled, uint64(block.timestamp));
+        vm.warp(uint256(ruled) + Constants.SLASH_EXECUTION_GRACE_SECONDS - 1);
+        stake.executeSlash(ID);
+        assertEq(uint256(_status(ID)), uint256(SlashStatus.Executed));
+    }
+
+    /// F3 (documented scope, no code change): the blocklist binds subjects only. A blocked
+    /// submitter, keeper, beneficiary, verifier address and arbiter all still act; blocking the
+    /// verifier does NOT stop its signatures — only `revokeVerifier` does.
+    function test_review_F3_theBlocklistDoesNotBindOperatorsOrTheVerifier() public {
+        address blockedCaller = address(0xBAD);
+        vm.startPrank(admin);
+        config.setBlocked(blockedCaller, true);
+        config.setBlocked(beneficiary, true);
+        config.setBlocked(verifierAddr, true);
+        vm.stopPrank();
+        SlashAttestation memory a = SlashAttestation({
+            requestId: ID,
+            provider: provider,
+            beneficiary: beneficiary,
+            status: uint8(ResponseClass.DataFail),
+            penalty: 1_000_000,
+            policy: keccak256("policy v1"),
+            issuedAt: uint64(block.timestamp),
+            expiresAt: uint64(block.timestamp) + 3 * 86_400
+        });
+        bytes memory sig = VoucherSigner.signAttestation(verifierKeyPk, stake.DOMAIN_SEPARATOR(), a);
+        vm.prank(blockedCaller);
+        stake.proposeSlash(a, sig);
+        vm.warp(stake.slashRecordOf(ID).executableAt);
+        vm.prank(blockedCaller);
+        stake.executeSlash(ID);
+        assertEq(usdg.balanceOf(beneficiary), 600_000, "a blocked beneficiary is paid");
+
+        _propose(bytes32("d2"));
+        vm.prank(admin);
+        config.setBlocked(arbiter, true);
+        vm.prank(arbiter);
+        stake.cancelSlash(bytes32("d2"));
+
+        // The only stop for the verifier: revocation.
+        vm.prank(admin);
+        config.revokeVerifier(verifierAddr);
+        SlashAttestation memory b = SlashAttestation({
+            requestId: bytes32("d3"),
+            provider: provider,
+            beneficiary: beneficiary,
+            status: uint8(ResponseClass.DataFail),
+            penalty: 1_000_000,
+            policy: keccak256("policy v1"),
+            issuedAt: uint64(block.timestamp),
+            expiresAt: uint64(block.timestamp) + 3 * 86_400
+        });
+        bytes memory bsig =
+            VoucherSigner.signAttestation(verifierKeyPk, stake.DOMAIN_SEPARATOR(), b);
+        vm.expectRevert(VerifierRevoked.selector);
+        stake.proposeSlash(b, bsig);
+    }
+
+    /// F4 (runbook rule, no code change): a key that expires while a record is Disputed voids
+    /// a timely ruling. This is why retired keys must stay registered and unexpired for
+    /// delay + 30 d + 7 d after their last proposal.
+    function test_review_F4_keyExpiryDuringADisputeVoidsTheRuling() public {
+        uint256 pk2 = 0xBEEF02;
+        address v2 = vm.addr(pk2);
+        vm.prank(admin);
+        config.registerVerifier(v2, bytes32("short"), uint64(block.timestamp) + 20 days);
+        _proposeSignedBy(ID, pk2);
+        _dispute(ID);
+        vm.warp(block.timestamp + 21 days);
+        vm.prank(arbiter);
+        stake.upholdSlash(ID);
+        vm.expectRevert(VerifierKeyExpired.selector);
+        stake.executeSlash(ID);
+        stake.expireSlash(ID);
+        assertEq(uint256(_status(ID)), uint256(SlashStatus.Cancelled));
+    }
+
+    /// I1: with no arbiter, nobody can uphold and the dispute wins at the timeout — the reason
+    /// the runbook appoints the arbiter in the same session as the upgrade.
+    function test_review_I1_noArbiterMeansEveryDisputeWins() public {
+        vm.prank(admin);
+        config.setArbiter(address(0));
+        _propose(ID);
+        _dispute(ID);
+        vm.prank(admin);
+        vm.expectRevert(NotArbiter.selector);
+        stake.upholdSlash(ID);
+        vm.warp(block.timestamp + Constants.DISPUTE_TIMEOUT_SECONDS);
+        stake.expireSlash(ID);
+        assertEq(uint256(_status(ID)), uint256(SlashStatus.Cancelled));
+    }
+
+    /// The reviewer's single-entry proof, adjusted for F2 (execution waits for the frozen delay).
+    function test_review_reservationSingleEntryAcrossDisputedExits() public {
+        bytes32[4] memory ids = [bytes32("a"), bytes32("b"), bytes32("c"), bytes32("d")];
+        for (uint256 i = 0; i < 4; i++) {
+            _propose(ids[i]);
+        }
+        for (uint256 i = 0; i < 4; i++) {
+            _dispute(ids[i]);
+        }
+        assertEq(stake.stakeOf(provider).pendingSlash, 4_000_000);
+        vm.prank(arbiter);
+        stake.cancelSlash(ids[0]);
+        assertEq(stake.stakeOf(provider).pendingSlash, 3_000_000);
+        vm.prank(arbiter);
+        stake.upholdSlash(ids[1]);
+        vm.warp(stake.slashRecordOf(ids[1]).executableAt);
+        stake.executeSlash(ids[1]);
+        assertEq(stake.stakeOf(provider).pendingSlash, 2_000_000);
+        vm.prank(arbiter);
+        stake.upholdSlash(ids[2]);
+        vm.prank(admin);
+        stake.cancelSlash(ids[2]);
+        assertEq(stake.stakeOf(provider).pendingSlash, 1_000_000);
+        vm.warp(stake.slashRecordOf(ids[3]).disputedAt + Constants.DISPUTE_TIMEOUT_SECONDS);
+        stake.expireSlash(ids[3]);
+        assertEq(stake.stakeOf(provider).pendingSlash, 0);
+        for (uint256 i = 0; i < 4; i++) {
+            vm.expectRevert(SlashNotPending.selector);
+            stake.expireSlash(ids[i]);
+            vm.prank(admin);
+            vm.expectRevert(SlashNotPending.selector);
+            stake.cancelSlash(ids[i]);
+            vm.prank(provider);
+            vm.expectRevert(SlashNotPending.selector);
+            stake.disputeSlash(ids[i]);
+        }
+    }
+
+    /// The per-record ArbiterIsVerifier check, in the batch form.
+    function test_review_I4_theBatchKeepsThePerRecordArbiterIsVerifierCheck() public {
+        _arbiterAlsoEnrolledAsVerifier();
+        _proposeSignedBy(ID, ARB_PK);
+        _dispute(ID);
+        bytes32[] memory one = new bytes32[](1);
+        one[0] = ID;
+        vm.prank(vm.addr(ARB_PK));
+        vm.expectRevert(ArbiterIsVerifier.selector);
+        stake.upholdSlashBatch(one);
     }
 }
