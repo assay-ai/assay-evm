@@ -434,12 +434,17 @@ contract UpgradeTest is Fixture {
     function test_theConfigFunctionSurfaceIsPinnedByName() public view {
         // D-17 added the owner surface (owner, pendingOwner, transferOwnership, acceptOwnership,
         // renounceOwnership — which always reverts — setAdmin and initializeV2); D-18 removed
-        // verifierExpiry.
-        string[23] memory expected = [
+        // verifierExpiry. The dispute upgrade added the arbiter, the blocklist and the slash delay
+        // (arbiter, setArbiter, blocked, setBlocked, assertActive, slashDelaySeconds,
+        // setSlashDelay).
+        string[30] memory expected = [
             "UPGRADE_INTERFACE_VERSION()",
             "acceptOwnership()",
             "admin()",
+            "arbiter()",
+            "assertActive(address,address,address)",
             "assertCanSign(address)",
+            "blocked(address)",
             "canSign(address)",
             "initialize((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address,address)",
             "initializeV2()",
@@ -452,31 +457,40 @@ contract UpgradeTest is Fixture {
             "renounceOwnership()",
             "revokeVerifier(address)",
             "setAdmin(address)",
+            "setArbiter(address)",
+            "setBlocked(address,bool)",
             "setPaused(bool)",
+            "setSlashDelay(uint64)",
+            "slashDelaySeconds()",
             "slashProviderBps()",
             "transferOwnership(address)",
             "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)",
             "upgradeToAndCall(address,bytes)",
             "verifierKey(address)",
-            "" // the 23rd slot is deliberately empty: a 23rd function makes this test red
+            "" // the 30th slot is deliberately empty: a 30th function makes this test red
         ];
-        string[] memory dyn = new string[](23);
-        for (uint256 i = 0; i < 23; i++) {
+        string[] memory dyn = new string[](30);
+        for (uint256 i = 0; i < 30; i++) {
             dyn[i] = expected[i];
         }
-        _assertSurface("X402Config", 22, dyn);
+        _assertSurface("X402Config", 29, dyn);
     }
 
     function test_theStakeFunctionSurfaceIsPinnedByName() public view {
-        string[25] memory expected = [
+        // The dispute upgrade added disputeSlash, upholdSlash and their batch forms, and
+        // cancelSlashBatch.
+        string[30] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
             "UPGRADE_INTERFACE_VERSION()",
             "bondedOf(address)",
             "cancelSlash(bytes32)",
+            "cancelSlashBatch(bytes32[])",
             "depositStake(uint64)",
             "depositStakeFor(address,uint64)",
+            "disputeSlash(bytes32)",
+            "disputeSlashBatch(bytes32[])",
             "eip712Domain()",
             "executeSlash(bytes32)",
             "expireSlash(bytes32)",
@@ -491,11 +505,13 @@ contract UpgradeTest is Fixture {
             "totalStaked()",
             "totalWithdrawn()",
             "upgradeToAndCall(address,bytes)",
+            "upholdSlash(bytes32)",
+            "upholdSlashBatch(bytes32[])",
             "withdrawStake(uint64)",
             "withdrawableOf(address)",
-            "" // the 25th slot is deliberately empty: a 25th function makes this test red
+            "" // the 30th slot is deliberately empty: a 30th function makes this test red
         ];
-        _assertSurface("X402Stake", 24, _dyn25(expected));
+        _assertSurface("X402Stake", 29, _dyn30(expected));
     }
 
     /// Both directions, as the escrow's pin does them: nothing exported that is not on the list,
@@ -528,9 +544,9 @@ contract UpgradeTest is Fixture {
         }
     }
 
-    function _dyn25(string[25] memory a) internal pure returns (string[] memory out) {
-        out = new string[](25);
-        for (uint256 i = 0; i < 25; i++) {
+    function _dyn30(string[30] memory a) internal pure returns (string[] memory out) {
+        out = new string[](30);
+        for (uint256 i = 0; i < 30; i++) {
             out[i] = a[i];
         }
     }

@@ -40,4 +40,19 @@ interface IX402Config {
     /// `VerifierKey::assert_can_sign` — `state.rs:248`. Reverts `VerifierRevoked` or
     /// `VerifierKeyExpired` rather than returning false, so a caller cannot ignore it.
     function assertCanSign(address verifier) external view;
+
+    /// The dispute arbiter (EVM only): rules on `X402Stake.upholdSlash` and may `cancelSlash`.
+    /// A person's wallet or a Safe, never the backend. `address(0)` means none.
+    function arbiter() external view returns (address);
+
+    /// The delay `X402Stake.proposeSlash` freezes into a new record's `executableAt`, and so the
+    /// provider's dispute window. `Constants.SLASH_DELAY_SECONDS` until the admin sets it.
+    function slashDelaySeconds() external view returns (uint64);
+
+    /// Whether the blocklist names `account`.
+    function blocked(address account) external view returns (bool);
+
+    /// Reverts `ProgramPaused` while paused, then `AddressBlocked` if any of the three is blocked.
+    /// One call per guarded door; pass `address(0)` for an unused slot.
+    function assertActive(address a, address b, address c) external view;
 }

@@ -227,8 +227,8 @@ contract X402EscrowRedeemTest is Fixture {
         _redeem(v);
     }
 
-    /// The second door this task opens. Deliberately NOT pause-gated: lowering a limit is the
-    /// safety direction and an admin key must never be able to stop a buyer tightening their own.
+    /// The second door this task opens. Pause-gated since D-19 (the owner's decision; it was
+    /// "deliberately NOT pause-gated" before — `Pause.t.sol` carries the matrix).
     function test_happyPath_setLimitsWritesTheBuyersOwnCeilingsAndNobodyElses() public {
         vm.expectEmit(true, true, true, true, address(escrow));
         emit EscrowLimitsSet(buyer, 42, 4_242);
@@ -241,8 +241,9 @@ contract X402EscrowRedeemTest is Fixture {
 
         _setPaused(true);
         vm.prank(buyer);
-        escrow.setLimits(1, 2); // a paused program cannot stop a buyer tightening
-        assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 1);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.setLimits(1, 2); // D-19: a paused program refuses the limits door too
+        assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 42);
     }
 
     function test_wrongState_setLimitsRefusesAWriteThatChangesNothing() public {

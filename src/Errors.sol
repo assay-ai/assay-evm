@@ -16,7 +16,7 @@ pragma solidity 0.8.24;
 /// # The accounting against `error.rs`, in full
 ///
 /// `error.rs` declares **55** `ErrorCode` variants. **47** of them appear below under the same
-/// name, and **34** errors below have no Anchor counterpart at all. The remaining **8** are
+/// name, and **41** errors below have no Anchor counterpart at all. The remaining **8** are
 /// absent, and named here so that "the port is complete" is a claim a reader can check. (The
 /// counts are the output of a set difference over the two files, as `script/check-errors.sh`
 /// computes it; if you change either file, redo it rather than adjusting these by one.)
@@ -39,10 +39,11 @@ pragma solidity 0.8.24;
 /// `DestinationIsVault`), with `WalletCheckUnderfunded` (EIP-1271) and `Permit2NotConfigured`
 /// (the Permit2 deposit), whose doors went. `docs/divergences.md` carries the history.
 ///
-/// The 34 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+/// The 41 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
 /// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
 /// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
-/// voucher delegation, and the four of the owner/admin split and the seq jump cap.
+/// voucher delegation, the four of the owner/admin split and the seq jump cap, and the seven of
+/// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay).
 ///
 /// The six PDA seed constants in `constants.rs:5-60` have no counterpart in `Constants.sol` for
 /// the same kind of reason; that omission is recorded there, not here.
@@ -222,3 +223,20 @@ error SlashAlreadyExists();
 error SlashNotYetExecutable();
 error SlashExecutionWindowClosed();
 error SlashNotExpired();
+// --- dispute, arbiter, blocklist, slash delay (EVM only) -------------------------
+/// `disputeSlash` from anybody but the record's `provider`.
+error NotSlashedProvider();
+/// `disputeSlash` at or after the record's `executableAt`: the dispute window is the delay.
+error DisputeWindowClosed();
+/// `upholdSlash` on a record that is not `Disputed`.
+error SlashNotDisputed();
+/// `upholdSlash` from anybody but `X402Config.arbiter()`.
+error NotArbiter();
+/// `upholdSlash` by an arbiter that is the record's own verifier: the key that judged may not
+/// also rule on the dispute of that judgement.
+error ArbiterIsVerifier();
+/// A party `X402Config.blocked()` names, at a door the blocklist closes.
+error AddressBlocked();
+/// `setSlashDelay` below `MIN_SLASH_DELAY_SECONDS`, or so long that `unbondingPeriodSeconds`
+/// no longer covers the delay plus `SLASH_PATH_MARGIN_SECONDS`.
+error InvalidSlashDelay();

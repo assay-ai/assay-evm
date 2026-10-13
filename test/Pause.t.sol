@@ -13,34 +13,30 @@ import "../src/Errors.sol";
 
 /// **The pause matrix, asserted — both halves of it.**
 ///
-/// The `yes` rows are routine. **The `never` rows are the ones that matter:** an admin key that
-/// could freeze an owner's exit is exactly what the pause rule was written to prevent,
-/// and each of these tests is what stops a future edit adding a `whenNotPaused` where none
-/// belongs. `set_paused.rs:14-21` draws the same line: pause stops money coming IN and stops the
-/// platform collecting; it never stops an owner taking their own money OUT.
+/// **The rule changed in the dispute upgrade, by the owner's explicit decision.** Until then the
+/// owner exits (`withdraw`, `requestWithdraw`, `setLimits`, the stake top-up and exit) were
+/// pinned here as **never** paused, after `set_paused.rs:14-21`. They are now closed by the
+/// pause too. What stays open is what only reduces risk or releases a hold. The pause still
+/// moves nobody's money — there is no seize and no sweep — so every closed exit reopens on
+/// unpause with its balance untouched (`test_aPausedExitReopensWithTheBalanceUntouched`).
 ///
 /// | Function | Pause closes it? |
 /// |---|---|
 /// | `X402Escrow.deposit` / `depositFor` | **yes** |
 /// | `X402Escrow.redeemVoucher` / `redeemVoucherBatch` | **yes** |
+/// | `X402Escrow.withdraw` / `requestWithdraw` / `requestWithdrawBySig` | **yes** (since the dispute upgrade) |
+/// | `X402Escrow.setLimits` / `setLimitsBySig` | **yes** (since the dispute upgrade) |
+/// | `X402Escrow.authorizeDelegate` / `authorizeDelegateBySig` | **yes** (since the dispute upgrade) |
+/// | `X402Stake.depositStake` / `depositStakeFor` | **yes** (since the dispute upgrade) |
+/// | `X402Stake.requestUnstake` / `withdrawStake` | **yes** (since the dispute upgrade) |
 /// | `X402Stake.proposeSlash` / `executeSlash` | **yes** |
-/// | `X402Escrow.withdraw` | **never** |
-/// | `X402Escrow.requestWithdraw` / `requestWithdrawBySig` | **never** |
-/// | `X402Escrow.setLimits` / `setLimitsBySig` | **never** |
-/// | `X402Stake.depositStake` / `depositStakeFor` | **never** |
-/// | `X402Stake.requestUnstake` / `withdrawStake` | **never** |
-/// | `X402Stake.cancelSlash` / `expireSlash` | **never** |
-/// | `upgradeToAndCall` on any of the three proxies | **never** |
-///
-/// Two of those rows are worth their reasons in full.
-///
-/// **`depositStake` is never paused**, matching `deposit_stake.rs`, which has no pause check.
-/// Pausing a provider's own top-up would strand exactly the provider trying to cure an
-/// under-stake, and a deposit can only ever increase what the provider owns.
+/// | `X402Escrow.revokeDelegate` / `revokeDelegateBySig` | **never** |
+/// | `X402Stake.disputeSlash` / `upholdSlash` / `cancelSlash` / `expireSlash` | **never** |
+/// | the config roles' own calls, and `upgradeToAndCall` on any of the three proxies | **never** |
 ///
 /// **`upgradeToAndCall` is never paused.** Pause is the first half of an emergency and the
 /// upgrade is usually the second; a pause that blocked the fix would be a foot-gun.
-/// `_authorizeUpgrade` checks the admin and nothing else (D-1).
+/// `_authorizeUpgrade` checks the owner and nothing else (D-1, D-17).
 contract PauseTest is Fixture {
     uint256 internal verifierKeyPk = 0x7E5717;
     address internal verifierAddr;
@@ -133,93 +129,121 @@ contract PauseTest is Fixture {
         stake.executeSlash(bytes32("p1"));
     }
 
-    // === the rows that NEVER close ===========================================================
-
-    /// **The extortion row.** A buyer who has asked for their money back gets it while the
-    /// program is paused. If this test ever needs changing, the change is wrong.
-    function test_pauseNeverClosesTheBuyersExit() public {
+    /// The exit and the buyer's own controls, closed since the dispute upgrade.
+    function test_pauseClosesTheBuyersExitAndControls() public {
         vm.prank(buyer);
         escrow.requestWithdraw(5_000_000);
         uint64 availableAt = escrow.escrowOf(buyer).withdrawAvailableAt;
-
-        _pause();
-
-        vm.warp(availableAt);
-        vm.prank(buyer);
-        escrow.withdraw();
-        assertEq(usdg.balanceOf(buyer), 50_000_000 + 5_000_000, "paid while paused");
-    }
-
-    /// Starting the exit clock is also never closed — otherwise pause would merely postpone the
-    /// exit by however long the pause lasted, which is the same extortion with an extra step.
-    function test_pauseNeverClosesTheRequestThatStartsTheExitClock() public {
-        _pause();
-
-        vm.prank(buyer);
-        escrow.requestWithdraw(1_000_000);
-        assertEq(escrow.escrowOf(buyer).withdrawRequested, 1_000_000);
-
-        // …including the relayed form, which is the door a buyer with no gas has. The direct
-        // request above consumed a nonce (D-18), so the relayed one is signed at the next.
         uint64 n = escrow.escrowOf(buyer).authNonce;
         uint64 deadline = uint64(block.timestamp) + 600;
-        bytes memory sig = VoucherSigner.signRequestWithdraw(
+        bytes memory rwSig = VoucherSigner.signRequestWithdraw(
             buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000_000, n, deadline
         );
-        escrow.requestWithdrawBySig(buyer, 2_000_000, n, deadline, sig);
-        assertEq(escrow.escrowOf(buyer).withdrawRequested, 2_000_000);
-    }
-
-    /// A buyer LOWERING their own ceiling while paused must not be blocked: it is the one control
-    /// a buyer has over an escrow they suspect, and `set_paused.rs:14-21` puts it on the same side
-    /// of the line as the exit.
-    function test_pauseNeverClosesTheBuyersOwnLimits() public {
-        _pause();
-
-        vm.prank(buyer);
-        escrow.setLimits(1, 2);
-        assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 1);
-
-        uint64 n = escrow.escrowOf(buyer).authNonce; // the direct call consumed one (D-18)
-        uint64 deadline = uint64(block.timestamp) + 600;
-        bytes memory sig = VoucherSigner.signSetLimits(
+        bytes memory slSig = VoucherSigner.signSetLimits(
             buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 3, 4, n, deadline
         );
-        escrow.setLimitsBySig(buyer, 3, 4, n, deadline, sig);
-        assertEq(escrow.escrowOf(buyer).maxPerWindow, 4);
-    }
+        address delegate = address(0xDE1E);
+        uint64 until = uint64(block.timestamp) + 86_400;
+        bytes memory adSig = VoucherSigner.signAuthorizeDelegate(
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, delegate, 1, 2, until, n, deadline
+        );
 
-    /// Parity with `deposit_stake.rs`, which has no pause check: pausing a provider's own top-up
-    /// would strand the provider trying to CURE an under-stake, and a deposit can only ever
-    /// increase what the provider owns.
-    function test_pauseNeverClosesAProvidersOwnStakeTopUp() public {
-        _stakeAndEnrol();
         _pause();
+        vm.warp(availableAt);
 
-        _fund(provider, 1_000_000);
-        vm.startPrank(provider);
-        usdg.approve(address(stake), 1_000_000);
-        stake.depositStake(1_000_000);
+        vm.startPrank(buyer);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.withdraw();
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.requestWithdraw(1_000_000);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.setLimits(1, 2);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.authorizeDelegate(delegate, 1, 2, until);
         vm.stopPrank();
 
-        _fund(address(this), 1_000_000);
-        usdg.approve(address(stake), 1_000_000);
-        stake.depositStakeFor(provider, 1_000_000);
-
-        assertEq(stake.bondedOf(provider), BOND + 2_000_000);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.requestWithdrawBySig(buyer, 2_000_000, n, deadline, rwSig);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.setLimitsBySig(buyer, 3, 4, n, deadline, slSig);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.authorizeDelegateBySig(buyer, delegate, 1, 2, until, n, deadline, adSig);
     }
 
-    /// The provider's exit, the mirror of the buyer's.
-    function test_pauseNeverClosesTheProvidersExit() public {
+    /// Every stake door except the four slash-lifecycle releases, closed.
+    function test_pauseClosesEveryStakeDoor() public {
         _stakeAndEnrol();
-        _pause();
+        vm.prank(provider);
+        stake.requestUnstake(BOND / 2);
+        _fund(provider, 1_000_000);
+        vm.prank(provider);
+        usdg.approve(address(stake), 1_000_000);
 
+        _pause();
+        vm.warp(block.timestamp + config.params().unbondingPeriodSeconds);
+
+        vm.startPrank(provider);
+        vm.expectRevert(ProgramPaused.selector);
+        stake.depositStake(1_000_000);
+        vm.expectRevert(ProgramPaused.selector);
+        stake.depositStakeFor(provider, 1_000_000);
+        vm.expectRevert(ProgramPaused.selector);
+        stake.requestUnstake(1);
+        vm.expectRevert(ProgramPaused.selector);
+        stake.withdrawStake(1);
+        vm.stopPrank();
+    }
+
+    /// **Pause never moves the money.** Both exits refused while paused land in full after the
+    /// unpause, from the same balances.
+    function test_aPausedExitReopensWithTheBalanceUntouched() public {
+        _stakeAndEnrol();
+        vm.prank(buyer);
+        escrow.requestWithdraw(5_000_000);
         vm.prank(provider);
         stake.requestUnstake(BOND);
+
+        _pause();
         vm.warp(block.timestamp + config.params().unbondingPeriodSeconds);
+        vm.prank(buyer);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.withdraw();
+        assertEq(escrow.escrowOf(buyer).balance, 50_000_000, "the escrow balance is untouched");
+        assertEq(stake.stakeOf(provider).unbonding, BOND, "the stake is untouched");
+
+        vm.prank(admin);
+        config.setPaused(false);
+        vm.prank(buyer);
+        escrow.withdraw();
         vm.prank(provider);
         stake.withdrawStake(BOND);
+        assertEq(usdg.balanceOf(buyer), 50_000_000 + 5_000_000);
         assertEq(usdg.balanceOf(provider), BOND);
+    }
+
+    // === the rows that NEVER close ===========================================================
+
+    /// Revoking a delegate only removes authority, so the pause never closes it, in either form.
+    function test_pauseNeverClosesTheDelegateRevocation() public {
+        address d1 = address(0xDE11);
+        address d2 = address(0xDE12);
+        uint64 until = uint64(block.timestamp) + 86_400;
+        vm.startPrank(buyer);
+        escrow.authorizeDelegate(d1, 1, 2, until);
+        escrow.authorizeDelegate(d2, 1, 2, until);
+        vm.stopPrank();
+
+        uint64 n = escrow.escrowOf(buyer).authNonce + 1; // the direct revoke below consumes one
+        uint64 deadline = uint64(block.timestamp) + 600;
+        bytes memory sig = VoucherSigner.signRevokeDelegate(
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, d2, n, deadline
+        );
+
+        _pause();
+        vm.prank(buyer);
+        escrow.revokeDelegate(d1);
+        escrow.revokeDelegateBySig(buyer, d2, n, deadline, sig);
+        assertEq(escrow.delegatesOf(buyer).length, 0);
     }
 
     /// **Releasing a hold is never closed either**, and it is the subtlest row: a pause that

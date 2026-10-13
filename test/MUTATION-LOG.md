@@ -1591,6 +1591,16 @@ so the campaign lands nothing at all.
 
 ### The pause matrix
 
+> **Changed deliberately in D-19 (the dispute upgrade), by the owner's explicit decision.** The
+> exit rows below (`test_pauseNeverClosesTheBuyersExit`,
+> `test_pauseNeverClosesTheRequestThatStartsTheExitClock`, `test_pauseNeverClosesTheBuyersOwnLimits`,
+> `test_pauseNeverClosesAProvidersOwnStakeTopUp`, `test_pauseNeverClosesTheProvidersExit`) said
+> "if this test ever needs changing, the change is wrong"; the owner overrode that rule, and they
+> were replaced by `test_pauseClosesTheBuyersExitAndControls`, `test_pauseClosesEveryStakeDoor`
+> and `test_aPausedExitReopensWithTheBalanceUntouched` (the pause still moves no money). The
+> release rows, the upgrade row and the new `test_pauseNeverClosesTheDelegateRevocation` /
+> `X402Stake.dispute.t.sol::test_pauseNeverClosesTheDispute` stand. The text below is the history.
+
 Not mutation rows — the `never` half of the matrix is proved by tests that would fail if a
 `whenNotPaused` were *added*, which is the opposite direction from a deleted guard. The rows that
 matter, and what each refuses:

@@ -164,36 +164,39 @@ contract X402EscrowBySigTest is Fixture {
         assertEq(escrow.escrowOf(buyer).withdrawAvailableAt, 0);
     }
 
-    /// Neither of these is pause-gated: an admin key must not be able to stop a buyer
-    /// tightening a limit or starting a withdrawal clock.
-    function test_pauseDoesNotCloseTheSafetyDirection() public {
+    /// D-19 (the owner's decision): the pause closes both doors and both relayed twins, and
+    /// consumes no nonce. Was `test_pauseDoesNotCloseTheSafetyDirection`.
+    function test_pauseClosesTheLimitsAndTheWithdrawalClock() public {
+        uint64 deadline = uint64(block.timestamp) + 600;
+        bytes memory s1 = VoucherSigner.signSetLimits(
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2, 2, 0, deadline
+        );
+        bytes memory s2 = VoucherSigner.signRequestWithdraw(
+            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000, 0, deadline
+        );
         vm.prank(admin);
         config.setPaused(true);
 
         vm.startPrank(buyer);
+        vm.expectRevert(ProgramPaused.selector);
         escrow.setLimits(1, 1);
+        vm.expectRevert(ProgramPaused.selector);
         escrow.requestWithdraw(1_000);
         vm.stopPrank();
 
-        // And neither are the RELAYED twins — a buyer without gas is exactly the buyer an
-        // incident strands, so the pause must not close their door either.
-        uint64 deadline = uint64(block.timestamp) + 600;
-        bytes memory s1 = VoucherSigner.signSetLimits(
-            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2, 2, 2, deadline
-        );
-        // nonce 2: the two direct decisions above consumed 0 and 1 (D-18).
-        vm.prank(relayer);
-        escrow.setLimitsBySig(buyer, 2, 2, 2, deadline, s1);
+        vm.startPrank(relayer);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.setLimitsBySig(buyer, 2, 2, 0, deadline, s1);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.requestWithdrawBySig(buyer, 2_000, 0, deadline, s2);
+        vm.stopPrank();
 
-        bytes memory s2 = VoucherSigner.signRequestWithdraw(
-            buyerKey, escrow.DOMAIN_SEPARATOR(), buyer, 2_000, 3, deadline
-        );
+        assertEq(escrow.escrowOf(buyer).authNonce, 0, "a refused call consumes nothing");
+        vm.prank(admin);
+        config.setPaused(false);
         vm.prank(relayer);
-        escrow.requestWithdrawBySig(buyer, 2_000, 3, deadline, s2);
-
-        assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 2);
+        escrow.requestWithdrawBySig(buyer, 2_000, 0, deadline, s2);
         assertEq(escrow.escrowOf(buyer).withdrawRequested, 2_000);
-        assertTrue(config.paused(), "the pause was live for every call above");
     }
 
     function test_wrongState_settingTheSameLimitsTwiceIsRefused() public {

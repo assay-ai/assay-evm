@@ -12,7 +12,8 @@ import {Constants} from "./Constants.sol";
 import {IX402Config} from "./interfaces/IX402Config.sol";
 import "./Errors.sol";
 
-/// Parameters, the two roles (owner and admin), the pause flag and the verifier registry.
+/// Parameters, the three roles (owner, admin, arbiter), the pause flag, the verifier registry,
+/// the address blocklist and the slash delay.
 ///
 /// The port of `state.rs::Config` minus everything that is Solana bookkeeping. What was left
 /// behind, and where it went:
@@ -42,7 +43,11 @@ import "./Errors.sol";
 ///   power over user money is the upgrade itself.
 /// - **`admin`** — operational and used often: `updateConfig`, `setPaused`, the verifier registry,
 ///   and `cancelSlash` on X402Stake. Every value it sets is bounded by `_validate`.
-///   It can neither upgrade anything nor appoint its successor.
+///   It can neither upgrade anything nor appoint its successor. It appoints the arbiter
+///   (`setArbiter`), sets the slash delay (`setSlashDelay`) and blocks or unblocks addresses.
+/// - **`arbiter`** — a person's wallet (or a Safe), never the backend. It rules on a disputed
+///   slash (`X402Stake.upholdSlash`), cancels a pending or disputed one (`cancelSlash`, beside
+///   the admin) and may BLOCK an address — never unblock it. `address(0)` means no arbiter.
 ///
 /// The owner's storage is ERC-7201 namespaced (`openzeppelin.storage.Ownable` and
 /// `openzeppelin.storage.Ownable2Step`), so adopting it appends no sequential slot.
@@ -265,7 +270,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// `penaltyAmount` is checked nowhere, deliberately: `state.rs:68-75` leaves it unbounded at
     /// both ends — `0` is on-chain shadow mode, and what bounds the damage above is
     /// `slashCapBps`, a fraction of the provider's own stake.
-    function _validate(ParamSet memory p) internal pure {
+    function _validate(ParamSet memory p) internal view {
         if (p.treasury == address(0)) revert MissingBeneficiary();
         if (p.redeemer == address(0)) revert MissingRedeemer();
         if (p.takeRateBps > Constants.MAX_TAKE_RATE_BPS) revert InvalidTakeRateBps();
@@ -284,6 +289,13 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         if (p.unbondingPeriodSeconds > Constants.MAX_UNBONDING_PERIOD_SECONDS) {
             revert UnbondingPeriodTooLong();
         }
+        // The "longest path" of `MIN_UNBONDING_PERIOD_SECONDS`, with the LIVE slash delay in it.
+        // At the default delay this is the line above; it binds only after `setSlashDelay`
+        // raised the delay. `setSlashDelay` checks the same inequality from the other side.
+        if (
+            uint256(p.unbondingPeriodSeconds)
+                < uint256(slashDelaySeconds()) + Constants.SLASH_PATH_MARGIN_SECONDS
+        ) revert UnbondingPeriodTooShort();
         if (p.minimumStake == 0) revert InvalidMinimumStake();
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
     }
@@ -494,6 +506,76 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         if (block.timestamp > k.expiresAt) revert VerifierKeyExpired();
     }
 
+    // -------------------------------------------------------------------------------------
+    // the dispute upgrade — arbiter, slash delay, blocklist (EVM only)
+    // -------------------------------------------------------------------------------------
+
+    /// The arbiter (see the contract header). Appended storage, paid for out of `__gap`.
+    address public override arbiter;
+
+    /// The admin-set slash delay; `0` means never set, which reads back as the default. Packed
+    /// beside `arbiter`, one slot for both.
+    uint64 internal _slashDelaySeconds;
+
+    /// The blocklist. One mapping, one slot. Read by the money contracts through
+    /// [`assertActive`]; nothing here can move a blocked party's funds.
+    mapping(address => bool) internal _blocked;
+
+    event ArbiterSet(address indexed previousArbiter, address indexed newArbiter);
+    event SlashDelaySet(uint64 previousDelay, uint64 newDelay);
+    event BlockedSet(address indexed account, bool blocked, address indexed by);
+
+    /// `address(0)` removes the arbiter: disputes then wait for the admin's cancel or for
+    /// `DISPUTE_TIMEOUT_SECONDS`, and nothing can uphold one.
+    function setArbiter(address newArbiter) external onlyAdmin {
+        emit ArbiterSet(arbiter, newArbiter);
+        arbiter = newArbiter;
+    }
+
+    /// The delay a NEW proposal waits before `executeSlash`, and so the provider's dispute
+    /// window. A record already proposed keeps the `executableAt` frozen into it.
+    ///
+    /// Reads back as `Constants.SLASH_DELAY_SECONDS` until set, so an upgraded proxy keeps 72
+    /// hours with no initializer call.
+    function slashDelaySeconds() public view override returns (uint64) {
+        uint64 d = _slashDelaySeconds;
+        return d == 0 ? Constants.SLASH_DELAY_SECONDS : d;
+    }
+
+    /// Bounded below by `MIN_SLASH_DELAY_SECONDS` and above by the live unbonding period minus
+    /// `SLASH_PATH_MARGIN_SECONDS`, so a provider can never finish unbonding inside the path from
+    /// breach to executed penalty (`MIN_UNBONDING_PERIOD_SECONDS`'s invariant, kept).
+    function setSlashDelay(uint64 newDelay) external onlyAdmin {
+        if (
+            newDelay < Constants.MIN_SLASH_DELAY_SECONDS
+                || uint256(newDelay) + Constants.SLASH_PATH_MARGIN_SECONDS
+                    > _params.unbondingPeriodSeconds
+        ) revert InvalidSlashDelay();
+        emit SlashDelaySet(slashDelaySeconds(), newDelay);
+        _slashDelaySeconds = newDelay;
+    }
+
+    function blocked(address account) external view override returns (bool) {
+        return _blocked[account];
+    }
+
+    /// The admin blocks and unblocks; the arbiter may only block. Blocking stops the address at
+    /// every door [`assertActive`] guards and moves none of its money.
+    function setBlocked(address account, bool value) external {
+        if (msg.sender != admin && (!value || msg.sender != arbiter)) revert NotAdmin();
+        if (account == address(0)) revert ZeroAddress();
+        _blocked[account] = value;
+        emit BlockedSet(account, value, msg.sender);
+    }
+
+    /// The one check the money contracts make at every door the pause or the blocklist closes:
+    /// not paused, and none of up to three parties blocked. Unused slots are `address(0)`, which
+    /// can never be blocked.
+    function assertActive(address a, address b, address c) external view override {
+        if (paused) revert ProgramPaused();
+        if (_blocked[a] || _blocked[b] || _blocked[c]) revert AddressBlocked();
+    }
+
     /// The append budget the D-7 upgrade-safety gate spends. Every contract here ends with
     /// one, and adding a field means shrinking it by exactly the slots the field consumes.
     ///
@@ -504,5 +586,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     ///
     /// **Unchanged by D-17**: the owner role's storage is ERC-7201 namespaced
     /// (`openzeppelin.storage.Ownable`, `openzeppelin.storage.Ownable2Step`), not a slot here.
-    uint256[49] private __gap;
+    ///
+    /// **49 → 47 for the dispute upgrade**: `arbiter` + `_slashDelaySeconds` share one slot and
+    /// `_blocked` is one mapping slot.
+    uint256[47] private __gap;
 }

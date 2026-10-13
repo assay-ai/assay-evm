@@ -111,11 +111,18 @@ struct ParamSet {
 /// Anchor's three states keep their order after it. A record leaves `Pending` exactly once and
 /// neither terminal state has an edge back out; that is what keeps the reservation accounting
 /// single-entry.
+///
+/// `Disputed` (EVM only) is appended LAST so every stored discriminant keeps its meaning across
+/// the upgrade. It is not terminal: the provider's `disputeSlash` moves `Pending → Disputed`, and
+/// the record leaves it for `Pending` (`upholdSlash`, the arbiter) or for `Cancelled`
+/// (`cancelSlash`, `expireSlash`). The reservation stays in place throughout, so the accounting
+/// is still single-entry: it is released or paid exactly once, from `Pending` or `Disputed`.
 enum SlashStatus {
     None,
     Pending,
     Executed,
-    Cancelled
+    Cancelled,
+    Disputed
 }
 
 /// attestation.rs's `ResponseClass`, discriminants included.
@@ -136,11 +143,14 @@ enum ResponseClass {
 /// events.rs's `CancelReason`. `Withdrawn` is the admin's decision on an arbitration outcome,
 /// `Expired` is the platform failing to execute its own judgement inside the grace period, and
 /// `VerifierUnavailable` is a revocation reaching through to kill work in flight — which is the
-/// property the whole two-phase design exists to deliver.
+/// property the whole two-phase design exists to deliver. `DisputeUnresolved` (EVM only,
+/// appended last) is a `Disputed` record nobody ruled on within `DISPUTE_TIMEOUT_SECONDS`.
+/// `Withdrawn` now covers the arbiter's cancel as well as the admin's.
 enum CancelReason {
     Withdrawn,
     Expired,
-    VerifierUnavailable
+    VerifierUnavailable,
+    DisputeUnresolved
 }
 
 // The six EIP-712 type strings.

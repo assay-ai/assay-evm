@@ -229,17 +229,31 @@ contract X402StakeTest is Fixture {
         );
     }
 
-    /// Pause never closes an owner's exit, and never closes collateral coming in.
-    function test_pauseClosesNothingOnThisContract() public {
-        vm.prank(admin);
-        config.setPaused(true);
-
+    /// D-19 (the owner's decision): pause now closes the deposit and the exit here too, and
+    /// moves nothing — the same calls land once it lifts. Was `test_pauseClosesNothingOnThisContract`.
+    function test_pauseClosesTheDepositAndTheExitAndMovesNothing() public {
         vm.startPrank(provider);
         stake.depositStake(DEPOSIT);
         stake.requestUnstake(1_000);
+        vm.stopPrank();
+        vm.prank(admin);
+        config.setPaused(true);
         vm.warp(block.timestamp + config.params().unbondingPeriodSeconds);
+
+        vm.startPrank(provider);
+        vm.expectRevert(ProgramPaused.selector);
+        stake.depositStake(DEPOSIT);
+        vm.expectRevert(ProgramPaused.selector);
+        stake.requestUnstake(1_000);
+        vm.expectRevert(ProgramPaused.selector);
         stake.withdrawStake(1_000);
         vm.stopPrank();
+
+        vm.prank(admin);
+        config.setPaused(false);
+        vm.prank(provider);
+        stake.withdrawStake(1_000);
+        assertEq(stake.stakeOf(provider).unbonding, 0);
     }
 
     /// The pull is MEASURED, never trusted: a fee-on-transfer asset credits less than the

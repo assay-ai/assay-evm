@@ -28,10 +28,32 @@ library Constants {
     // --- delays and windows ----------------------------------------------------------------
 
     /// constants.rs:266 — `SLASH_DELAY_SECONDS: i64 = 72 * 3_600`. The window in which a human
-    /// holding the admin key can see a proposal and revoke the key that signed it. A constant
-    /// rather than a parameter: a delay the admin key could shorten is a delay a stolen admin
-    /// key sets to zero.
+    /// holding the admin key can see a proposal and revoke the key that signed it, and in which
+    /// the provider can `disputeSlash`.
+    ///
+    /// **Since the dispute upgrade this is the DEFAULT, not the delay.** The live value is
+    /// `X402Config.slashDelaySeconds()`, which the admin may set inside
+    /// `[MIN_SLASH_DELAY_SECONDS, unbondingPeriodSeconds - SLASH_PATH_MARGIN_SECONDS]` and which
+    /// reads back as this constant until it is first set — so a proxy upgraded from the earlier
+    /// code keeps 72 hours. A stolen admin key can shorten it to the minimum, never to zero, and
+    /// a proposal's `executableAt` is frozen when it is made.
     uint64 internal constant SLASH_DELAY_SECONDS = 72 * 3600;
+
+    /// EVM only. The shortest settable slash delay (and therefore dispute window). Ten minutes:
+    /// long enough for a test run to dispute, short enough to be useful on a testnet.
+    uint64 internal constant MIN_SLASH_DELAY_SECONDS = 10 * 60;
+
+    /// EVM only. The rest of `MIN_UNBONDING_PERIOD_SECONDS`'s "longest path" once the delay is
+    /// taken out of it: 7d SLA window + 1d execution margin. `X402Config` keeps
+    /// `unbondingPeriodSeconds >= slashDelaySeconds() + this` at both setters, which at the
+    /// default delay is exactly `MIN_UNBONDING_PERIOD_SECONDS`.
+    uint64 internal constant SLASH_PATH_MARGIN_SECONDS =
+        MIN_UNBONDING_PERIOD_SECONDS - SLASH_DELAY_SECONDS;
+
+    /// EVM only. How long a `Disputed` slash may wait for the arbiter. After it, anybody may
+    /// release the reservation with `expireSlash` (`CancelReason.DisputeUnresolved`): a hold
+    /// nobody rules on must not become a hold for ever.
+    uint64 internal constant DISPUTE_TIMEOUT_SECONDS = 30 * 86_400;
 
     /// constants.rs:273 — `WITHDRAW_DELAY_SECONDS: i64 = 3_600`. Sized by the invariant noted
     /// below [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`], not chosen.
@@ -154,6 +176,10 @@ library Constants {
     /// No Anchor counterpart: Solana's 1,232-byte packet limit caps a batch implicitly,
     /// and that limit does not exist here, so the bound has to be written down.
     uint256 internal constant MAX_REDEEM_BATCH = 64;
+
+    /// The bound on `X402Stake`'s `disputeSlashBatch`, `upholdSlashBatch` and `cancelSlashBatch`,
+    /// for `MAX_REDEEM_BATCH`'s reason. EVM only; `docs/gas.md` has the measurement.
+    uint256 internal constant MAX_SLASH_BATCH = 64;
 
     /// The longest horizon a payer may give a voucher DELEGATE in one authorisation. A delegate
     /// key lives on a machine the payer does not watch, so its authority must lapse on its own;
