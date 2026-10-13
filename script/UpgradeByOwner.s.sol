@@ -16,6 +16,7 @@ error ImplementationSlotMismatch(address proxy);
 error DomainSeparatorMoved(address proxy);
 error SampleMoved(address proxy);
 error StateMoved(string what);
+error ConfigMustBeUpgradedFirst(address config);
 
 /// **Every upgrade after D-17, signed by the OWNER** (runbook §7). Two phases, two keys:
 ///
@@ -39,6 +40,13 @@ error StateMoved(string what);
 ///                 that `check-bytecode.sh` / `verify-deployment.sh` matched against the local
 ///                 build (`cast keccak $(cast code $IMPL_<NAME>)`), so the owner signs for exactly
 ///                 the code that was verified and not for whatever address ended up in the env.
+///
+/// **Order (the dispute upgrade, runbook §7.5).** The proxies are always upgraded Config, Stake,
+/// Escrow, in that order. The Stake and Escrow built since the dispute upgrade call
+/// `CONFIG.assertActive`, `CONFIG.slashDelaySeconds` and `CONFIG.arbiter`; upgrading either
+/// behind a Config that lacks them would brick their deposit, exit and slash doors. Both entry
+/// points refuse (`ConfigMustBeUpgradedFirst`) a Stake or Escrow upgrade unless Config is
+/// flagged too or the live Config already answers `slashDelaySeconds()`.
 contract UpgradeByOwner is Script {
     bytes32 internal constant IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -65,6 +73,7 @@ contract UpgradeByOwner is Script {
             bool[3] memory on,
             bytes32[3] memory hashes
         ) = _plan();
+        _assertOrder(proxies[0], on);
         for (uint256 i = 0; i < 3; i++) {
             if (!on[i]) continue;
             _assertImplementation(impls[i], hashes[i]);
@@ -91,6 +100,7 @@ contract UpgradeByOwner is Script {
             bool[3] memory on,
             bytes32[3] memory hashes
         ) = _plan();
+        _assertOrder(proxies[0], on);
         for (uint256 i = 0; i < 3; i++) {
             if (on[i]) _assertImplementation(impls[i], hashes[i]);
         }
@@ -104,6 +114,8 @@ contract UpgradeByOwner is Script {
         uint128 escrowedBefore = escrow.totalEscrowed();
         uint128 stakedBefore = stake.totalStaked();
         address adminBefore = config.admin();
+        bytes32 paramsBefore = keccak256(abi.encode(config.params()));
+        bool pausedBefore = config.paused();
 
         vm.startBroadcast(owner);
         for (uint256 i = 0; i < 3; i++) {
@@ -130,6 +142,21 @@ contract UpgradeByOwner is Script {
         if (stake.totalStaked() != stakedBefore) revert StateMoved("totalStaked");
         if (config.admin() != adminBefore) revert StateMoved("admin");
         if (config.owner() != owner) revert StateMoved("owner");
+        if (keccak256(abi.encode(config.params())) != paramsBefore) revert StateMoved("params");
+        if (config.paused() != pausedBefore) revert StateMoved("paused");
+        // The dispute upgrade's appended Config state, printed for the record: on the first
+        // upgrade past it these read 72 hours and address(0).
+        console2.log("slashDelaySeconds", config.slashDelaySeconds());
+        console2.log("arbiter", config.arbiter());
+    }
+
+    /// See the contract note. `slashDelaySeconds()` is the probe: it exists from the dispute
+    /// upgrade on, and a Config without it lacks `assertActive` and `arbiter` too.
+    function _assertOrder(address config, bool[3] memory on) internal view {
+        if (on[0] || (!on[1] && !on[2])) return;
+        (bool ok, bytes memory ret) =
+            config.staticcall(abi.encodeWithSignature("slashDelaySeconds()"));
+        if (!ok || ret.length != 32) revert ConfigMustBeUpgradedFirst(config);
     }
 
     function _plan()

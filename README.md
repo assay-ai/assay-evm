@@ -26,7 +26,8 @@ Do not use these contracts to hold real funds.
 The three contracts are **upgradeable**. The single upgrade authority is `X402Config.owner()`,
 a cold key (a Ledger, or a Safe in production) that moves in two steps and can never be renounced.
 A separate operational `admin` sets parameters, pauses and runs the verifier registry, and cannot
-upgrade (D-17). Upgrades are **immediate**: there is no timelock and no pending-implementation
+upgrade (D-17). A narrow `arbiter` (a person's wallet or a Safe) rules on a provider's dispute of a
+pending slash and may cancel one or block an address (D-19). Upgrades are **immediate**: there is no timelock and no pending-implementation
 slot (D-1). **No role can move user funds directly.** The contracts have no sweep and no rescue,
 and the owner's upgrade is the only residual power. Risk register §4 and §5 describe the cost.
 
@@ -42,10 +43,12 @@ layout change that cannot be appended, which is exactly the case the layout gate
 ## The three contracts
 
 ```
-X402Config   parameters, the admin, the pause flag, the verifier registry.
+X402Config   parameters, the admin and arbiter, the pause flag, the verifier registry, the
+             address blocklist, the slash delay.
              Holds no token and never gains a function that moves one.
                  ▲                    ▲
-                 │ CONFIG.params()    │ CONFIG.admin(), CONFIG.paused()
+                 │ CONFIG.params()    │ CONFIG.admin(), CONFIG.arbiter()
+                 │ assertActive()     │ assertActive(), slashDelaySeconds()
                  │                    │
 X402Escrow ──────┘                    └────── X402Stake
   buyer money, one pooled balance       provider collateral, the two-phase slash

@@ -373,3 +373,26 @@ refused (`SignatureDeadlineTooFar`). That caps how early a signature can land, n
 lives: one with a far deadline still lands in the hour before it, unless a later decision has
 consumed `authNonce` — which is what actually kills a withheld signature. The cost: a relayed signature still in flight dies when the
 payer acts directly, and must be signed again.
+
+## 18. The dispute upgrade's new powers (D-19)
+
+**A stolen admin key can now hold an exit closed.** Pause refuses `withdraw`, `requestWithdraw`,
+`withdrawStake` and `requestUnstake` (the owner's decision; until D-19 these were never paused),
+and `setBlocked` freezes one address at every door. Neither moves a token — there is no seize and
+no sweep — so the worst case is funds held in place until the owner replaces the admin
+(`setAdmin`) and the fresh admin unpauses or unblocks. Alert on `PauseToggled` and `BlockedSet`.
+
+**A stolen arbiter key** can block addresses (never unblock), cancel any pending or disputed
+slash, and uphold a disputed one — which returns it to the ordinary `executeSlash` with every
+cap and the verifier re-check intact; it chooses no amount and no beneficiary. The admin replaces
+it with `setArbiter`. It is never the verifier of the record it upholds.
+
+**A stolen admin key can shorten the slash delay to 10 minutes** (`setSlashDelay`), which is
+also the provider's dispute window. Records already proposed keep their `executableAt`. Alert on
+`SlashDelaySet`.
+
+**A compromised backend (verifier key) can no longer take a provider who disputes.** It can
+still reserve stake and freeze an exit (§11), now for up to `DISPUTE_TIMEOUT_SECONDS` (30 days)
+after a dispute nobody rules on, instead of the ten days of §11; the arbiter's `cancelSlash` or
+a `revokeVerifier` ends it at once.
+
