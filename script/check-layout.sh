@@ -168,6 +168,7 @@ check_struct_size() {  # <contract> <struct label> <expected bytes> <why>
 }
 check_struct_size X402Escrow "struct X402Escrow.Escrow" 128 "four slots — D-4"
 check_struct_size X402Stake "struct X402Stake.ProviderStake" 128 "four slots — the designed packing"
+check_struct_size X402Stake "struct X402Stake.SlashRecord" 192 "six slots — disputedAt appended as slot 5 (D-19)"
 
 [ $rc -eq 0 ] && echo "layout OK"
 exit $rc

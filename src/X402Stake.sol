@@ -28,13 +28,13 @@ import "./Errors.sol";
 /// verifier's EIP-712 `verifyingContract`, so an upgrade does not invalidate an attestation
 /// that is already in flight.
 ///
-/// **Pause closes nothing on this contract's deposit and exit half.** `deposit_stake.rs` has no
-/// pause
-/// check and neither does `depositStakeFor`: pausing a provider's own top-up would strand a
-/// provider trying to cure an under-stake. `requestUnstake` and `withdrawStake` are owner exits,
-/// and `withdraw_stake.rs:14-16` states the rule for them — "a pause that could hold a
-/// provider's own capital would be worth more to whoever stole the admin key than the slashing
-/// machinery it exists to halt".
+/// **Pause closes the deposit and exit half too, since the dispute upgrade** — a deliberate
+/// reversal, by the owner's decision, of the earlier rule (and of `withdraw_stake.rs:14-16`)
+/// that owner exits are never paused. `depositStake(For)`, `requestUnstake` and `withdrawStake`
+/// call `CONFIG.assertActive`, which refuses while paused and refuses a blocked provider (or
+/// funder). What stays open while paused is what only releases or freezes a hold:
+/// `disputeSlash`, `cancelSlash`, `expireSlash`, and `upholdSlash` (which moves no money). The
+/// pause still moves nobody's funds anywhere; there is no seize and no sweep.
 contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -149,16 +149,15 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// it bites only once it exceeds the bonded balance: the reserved portion has to sit
     /// somewhere and where it sits is not the claimant's business.
     ///
-    /// Saturating like the Rust `saturating_sub`. `pendingSlash <= atRisk` is an invariant of
-    /// this contract's four writers, but this is a view a guard reads and it must not be the
-    /// thing that panics.
+    /// **Checked, not saturating** (audit F R2): `pendingSlash <= atRisk` holds on every
+    /// reachable state (the trace is at [`proposeSlash`]), so a broken invariant reverts here
+    /// rather than being reported as a zero.
     function withdrawableOf(address provider) public view returns (uint64) {
         ProviderStake storage s = stakes[provider];
         uint64 period = CONFIG.params().unbondingPeriodSeconds;
         if (s.unbonding == 0) return 0;
         if (block.timestamp < uint256(s.unbondingStartedAt) + period) return 0;
-        uint128 atRisk = _atRisk(s);
-        uint128 free = atRisk > s.pendingSlash ? atRisk - s.pendingSlash : 0;
+        uint128 free = _atRisk(s) - s.pendingSlash;
         uint128 capped = s.unbonding < free ? s.unbonding : free;
         return Cast.toUint64(capped); // <= s.unbonding, which is uint64
     }
@@ -173,16 +172,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// provider: this is also how the treasury compensates an overturned executed judgement,
     /// and a deposit can only ever increase what the provider owns."
     ///
-    /// Not pause-gated, also matching `deposit_stake.rs`, which has no pause check: pausing a
-    /// provider's own top-up would strand a provider trying to cure an under-stake, and curing it
-    /// is a PRECONDITION for the moment the pause lifts rather than something the pause has
-    /// already closed. `X402Escrow.depositFor` IS gated and that is not an inconsistency; the
-    /// rule that predicts both is written out at that function, together with the earlier wording
-    /// of it — "money coming in is on the closed side of the line" — which predicted this door
-    /// wrongly and which a review caught by reading the two comments against each
-    /// other. Both doors are tested, in `Pause.t.sol`:
-    /// `test_pauseClosesEveryDepositDoorOnTheEscrow` and
-    /// `test_pauseNeverClosesAProvidersOwnStakeTopUp`.
+    /// **Pause-gated since the dispute upgrade** (the owner's decision; it diverges from
+    /// `deposit_stake.rs`, which has no pause check), and refused for a blocked provider or a
+    /// blocked funder. `Pause.t.sol::test_pauseClosesEveryStakeDoor` pins it.
     ///
     /// **What stops re-entrancy here is the measured delta, not the modifier.** A token that
     /// calls back into this function from inside `transferFrom` makes the OUTER call's balance
@@ -190,6 +182,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// `nonReentrant` is present — the same finding `test/MUTATION-LOG.md` rows E4 and E23
     /// record on `X402Escrow.depositFor`. The modifier is the belt.
     function depositStakeFor(address provider, uint64 amount) public nonReentrant {
+        CONFIG.assertActive(provider, msg.sender, address(0));
         if (provider == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
@@ -220,7 +213,10 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     ///
     /// Neither `totalStaked` nor the token balance moves: the money has not left, it changed
     /// bucket, and both buckets stay slashable.
+    ///
+    /// Pause-gated and blocklist-gated since the dispute upgrade, like [`withdrawStake`].
     function requestUnstake(uint64 amount) external nonReentrant {
+        CONFIG.assertActive(msg.sender, address(0), address(0));
         if (amount == 0) revert ZeroAmount();
         ProviderStake storage s = stakes[msg.sender];
         if (amount > s.bonded) revert InsufficientBondedStake();
@@ -254,7 +250,12 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// `safeTransfer`, so a token that calls back finds `unbonding` already reduced and
     /// `totalWithdrawn` already raised. `nonReentrant` is the belt and only changes the error
     /// name — `test/MUTATION-LOG.md` row W12 measured exactly that on `X402Escrow.withdraw`.
+    ///
+    /// **Pause-gated and blocklist-gated since the dispute upgrade** — the owner's decision,
+    /// reversing `withdraw_stake.rs:14-16`. Neither gate moves the stake anywhere: it stays the
+    /// provider's, and the door reopens when the pause lifts or the block is removed.
     function withdrawStake(uint64 amount) external nonReentrant {
+        CONFIG.assertActive(msg.sender, address(0), address(0));
         if (amount == 0) revert ZeroAmount();
         ProviderStake storage s = stakes[msg.sender];
 
@@ -283,8 +284,11 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// because `delete` would make `status == None` true again and the captured attestation
     /// would resubmit.
     ///
-    /// Five slots. The two `__gap` members are struct padding and mean nothing; they are named
-    /// so the packing reads as chosen rather than as whatever the compiler did.
+    /// Six slots. The two `__gap` members are struct padding and mean nothing; they are named
+    /// so the packing reads as chosen rather than as whatever the compiler did. `disputedAt`
+    /// (the dispute upgrade) is appended as slot 5 rather than packed into a gap: a record is a
+    /// mapping value, so appending a member moves no other record and no other field, and
+    /// reads as `0` on every record written before the upgrade.
     ///
     /// Four fields of the Anchor record are deliberately absent, and each is derivable from the
     /// event: `attested_at` (the attestation's own `issuedAt`), `agent_amount`,
@@ -307,6 +311,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         uint64 applied; //        ↑
         uint64 executedAt; //     ↑
         bytes32 policy; //       slot 4
+        uint64 disputedAt; //    slot 5  the dispute upgrade; 0 until `disputeSlash`
     }
 
     mapping(bytes32 => SlashRecord) internal slashRecords;
@@ -330,7 +335,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     }
 
     /// `propose_slash.rs`. Phase one: prove the verifier's signature, reserve the stake, start
-    /// the 72-hour clock. **Moves no money.**
+    /// the slash-delay clock (`CONFIG.slashDelaySeconds()`, 72 h by default). **Moves no money.**
     ///
     /// **Permissionless to SUBMIT: the authority is the signature, not the sender.** On Solana
     /// the `VerifierKey` PDA is passed and `require_signed_by` proves that key signed. Here
@@ -386,9 +391,13 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
         // What this judgement may EVER be paid: the penalty, cut to the ceiling, cut to what
         // other standing judgements have not already reserved. Reservations stack up to the
-        // whole stake — a leaked key can freeze a provider's exit for the ten days until the
-        // records expire or the key is revoked. It cannot take it.
-        uint128 free = atRisk > s.pendingSlash ? atRisk - s.pendingSlash : 0;
+        // whole stake — a leaked key can freeze a provider's exit until the records expire
+        // (delay + 7 d, or the 30-day dispute timeout) or the key is revoked. It cannot take it.
+        // Checked: `pendingSlash <= atRisk` on every reachable state. Every writer keeps it —
+        // this line reserves at most `free`; an execution lowers `pendingSlash` by `reserved` and
+        // `atRisk` by `taken <= reserved`; a release lowers only `pendingSlash`; a withdrawal
+        // takes at most `atRisk - pendingSlash`; deposits only raise `atRisk` (audit F §3).
+        uint128 free = atRisk - s.pendingSlash;
         uint64 reserved = a.penalty;
         if (reserved > capAllowance) reserved = capAllowance;
         if (reserved > free) reserved = Cast.toUint64(free);
@@ -403,7 +412,8 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         rec.beneficiary = a.beneficiary;
         rec.proposedAt = nowTs;
         rec.verifier = verifier;
-        rec.executableAt = nowTs + Constants.SLASH_DELAY_SECONDS;
+        // The LIVE delay, frozen into this record: a later `setSlashDelay` moves nothing here.
+        rec.executableAt = nowTs + CONFIG.slashDelaySeconds();
         rec.reserved = reserved;
         rec.capAllowance = capAllowance;
         rec.policy = a.policy;
@@ -465,7 +475,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// the key can still sign, and the penalty is paid under both caps.
     ///
     /// **Permissionless.** Being front-run for the privilege of paying gas is harmless — the
-    /// judgement, its beneficiary and its amount were all fixed 72 hours ago, and every one of
+    /// judgement, its beneficiary and its amount were all fixed at proposal, and every one of
     /// them is read from the record rather than from the caller.
     ///
     /// **THE CRUX OF THE WHOLE TWO-PHASE DESIGN is `CONFIG.assertCanSign(rec.verifier)`.** A key
@@ -496,40 +506,30 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         // whose test is `>=` the SAME instant, so the two doors never overlap and never leave a
         // gap. `uint256` because a record written near `type(uint64).max` must not turn this
         // comparison into a panic — the Anchor original saturates for the same reason.
-        if (nowTs >= uint256(rec.executableAt) + Constants.SLASH_EXECUTION_GRACE_SECONDS) {
-            revert SlashExecutionWindowClosed();
-        }
+        if (nowTs >= _deadline(rec)) revert SlashExecutionWindowClosed();
 
         CONFIG.assertCanSign(rec.verifier);
 
         ParamSet memory p = CONFIG.params();
         ProviderStake storage s = stakes[rec.provider];
 
-        uint128 atRisk = _atRisk(s);
-        if (atRisk == 0) revert NothingToSlash();
-
-        // The provider's rolling window, against the allowance FROZEN at proposal.
+        // **All or wait** (owner decision, audit F R4). The record is paid its WHOLE reservation
+        // or not at all: only when it fits under the provider's rolling window (against the
+        // allowance FROZEN at proposal) AND under the verifier key's rolling window (against the
+        // daily cap read LIVE). Otherwise `SlashWindowNotDrained`, the record stays Pending, and
+        // it is retried as the windows drain; one that never fits before its deadline expires in
+        // the provider's favour. So `applied == reserved` always: nobody — the party being judged
+        // included — can choose an instant at which a judgement is paid as dust. Nothing is
+        // reserved against the key window at proposal, so a leaked key cannot burn a day's
+        // capacity on judgements it never intends to execute.
         uint64 providerCarried = Window.decay(s.slashedInWindow, s.slashWindowStartedAt, nowTs);
-        uint64 windowRemaining =
-            rec.capAllowance > providerCarried ? rec.capAllowance - providerCarried : 0;
-        if (windowRemaining == 0) revert SlashCapExceeded();
-
-        // The key's rolling window, against the absolute cap, read LIVE. Nothing is reserved
-        // against it at proposal, so a leaked key cannot burn a day's capacity on judgements it
-        // never intends to execute.
         VerifierWindow storage vw = verifierWindows[rec.verifier];
         uint64 keyCarried = Window.decay(vw.slashedInWindow, vw.windowStartedAt, nowTs);
-        uint64 keyRemaining = p.verifierDailyCap > keyCarried ? p.verifierDailyCap - keyCarried : 0;
-        if (keyRemaining == 0) revert VerifierDailyCapExceeded();
-
-        // Never more than was reserved, than either window admits, or than the provider still
-        // holds. Any of the three binding leaves `penalty - applied` discharged, not carried;
-        // the request id is spent either way.
-        uint64 atRiskCapped = atRisk > type(uint64).max ? type(uint64).max : Cast.toUint64(atRisk);
         uint64 applied = rec.reserved;
-        if (applied > windowRemaining) applied = windowRemaining;
-        if (applied > keyRemaining) applied = keyRemaining;
-        if (applied > atRiskCapped) applied = atRiskCapped;
+        if (
+            uint256(providerCarried) + applied > rec.capAllowance
+                || uint256(keyCarried) + applied > p.verifierDailyCap
+        ) revert SlashWindowNotDrained();
 
         uint64 agentAmount = Fee.bpsOf(applied, p.slashAgentBps);
         uint64 platformAmount = Fee.bpsOf(applied, p.slashPlatformBps);
@@ -538,14 +538,15 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         // and it is a deliberate economic property rather than an accounting leftover.
         uint64 providerAmount = applied - taken;
         // A penalty too small to divide leaves the record PENDING — this reverts, so every
-        // write above is rolled back — to be retried as the window rolls.
+        // write above is rolled back.
         if (taken == 0) revert PenaltyTooSmallToSplit();
 
         // --- effects ---------------------------------------------------------------------
-        // The WHOLE reservation is released; `applied` of it is paid and the rest returns to the
-        // provider's free balance. Saturating for `cancel_slash.rs:74-78`'s reason.
+        // The reservation is released; all of it was applied, and `applied - taken` stays with the
+        // provider as its share. Checked: `reserved <= pendingSlash` (audit F R2), so a broken
+        // invariant reverts rather than clamping.
         uint64 released = rec.reserved;
-        s.pendingSlash = s.pendingSlash > released ? s.pendingSlash - released : 0;
+        s.pendingSlash -= released;
 
         // Unbonding first: a provider on their way out pays from the stake they were leaving
         // with (`execute_slash.rs:264`).
@@ -597,7 +598,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         );
     }
 
-    /// `cancel_slash.rs`. Withdraw a pending judgement before it pays, on the ADMIN's signature.
+    /// `cancel_slash.rs`. Withdraw a pending or disputed judgement before it pays, on the
+    /// ADMIN's or (since the dispute upgrade) the ARBITER's signature — the arbiter is a person's
+    /// wallet, so a routine overturn no longer needs the admin key.
     ///
     /// An arbitration outcome is a human decision and the party that decided it should sign its
     /// consequence. A verifier-signed cancel would mean a leaked verifier key — the thing the
@@ -610,21 +613,49 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// **NOT pause-gated** (`cancel_slash.rs:31`): it can only release a hold, and pausing it
     /// could only extend one.
     function cancelSlash(bytes32 requestId) external nonReentrant {
-        if (msg.sender != CONFIG.admin()) revert NotAdmin();
+        _assertCanCancel();
         _release(requestId, CancelReason.Withdrawn);
+    }
+
+    /// [`cancelSlash`] over many records, atomically (see [`_assertBatch`]).
+    function cancelSlashBatch(bytes32[] calldata requestIds) external nonReentrant {
+        _assertBatch(requestIds.length);
+        _assertCanCancel();
+        for (uint256 i = 0; i < requestIds.length; ++i) {
+            _release(requestIds[i], CancelReason.Withdrawn);
+        }
+    }
+
+    /// The admin or the arbiter. Before the first `setArbiter` the slot is `address(0)`, which no
+    /// `msg.sender` equals; after it the arbiter can only be replaced, never unset.
+    function _assertCanCancel() internal view {
+        if (msg.sender != CONFIG.admin() && msg.sender != CONFIG.arbiter()) revert NotAdmin();
+    }
+
+    /// The batch forms (`disputeSlashBatch`, `upholdSlashBatch`, `cancelSlashBatch`) are
+    /// **atomic**, like `X402Escrow.redeemVoucherBatch`: each loops over the single call's own
+    /// internal function, so one bad id — including a duplicate, which the second iteration's
+    /// status check refuses — reverts the whole batch. Clients pre-filter with `slashRecordOf`.
+    /// The caller check depends only on `msg.sender`, so it is made once per batch.
+    function _assertBatch(uint256 n) internal pure {
+        if (n == 0) revert EmptyBatch();
+        if (n > Constants.MAX_SLASH_BATCH) revert BatchTooLarge();
     }
 
     /// `expire_slash.rs`. Release a reservation nobody is going to act on. **Permissionless, and
     /// that is the whole design: a hold anybody can end is a hold nobody can extend.** Any
     /// authority that can be withheld is an authority whose holder can keep the hold in place.
     ///
-    /// Two conditions, either of which is enough:
+    /// Three conditions, any of which is enough:
     ///
     /// - **The proposing key can no longer sign.** [`executeSlash`] will refuse it for ever, so
     ///   the reservation is dead weight the moment `revokeVerifier` lands. This is the half that
     ///   bounds what a leaked verifier key can do to a provider's exit.
     /// - **The grace period ran out.** Seven days after the judgement became executable, a
     ///   platform that has not executed its own judgement has abandoned it.
+    /// - **A dispute went unresolved** (a `Disputed` record): `DISPUTE_TIMEOUT_SECONDS` after
+    ///   `disputedAt` with no ruling. A disputed record does NOT expire on the grace period — the
+    ///   arbiter's `upholdSlash` restarts that clock — but it does on an unusable verifier key.
     ///
     /// It calls the BOOLEAN `canSign`, never `assertCanSign`: an unusable key is the *condition*
     /// here, not a failure, and the reverting form would revert on exactly the records this door
@@ -635,36 +666,147 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// release.
     function expireSlash(bytes32 requestId) external nonReentrant {
         SlashRecord storage rec = slashRecords[requestId];
-        if (rec.status != SlashStatus.Pending) revert SlashNotPending();
+        bool disputed = rec.status == SlashStatus.Disputed;
+        if (rec.status != SlashStatus.Pending && !disputed) revert SlashNotPending();
 
         bool verifierUnavailable = !CONFIG.canSign(rec.verifier);
-        bool graceElapsed =
-            block.timestamp >= uint256(rec.executableAt) + Constants.SLASH_EXECUTION_GRACE_SECONDS;
-        if (!verifierUnavailable && !graceElapsed) revert SlashNotExpired();
+        if (!verifierUnavailable && block.timestamp < _deadline(rec)) revert SlashNotExpired();
 
         // The more specific fact wins when both hold: "the key is gone" tells an operator
         // something "nobody executed it" does not.
         _release(
-            requestId, verifierUnavailable ? CancelReason.VerifierUnavailable : CancelReason.Expired
+            requestId,
+            verifierUnavailable
+                ? CancelReason.VerifierUnavailable
+                : disputed ? CancelReason.DisputeUnresolved : CancelReason.Expired
         );
     }
 
-    /// The one way out of `Pending` that returns the reservation whole. `Pending` is left
-    /// EXACTLY once: the status check here is what makes both terminal states absorbing, and
-    /// the record is never `delete`d.
+    // --- the dispute (EVM only) ----------------------------------------------------------------
+
+    event SlashDisputed(
+        bytes32 indexed requestId, address indexed provider, uint64 disputedAt, uint64 executableAt
+    );
+    event SlashUpheld(
+        bytes32 indexed requestId,
+        address indexed provider,
+        address indexed arbiter,
+        uint64 executableAt
+    );
+
+    /// The provider contests a pending judgement inside its delay, which freezes it:
+    /// `executeSlash` refuses a `Disputed` record. The reservation stays, so the dispute cannot
+    /// be used to outrun the judgement with a withdrawal.
     ///
-    /// The reservation is released whole, never in part: a judgement is withdrawn or it is not.
-    /// Saturating for `cancel_slash.rs:74-78`'s reason — `pendingSlash` is the sum of the
-    /// standing reservations and this one is among them, so the subtraction cannot underflow
-    /// through this contract's own doors, and this is the door that gives capital back. It must
-    /// not be the one that bricks.
-    function _release(bytes32 requestId, CancelReason reason) internal {
+    /// **Neither pause- nor blocklist-gated**: it only protects the provider, it moves no money,
+    /// and a pause (or a block) that stopped it would let the slash ripen undisputed.
+    ///
+    /// **Exactly one dispute per record**, explicitly: a record with `disputedAt != 0` is refused
+    /// with [`SlashAlreadyDisputed`], so an upheld record whose frozen `executableAt` is still ahead
+    /// cannot be disputed again.
+    ///
+    /// **The provider is never worse off for disputing early.** An uphold never makes the record
+    /// executable before the `executableAt` frozen at proposal (`max(frozen, now)`), so the
+    /// admin's window to see a forged judgement and revoke its key survives a dispute.
+    function disputeSlash(bytes32 requestId) external nonReentrant {
+        _dispute(requestId);
+    }
+
+    /// [`disputeSlash`] over many records, atomically (see [`_assertBatch`]). Never paused.
+    function disputeSlashBatch(bytes32[] calldata requestIds) external nonReentrant {
+        _assertBatch(requestIds.length);
+        for (uint256 i = 0; i < requestIds.length; ++i) {
+            _dispute(requestIds[i]);
+        }
+    }
+
+    function _dispute(bytes32 requestId) internal {
         SlashRecord storage rec = slashRecords[requestId];
         if (rec.status != SlashStatus.Pending) revert SlashNotPending();
+        if (msg.sender != rec.provider) revert NotSlashedProvider();
+        if (rec.disputedAt != 0) revert SlashAlreadyDisputed();
+        if (block.timestamp >= rec.executableAt) revert DisputeWindowClosed();
+
+        uint64 nowTs = uint64(block.timestamp);
+        rec.status = SlashStatus.Disputed;
+        rec.disputedAt = nowTs;
+        emit SlashDisputed(requestId, rec.provider, nowTs, rec.executableAt);
+    }
+
+    /// The arbiter rules against the provider: the record goes back to `Pending`, executable
+    /// from `max(frozen executableAt, now)` — never earlier than it would have been undisputed —
+    /// and the ordinary [`executeSlash`], with its verifier re-check and both caps, must still
+    /// run inside the 7-day grace counted from that `executableAt`.
+    ///
+    /// **Only before the dispute timed out.** At and after `disputedAt + DISPUTE_TIMEOUT_SECONDS`
+    /// this refuses [`DisputeTimedOut`] and only `expireSlash` works: the two doors share that
+    /// instant with no overlap and no gap, the same convention as `executeSlash`/`expireSlash`. The arbiter chooses nothing else: amount,
+    /// beneficiary and verifier are the record's. To rule FOR the provider it calls
+    /// [`cancelSlash`].
+    ///
+    /// The arbiter is never a live verifier: `X402Config` refuses that at every role writer
+    /// (`_assertRolesDistinct`). The only way the arbiter can equal a record's verifier is a key
+    /// REVOKED after it judged, and such a record can never pay (`executeSlash` re-checks the
+    /// key), so the per-record `ArbiterIsVerifier` check defended nothing and is gone (audit F
+    /// R5). Not pause-gated: it moves no money, and `executeSlash` is.
+    function upholdSlash(bytes32 requestId) external nonReentrant {
+        _uphold(requestId, _assertArbiter());
+    }
+
+    /// [`upholdSlash`] over many records, atomically (see [`_assertBatch`]).
+    function upholdSlashBatch(bytes32[] calldata requestIds) external nonReentrant {
+        _assertBatch(requestIds.length);
+        address arb = _assertArbiter();
+        for (uint256 i = 0; i < requestIds.length; ++i) {
+            _uphold(requestIds[i], arb);
+        }
+    }
+
+    function _assertArbiter() internal view returns (address arb) {
+        arb = CONFIG.arbiter();
+        if (msg.sender != arb) revert NotArbiter();
+    }
+
+    function _uphold(bytes32 requestId, address arb) internal {
+        SlashRecord storage rec = slashRecords[requestId];
+        if (rec.status != SlashStatus.Disputed) revert SlashNotDisputed();
+        if (block.timestamp >= _deadline(rec)) revert DisputeTimedOut();
+
+        uint64 nowTs = uint64(block.timestamp);
+        rec.status = SlashStatus.Pending;
+        if (nowTs > rec.executableAt) rec.executableAt = nowTs;
+        emit SlashUpheld(requestId, rec.provider, arb, rec.executableAt);
+    }
+
+    /// **The one deadline of an open record** (audit F R1). A `Disputed` record's is
+    /// `disputedAt + DISPUTE_TIMEOUT_SECONDS`, a `Pending` record's `executableAt + grace`. At
+    /// and after it `executeSlash` and `upholdSlash` refuse and `expireSlash` accepts — one
+    /// instant per state, no overlap and no gap. `uint256`, so a clock near `type(uint64).max`
+    /// cannot make the addition panic.
+    function _deadline(SlashRecord storage rec) internal view returns (uint256) {
+        return rec.status == SlashStatus.Disputed
+            ? uint256(rec.disputedAt) + Constants.DISPUTE_TIMEOUT_SECONDS
+            : uint256(rec.executableAt) + Constants.SLASH_EXECUTION_GRACE_SECONDS;
+    }
+
+    /// The one way out of `Pending` or `Disputed` that returns the reservation whole. Each
+    /// record reaches a terminal state EXACTLY once: the status check here is what makes both
+    /// terminal states absorbing, and the record is never `delete`d.
+    ///
+    /// The reservation is released whole, never in part: a judgement is withdrawn or it is not.
+    /// **Checked** (audit F R2; Anchor saturates, `cancel_slash.rs:74-78`): `pendingSlash` is
+    /// the sum of the standing reservations and this one is among them, so the subtraction cannot
+    /// underflow through this contract's own doors — and if that invariant ever broke, reverting
+    /// is the honest answer, not a silent zero.
+    function _release(bytes32 requestId, CancelReason reason) internal {
+        SlashRecord storage rec = slashRecords[requestId];
+        if (rec.status != SlashStatus.Pending && rec.status != SlashStatus.Disputed) {
+            revert SlashNotPending();
+        }
 
         ProviderStake storage s = stakes[rec.provider];
         uint64 released = rec.reserved;
-        s.pendingSlash = s.pendingSlash > released ? s.pendingSlash - released : 0;
+        s.pendingSlash -= released;
 
         rec.status = SlashStatus.Cancelled;
         emit SlashCancelled(

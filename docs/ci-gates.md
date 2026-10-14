@@ -144,7 +144,8 @@ would make the gate compare against the wrong commit.
 ## 4. `./script/check-sizes.sh`
 
 EIP-170, per implementation, gated at 22,000 of the 24,576 hard limit. Measured today:
-X402Config 5,202 · X402Escrow 11,881 · X402Stake 13,023 (runtime bytes, CBOR metadata included).
+X402Config 7,466 · X402Escrow 17,228 · X402Stake 14,791 (runtime bytes, CBOR metadata included;
+re-measured for D-19).
 
 It measures **`deployedBytecode`**, not `bytecode`. Creation bytecode is the wrong number: EIP-170 bounds runtime only, and the two differ by 1,427 bytes on both
 money contracts here. Creation size is printed **beside** the runtime one as information, which is

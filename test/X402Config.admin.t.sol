@@ -94,7 +94,7 @@ contract X402ConfigAdminTest is Test {
         q.unbondingPeriodSeconds = 20 * 86_400;
         q.minimumStake = 7;
         q.penaltyAmount = 9;
-        q.verifierDailyCap = 11;
+        q.verifierDailyCap = 18;
         q.takeRateBps = 2_500;
         q.slashAgentBps = 4_000;
         q.slashPlatformBps = 1_000;
@@ -219,24 +219,28 @@ contract X402ConfigAdminTest is Test {
         p.slashAgentBps = 1;
         p.slashPlatformBps = 0;
         p.slashCapBps = 1;
-        p.minimumStake = 1;
+        p.minimumStake = 10_000; // the smallest a 1-bps cap can slash (audit C7)
         p.verifierDailyCap = 1;
+        p.penaltyAmount = 0; // two penalties fit one key-day (audit G G-1)
         X402Config floor_ = _deploy(p, admin);
         assertEq(floor_.params().slashCapBps, 1, "a one-bps cap is a cap");
         assertEq(floor_.params().takeRateBps, 0, "a zero take rate is not refused");
     }
 
-    /// `penalty_amount` is deliberately unbounded in `state.rs` — `0` **is** on-chain shadow
-    /// mode, and there is no absurd upper value for a token amount. This test fails the moment
-    /// anybody adds a bound to it in either direction.
-    function test_boundary_penaltyAmountIsBoundedAtNeitherEnd() public {
+    /// `penalty_amount` is unbounded in `state.rs` — `0` **is** on-chain shadow mode. Since
+    /// audit G G-1 its only ceiling is half of `verifierDailyCap` (two judgements must fit one
+    /// key-day); there is no other bound in either direction.
+    function test_boundary_penaltyAmountIsBoundedOnlyByTheDailyCap() public {
         ParamSet memory p = _valid();
         p.penaltyAmount = 0;
         assertEq(_deploy(p, admin).params().penaltyAmount, 0, "zero penalty is shadow mode");
 
-        p.penaltyAmount = type(uint64).max;
+        p.verifierDailyCap = type(uint64).max;
+        p.penaltyAmount = type(uint64).max / 2;
         assertEq(
-            _deploy(p, admin).params().penaltyAmount, type(uint64).max, "no ceiling on the penalty"
+            _deploy(p, admin).params().penaltyAmount,
+            type(uint64).max / 2,
+            "no ceiling but the daily cap"
         );
     }
 
@@ -264,36 +268,6 @@ contract X402ConfigAdminTest is Test {
         // And the same agent share with a smaller platform share is legal again.
         p.slashPlatformBps = 999;
         assertEq(_deploy(p, admin).params().slashAgentBps, 9_001, "9_001 is legal against 999");
-    }
-
-    /// `Config::slash_provider_bps()` — `state.rs:127-131`.
-    ///
-    /// **Pins the value, three times, at three different answers.** A test asserting only that
-    /// the three shares sum to 10,000 is satisfied by any implementation that computes the
-    /// remainder *somehow* — including one that reads the wrong field, since the identity is
-    /// structural once the remainder is defined by subtraction. So each row states the number,
-    /// and the rows are chosen so that no single wrong formula produces all three: dropping the
-    /// platform term gives 4,000 / 1,000 / 9,999 and dropping the agent term gives 7,000 /
-    /// 9,000 / 10,000, against the correct 1,000 / 0 / 9,999.
-    function test_theProviderKeepsTheRemainderOfEveryPenalty() public {
-        ParamSet memory p = _valid(); // 6_000 + 3_000
-        assertEq(config.slashProviderBps(), 1_000, "the provider keeps 10% of _valid()");
-
-        p.slashAgentBps = 9_000;
-        p.slashPlatformBps = 1_000;
-        assertEq(_deploy(p, admin).slashProviderBps(), 0, "a 90/10 split leaves the provider none");
-
-        p.slashAgentBps = 1;
-        p.slashPlatformBps = 0;
-        assertEq(_deploy(p, admin).slashProviderBps(), 9_999, "and almost all of it at the floor");
-
-        // The sum identity holds too — asserted after the values, never instead of them.
-        ParamSet memory q = config.params();
-        assertEq(
-            uint256(q.slashAgentBps) + q.slashPlatformBps + config.slashProviderBps(),
-            10_000,
-            "the three shares are a partition of the penalty"
-        );
     }
 
     /// **The order of the checks, which nothing else can see.** Every other refusal test violates

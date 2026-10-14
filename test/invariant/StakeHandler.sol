@@ -12,12 +12,14 @@ import {Constants} from "../../src/Constants.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {VoucherSigner} from "../helpers/VoucherSigner.sol";
 
-/// The stake vault's bounded actor set: four providers, one enrolled verifier, and the seven
-/// state transitions a `SlashRecord` can take part in.
+/// The stake vault's bounded actor set: four providers, one enrolled verifier, one arbiter, and
+/// the nine state transitions a `SlashRecord` can take part in (the dispute upgrade added
+/// `disputeSlash` and `upholdSlash`).
 ///
 /// **The reservation sum is kept HERE, not read back from the contract.** `sumOfPendingSlash`
 /// reads `stakes[p].pendingSlash` off the vault; `sumOfPendingReservations` sums this handler's
-/// own record of every proposal it believes is still `Pending`, adding on a landed
+/// own record of every proposal it believes is still open (`Pending` or `Disputed` — a dispute
+/// keeps the reservation), adding on a landed
 /// `proposeSlash` and removing on a landed `executeSlash`, `cancelSlash` or `expireSlash`.
 /// Two independent bookkeepings, compared. Reading both from the contract would compare
 /// `pendingSlash` with itself.
@@ -30,6 +32,7 @@ contract StakeHandler is Test {
     address internal constant TREASURY = address(0x7EA5);
     address internal constant REDEEMER = address(0x4EED);
     address internal constant BENEFICIARY = address(0xA6E7);
+    address internal constant ARBITER = address(0xA4B1);
     uint256 internal constant VERIFIER_KEY = 0x7E5717;
     address public verifier;
 
@@ -84,6 +87,9 @@ contract StakeHandler is Test {
         );
 
         vm.prank(ADMIN);
+        config.setArbiter(ARBITER);
+
+        vm.prank(ADMIN);
         // The full rotation ceiling, so the run cannot silently become a test of key expiry.
         config.registerVerifier(
             verifier,
@@ -118,6 +124,30 @@ contract StakeHandler is Test {
         for (uint256 i = 0; i < 4; i++) {
             X402Stake.ProviderStake memory s = stake.stakeOf(providers[i]);
             if (uint256(s.bonded) + s.unbonding < s.pendingSlash) return false;
+        }
+        return true;
+    }
+
+    /// All or wait (D-20): every Executed record was paid its whole reservation — `applied` equals
+    /// the `reserved` this handler booked at proposal, never less.
+    function everyExecutedRecordWasPaidInFull() external view returns (bool) {
+        for (uint256 i = 0; i < proposedIds.length; i++) {
+            X402Stake.SlashRecord memory r = stake.slashRecordOf(proposedIds[i]);
+            if (r.status == SlashStatus.Executed && r.applied != reservedOf[proposedIds[i]]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// The new status in the invariant: every record this handler believes open is `Pending`
+    /// or `Disputed` on chain, and every record it believes closed is `Executed` or `Cancelled`.
+    function everyRecordIsInTheStateTheBookSays() external view returns (bool) {
+        for (uint256 i = 0; i < proposedIds.length; i++) {
+            SlashStatus st = stake.slashRecordOf(proposedIds[i]).status;
+            bool open = st == SlashStatus.Pending || st == SlashStatus.Disputed;
+            bool closed = st == SlashStatus.Executed || st == SlashStatus.Cancelled;
+            if (believedPending[proposedIds[i]] ? !open : !closed) return false;
         }
         return true;
     }
@@ -213,6 +243,35 @@ contract StakeHandler is Test {
         stake.expireSlash(id);
         believedPending[id] = false;
         landed["expireSlash"] += 1;
+    }
+
+    /// The provider of a still-`Pending` record disputes it (refused after `executableAt`).
+    function disputeSlash(uint256 idSeed) external {
+        bytes32 id = _idIn(idSeed, SlashStatus.Pending);
+        if (id == bytes32(0)) return;
+        vm.prank(stake.slashRecordOf(id).provider);
+        stake.disputeSlash(id);
+        landed["disputeSlash"] += 1;
+    }
+
+    /// The arbiter upholds a `Disputed` record; it stays open (believed pending).
+    function upholdSlash(uint256 idSeed) external {
+        bytes32 id = _idIn(idSeed, SlashStatus.Disputed);
+        if (id == bytes32(0)) return;
+        vm.prank(ARBITER);
+        stake.upholdSlash(id);
+        landed["upholdSlash"] += 1;
+    }
+
+    function _idIn(uint256 seed, SlashStatus want) internal view returns (bytes32) {
+        uint256 n = proposedIds.length;
+        if (n == 0) return bytes32(0);
+        uint256 start = bound(seed, 0, n - 1);
+        for (uint256 k = 0; k < n; k++) {
+            bytes32 id = proposedIds[(start + k) % n];
+            if (stake.slashRecordOf(id).status == want) return id;
+        }
+        return bytes32(0);
     }
 
     /// Time, in steps big enough to cross the 72-hour delay and the seven-day grace inside a

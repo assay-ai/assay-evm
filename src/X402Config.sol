@@ -12,7 +12,8 @@ import {Constants} from "./Constants.sol";
 import {IX402Config} from "./interfaces/IX402Config.sol";
 import "./Errors.sol";
 
-/// Parameters, the two roles (owner and admin), the pause flag and the verifier registry.
+/// Parameters, the three roles (owner, admin, arbiter), the pause flag, the verifier registry,
+/// the address blocklist and the slash delay.
 ///
 /// The port of `state.rs::Config` minus everything that is Solana bookkeeping. What was left
 /// behind, and where it went:
@@ -32,7 +33,7 @@ import "./Errors.sol";
 ///
 /// Deployed behind an ERC1967Proxy and upgraded through UUPS (D-1, amended by D-17).
 ///
-/// # Two roles (D-17)
+/// # Three roles (D-17, D-19)
 ///
 /// - **`owner()`** — OpenZeppelin's `Ownable2StepUpgradeable`, held cold (a Ledger or a Safe). It
 ///   is the UUPS upgrade authority of all three contracts (the other two read `CONFIG.owner()`
@@ -42,7 +43,13 @@ import "./Errors.sol";
 ///   power over user money is the upgrade itself.
 /// - **`admin`** — operational and used often: `updateConfig`, `setPaused`, the verifier registry,
 ///   and `cancelSlash` on X402Stake. Every value it sets is bounded by `_validate`.
-///   It can neither upgrade anything nor appoint its successor.
+///   It can neither upgrade anything nor appoint its successor. It appoints the arbiter
+///   (`setArbiter`), sets the slash delay (`setSlashDelay`) and blocks or unblocks addresses.
+/// - **`arbiter`** — a person's wallet (or a Safe), never the backend. It rules on a disputed
+///   slash (`X402Stake.upholdSlash`), cancels a pending or disputed one (`cancelSlash`, beside
+///   the admin) and may BLOCK an address — never unblock it. It reads `address(0)` only before
+///   the first appointment; after that it is replaced, never unset. The admin, the arbiter, the
+///   redeemer and the verifiers are distinct keys ([`_assertRolesDistinct`]).
 ///
 /// The owner's storage is ERC-7201 namespaced (`openzeppelin.storage.Ownable` and
 /// `openzeppelin.storage.Ownable2Step`), so adopting it appends no sequential slot.
@@ -53,8 +60,9 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// admin and BPF-loader upgrade authority, restored).
     address public admin;
 
-    /// `state.rs:85`. The emergency stop, read by the doors that move money on somebody else's
-    /// say-so.
+    /// `state.rs:85`. The emergency stop. Since D-19 it closes every user door — deposits,
+    /// redemption, the exits, limits and delegate grants — and leaves open only what releases a
+    /// hold or removes authority (`revokeDelegate`, the dispute, cancel and expire doors).
     bool public override paused;
 
     /// The economic parameter set, stored as one struct so `params()` cannot hand a caller two
@@ -72,10 +80,10 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// mint for `Config` to announce, and adding one would create a second place the asset is
     /// named. Read the omission as the split, not as an oversight.
     ///
-    /// `slash_provider_bps` — derived, never stored, on both chains. It is not dropped: it is
-    /// `slashProviderBps()` on this contract, readable at any block, whereas the Anchor program
-    /// can only put a derived value in the event. The event carries the two shares it is the
-    /// complement of, so no information is lost.
+    /// `slash_provider_bps` — derived, never stored, on both chains: it is
+    /// `10_000 - slashAgentBps - slashPlatformBps`. The event carries the two shares it is the
+    /// complement of, so no information is lost. (The `slashProviderBps()` view was removed in
+    /// audit F R7: nothing read it.)
     event ConfigInitialized(address indexed admin, ParamSet params);
 
     /// `events.rs::PauseToggled`, field names kept. `at` is `i64` on Solana and `uint64` here,
@@ -89,8 +97,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// `admin` is the **post**-state — `update_config.rs:90` emits `config.admin` after the
     /// handover has landed, so on a call that hands over, this is the incoming key rather than
     /// the outgoing one that signed. `slash_provider_bps` is absent for the same reason it is
-    /// absent from [`ConfigInitialized`]: derived, and readable at any block from
-    /// [`slashProviderBps`].
+    /// absent from [`ConfigInitialized`]: derived from the two shares the event carries.
     event ConfigUpdated(address indexed admin, ParamSet params);
 
     /// The owner replaced the admin.
@@ -183,31 +190,33 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
 
     /// The owner appoints (or replaces) the admin, in one step: the owner is the recovery path if
     /// the address is wrong, which is what the single-key D-6 handover never had.
+    /// The new admin may not hold another role ([`_assertRolesDistinct`]).
     function setAdmin(address newAdmin) external onlyOwner {
         if (newAdmin == address(0)) revert InvalidAdmin();
         emit AdminSet(admin, newAdmin);
         admin = newAdmin;
+        _assertRolesDistinct();
+    }
+
+    /// **The one place the role table lives** (audit F R5): the admin is not a live verifier; the
+    /// arbiter, once appointed, is neither the admin, nor the redeemer, nor a live verifier.
+    /// "Live" is registered and not revoked — an expired key is still live here, so it cannot be
+    /// re-used in another role. Called at the END of every writer of a role or of the redeemer
+    /// (`setAdmin`, `setArbiter`, `registerVerifier`, `updateConfig`), so a refusal rolls the
+    /// write back. A rule added later goes here and nowhere else.
+    function _assertRolesDistinct() internal view {
+        VerifierKey storage a = verifiers[admin];
+        if (a.registered && !a.revoked) revert InvalidAdmin();
+        address arb = arbiter;
+        if (arb == address(0)) return; // before the first appointment
+        VerifierKey storage k = verifiers[arb];
+        if (arb == admin || arb == _params.redeemer || (k.registered && !k.revoked)) {
+            revert InvalidArbiter();
+        }
     }
 
     function params() external view override returns (ParamSet memory) {
         return _params;
-    }
-
-    /// `state.rs:127-131` — `Config::slash_provider_bps()`. **Derived, never stored**, so it
-    /// cannot disagree with the two shares it is the complement of; and derived *here*, so
-    /// X402Stake does not grow a second copy of the same arithmetic.
-    ///
-    /// Saturating, exactly as the Anchor original is, and for the reason its comment gives: an
-    /// abort inside a split is the least debuggable place for a missing validation to surface.
-    /// `_validate` makes `slashAgentBps + slashPlatformBps <= 10_000` true of every set that
-    /// reaches storage, and **both** doors that write `_params` — `initialize` and
-    /// `updateConfig` — run it before the assignment, so the saturation is unreachable today
-    /// (mutation log C22). It is a belt for whatever writes `_params` next. Any future writer
-    /// that skips `_validate` makes this branch live, which is the defect, not the belt. The
-    /// `uint32` widening is the same one `_validate` uses, for the same overflow.
-    function slashProviderBps() external view override returns (uint16) {
-        uint32 taken = uint32(_params.slashAgentBps) + _params.slashPlatformBps;
-        return taken >= 10_000 ? 0 : uint16(10_000 - taken);
     }
 
     /// `set_paused.rs:38-49`. Reversible, admin-only, and it never adds a door — it can only
@@ -254,6 +263,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         ParamSet memory q = p; // `_validate` takes memory; one copy on a cold path
         _validate(q);
         _params = q;
+        _assertRolesDistinct(); // the redeemer is never the arbiter
         emit ConfigUpdated(admin, q);
     }
 
@@ -262,9 +272,13 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// parameter that has stopped being what it is called: a 100% take rate is not a take rate,
     /// a 100% slash cap is not a cap.
     ///
-    /// `penaltyAmount` is checked nowhere, deliberately: `state.rs:68-75` leaves it unbounded at
-    /// both ends — `0` is on-chain shadow mode, and what bounds the damage above is
-    /// `slashCapBps`, a fraction of the provider's own stake.
+    /// `penaltyAmount` has no bound of its own (`state.rs:68-75`): `0` is on-chain shadow mode.
+    /// Its only ceiling is the cross-check against `verifierDailyCap` below (audit C7).
+    ///
+    /// Parameters only. The role table (the redeemer is not the arbiter) is
+    /// [`_assertRolesDistinct`]'s, and the slash delay is no longer coupled to the unbonding
+    /// period (audit F R3): a proposed penalty is held by `pendingSlash` however long the delay,
+    /// so only the breach-to-proposal leg needs `MIN_UNBONDING_PERIOD_SECONDS`.
     function _validate(ParamSet memory p) internal pure {
         if (p.treasury == address(0)) revert MissingBeneficiary();
         if (p.redeemer == address(0)) revert MissingRedeemer();
@@ -285,7 +299,17 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
             revert UnbondingPeriodTooLong();
         }
         if (p.minimumStake == 0) revert InvalidMinimumStake();
+        // A provider at the minimum must be slashable: its cap allowance may not round to 0.
+        if (uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR == 0) {
+            revert InvalidMinimumStake();
+        }
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
+        // At least two maximal judgements must fit in one key-day (audit G G-1): with all or
+        // wait, a cap of one penalty lets a single record fill the day and crowd out the next.
+        // `uint256`, so a large `penaltyAmount` cannot overflow the doubling.
+        if (uint256(p.verifierDailyCap) < 2 * uint256(p.penaltyAmount)) {
+            revert InvalidVerifierDailyCap();
+        }
     }
 
     // -------------------------------------------------------------------------------------
@@ -414,6 +438,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
             registered: true,
             revoked: false
         });
+        _assertRolesDistinct(); // never the admin or the arbiter
         emit VerifierRegistered(verifier, msg.sender, label, nowTs, expiresAt);
     }
 
@@ -423,7 +448,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// It is deliberately NOT timelocked and deliberately irreversible. **This is the single
     /// control the two-phase slash exists to make usable**: `X402Stake.executeSlash` re-checks
     /// [`assertCanSign`] on the record's verifier at execution time, so revoking a key voids every
-    /// judgement it signed that is still inside its 72-hour delay — including ones already
+    /// judgement it signed that is still inside its slash delay — including ones already
     /// proposed. A revocation that could be undone, or one that had to wait out a delay of its
     /// own, would give that re-check nothing to find.
     ///
@@ -494,6 +519,93 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         if (block.timestamp > k.expiresAt) revert VerifierKeyExpired();
     }
 
+    // -------------------------------------------------------------------------------------
+    // the dispute upgrade — arbiter, slash delay, blocklist (EVM only)
+    // -------------------------------------------------------------------------------------
+
+    /// The arbiter (see the contract header). Appended storage, paid for out of `__gap`.
+    address public override arbiter;
+
+    /// The admin-set slash delay; `0` means never set, which reads back as the default. Packed
+    /// beside `arbiter`, one slot for both.
+    uint64 internal _slashDelaySeconds;
+
+    /// The blocklist. One mapping, one slot. Read by the money contracts through
+    /// [`assertActive`]; nothing here can move a blocked party's funds.
+    ///
+    /// **It binds the SUBJECTS of a door — buyer, payer, payee (provider), delegate, provider,
+    /// funder — never the operators around them**: not a relayer landing a `…BySig`, not the
+    /// redeemer or a keeper calling `proposeSlash` / `executeSlash` / `expireSlash`, not the slash
+    /// beneficiary or the treasury, not the admin or the arbiter, and **not the verifier**.
+    /// Blocking a verifier address does not stop its signatures: a forging verifier is stopped
+    /// only by `revokeVerifier`, which is admin-only. The arbiter's own tool against a forged
+    /// slash is `X402Stake.cancelSlash`.
+    mapping(address => bool) internal _blocked;
+
+    event ArbiterSet(address indexed previousArbiter, address indexed newArbiter);
+    event SlashDelaySet(uint64 previousDelay, uint64 newDelay);
+    event BlockedSet(address indexed account, bool blocked, address indexed by);
+
+    /// **`address(0)` is refused**: with no arbiter a dispute is a free 30-day veto (audit A
+    /// M-2). A lost or compromised arbiter is REPLACED, never removed. (Before the first
+    /// appointment the slot reads `address(0)`; the runbook appoints it in the upgrade session.)
+    ///
+    /// The arbiter is a separate person: never the admin, the redeemer or a live verifier
+    /// ([`_assertRolesDistinct`], `InvalidArbiter`).
+    function setArbiter(address newArbiter) external onlyAdmin {
+        if (newArbiter == address(0)) revert InvalidArbiter();
+        emit ArbiterSet(arbiter, newArbiter);
+        arbiter = newArbiter;
+        _assertRolesDistinct();
+    }
+
+    /// The delay a NEW proposal waits before `executeSlash`, and so the provider's dispute
+    /// window. A record already proposed keeps the `executableAt` frozen into it.
+    ///
+    /// Reads back as `Constants.SLASH_DELAY_SECONDS` until set, so an upgraded proxy keeps 72
+    /// hours with no initializer call.
+    function slashDelaySeconds() public view override returns (uint64) {
+        uint64 d = _slashDelaySeconds;
+        return d == 0 ? Constants.SLASH_DELAY_SECONDS : d;
+    }
+
+    /// Fixed bounds, `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` (10 min to 22 days),
+    /// independent of the unbonding period (audit F R3): once proposed, a penalty is held by
+    /// `pendingSlash` and no unbonding exit can take it, however long the delay
+    /// (`test_longDelayShortUnbondingCannotBeOutrun`).
+    function setSlashDelay(uint64 newDelay) external onlyAdmin {
+        if (
+            newDelay < Constants.MIN_SLASH_DELAY_SECONDS
+                || newDelay > Constants.MAX_SLASH_DELAY_SECONDS
+        ) revert InvalidSlashDelay();
+        emit SlashDelaySet(slashDelaySeconds(), newDelay);
+        _slashDelaySeconds = newDelay;
+    }
+
+    function blocked(address account) external view override returns (bool) {
+        return _blocked[account];
+    }
+
+    /// The admin blocks and unblocks; the arbiter may only block. Blocking stops the address at
+    /// every door [`assertActive`] guards and moves none of its money.
+    function setBlocked(address account, bool value) external {
+        if (msg.sender != admin) {
+            if (msg.sender != arbiter) revert NotAdmin();
+            if (!value) revert ArbiterCannotUnblock();
+        }
+        if (account == address(0)) revert ZeroAddress();
+        _blocked[account] = value;
+        emit BlockedSet(account, value, msg.sender);
+    }
+
+    /// The one check the money contracts make at every door the pause or the blocklist closes:
+    /// not paused, and none of up to three parties blocked. Unused slots are `address(0)`, which
+    /// can never be blocked.
+    function assertActive(address a, address b, address c) external view override {
+        if (paused) revert ProgramPaused();
+        if (_blocked[a] || _blocked[b] || _blocked[c]) revert AddressBlocked();
+    }
+
     /// The append budget the D-7 upgrade-safety gate spends. Every contract here ends with
     /// one, and adding a field means shrinking it by exactly the slots the field consumes.
     ///
@@ -504,5 +616,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     ///
     /// **Unchanged by D-17**: the owner role's storage is ERC-7201 namespaced
     /// (`openzeppelin.storage.Ownable`, `openzeppelin.storage.Ownable2Step`), not a slot here.
-    uint256[49] private __gap;
+    ///
+    /// **49 → 47 for the dispute upgrade**: `arbiter` + `_slashDelaySeconds` share one slot and
+    /// `_blocked` is one mapping slot.
+    uint256[47] private __gap;
 }

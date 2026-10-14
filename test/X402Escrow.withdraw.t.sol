@@ -227,8 +227,9 @@ contract X402EscrowWithdrawTest is Fixture {
         assertEq(escrow.escrowOf(buyer).withdrawRequested, 0, "the request is spent either way");
     }
 
-    /// Withdrawals are NEVER pause-gated.
-    function test_pauseDoesNotCloseTheOwnersExit() public {
+    /// D-19 (the owner's decision): withdrawals are pause-gated, and the pause moves nothing —
+    /// the same withdrawal lands in full once it lifts. Was `test_pauseDoesNotCloseTheOwnersExit`.
+    function test_pauseClosesTheOwnersExitAndMovesNothing() public {
         vm.prank(buyer);
         escrow.requestWithdraw(4_000_000);
         vm.prank(admin);
@@ -236,9 +237,15 @@ contract X402EscrowWithdrawTest is Fixture {
 
         vm.warp(block.timestamp + Constants.WITHDRAW_DELAY_SECONDS);
         vm.prank(buyer);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.withdraw();
+        assertEq(usdg.balanceOf(buyer), 0);
+
+        vm.prank(admin);
+        config.setPaused(false);
+        vm.prank(buyer);
         escrow.withdraw();
         assertEq(usdg.balanceOf(buyer), 4_000_000);
-        assertTrue(config.paused(), "the pause was live across the withdrawal");
     }
 
     /// THE INVARIANT THE DELAY EXISTS FOR: a voucher signed the instant before the request

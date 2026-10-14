@@ -65,7 +65,7 @@ contract X402ConfigParamsTest is Test {
             unbondingPeriodSeconds: 20 * 86_400,
             minimumStake: 7,
             penaltyAmount: 9,
-            verifierDailyCap: 11,
+            verifierDailyCap: 18, // >= 2 * penaltyAmount (audit G G-1)
             takeRateBps: 2_500,
             slashAgentBps: 4_000,
             slashPlatformBps: 1_000,
@@ -81,9 +81,11 @@ contract X402ConfigParamsTest is Test {
             treasury: address(0xB0A7),
             redeemer: address(0xD0E5),
             unbondingPeriodSeconds: 30 * 86_400,
-            minimumStake: 1,
-            penaltyAmount: type(uint64).max,
-            verifierDailyCap: 2,
+            // The smallest minimum a 1-bps cap can still slash (audit C7: 10 000 * 1 / 10 000 = 1),
+            // and a penalty that fits one key-day (audit C7: penaltyAmount <= verifierDailyCap).
+            minimumStake: 10_000,
+            penaltyAmount: 2,
+            verifierDailyCap: 4,
             takeRateBps: 0,
             slashAgentBps: 1,
             slashPlatformBps: 0,
@@ -265,8 +267,7 @@ contract X402ConfigParamsTest is Test {
     /// **Every** bound `state.rs::Config::validate` states is reached through *this* door too, by
     /// name, and each refusal moves nothing. `test_wrongState_everyBoundIsRefusedAtConstruction`
     /// proves the same eleven rows through `initialize`; that a set reaching `_params` through
-    /// `initialize` is bounded says nothing about a set reaching it through `updateConfig`, and
-    /// C22's "the saturation in `slashProviderBps` is unreachable" rests on *both* doors.
+    /// `initialize` is bounded says nothing about a set reaching it through `updateConfig`.
     function test_wrongState_updateRefusesEveryBoundJustAsInitializeDoes() public {
         ParamSet memory p = _valid();
         p.treasury = address(0);
@@ -428,17 +429,16 @@ contract X402ConfigParamsTest is Test {
 
         // a penalty larger than the whole minimum stake. `state.rs:68-75` bounds `penalty_amount`
         // at neither end; what bounds the damage is `slashCapBps`, a fraction of the stake held.
+        // (`minimumStake` 10 is the smallest a 1 000-bps cap can still slash, audit C7.)
         p = _valid();
-        p.minimumStake = 1;
-        p.penaltyAmount = type(uint64).max;
+        p.minimumStake = 10;
+        p.penaltyAmount = type(uint64).max / 2;
+        p.verifierDailyCap = type(uint64).max;
         _accepted(p, "the penalty may exceed the minimum stake");
 
-        // a daily cap smaller than a single penalty — one judgement a day, which is a policy, not
-        // an error.
-        p = _valid();
-        p.penaltyAmount = 1_000_000;
-        p.verifierDailyCap = 1;
-        _accepted(p, "the verifier daily cap may be smaller than one penalty");
+        // A daily cap smaller than a single penalty WAS accepted here; since audit C7 it is a
+        // deliberate refusal (one judgement could never be paid in full), tested in
+        // `X402Stake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused`.
 
         // an unbonding period that is not a whole number of days.
         p = _valid();
@@ -508,20 +508,5 @@ contract X402ConfigParamsTest is Test {
         vm.prank(admin);
         config.updateConfig(_third(), address(0));
         assertFalse(config.paused(), "an unpaused config stays unpaused across an update");
-    }
-
-    /// `slashProviderBps()` is derived from `_params`, so it must follow an update rather than
-    /// hold the value it was initialised with. Three sets, three pinned answers — never the sum
-    /// identity alone, which any subtraction satisfies (see C20/C21 in the mutation log).
-    function test_theDerivedProviderShareFollowsAnUpdate() public {
-        assertEq(config.slashProviderBps(), 1_000, "6000 + 3000 leaves the provider 10%");
-
-        vm.prank(admin);
-        config.updateConfig(_other(), address(0)); // 4000 + 1000
-        assertEq(config.slashProviderBps(), 5_000, "4000 + 1000 leaves the provider 50%");
-
-        vm.prank(admin);
-        config.updateConfig(_third(), address(0)); // 1 + 0
-        assertEq(config.slashProviderBps(), 9_999, "1 + 0 leaves the provider almost all of it");
     }
 }

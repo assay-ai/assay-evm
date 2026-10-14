@@ -227,8 +227,8 @@ contract X402EscrowRedeemTest is Fixture {
         _redeem(v);
     }
 
-    /// The second door this task opens. Deliberately NOT pause-gated: lowering a limit is the
-    /// safety direction and an admin key must never be able to stop a buyer tightening their own.
+    /// The second door this task opens. Pause-gated since D-19 (the owner's decision; it was
+    /// "deliberately NOT pause-gated" before — `Pause.t.sol` carries the matrix).
     function test_happyPath_setLimitsWritesTheBuyersOwnCeilingsAndNobodyElses() public {
         vm.expectEmit(true, true, true, true, address(escrow));
         emit EscrowLimitsSet(buyer, 42, 4_242);
@@ -241,8 +241,9 @@ contract X402EscrowRedeemTest is Fixture {
 
         _setPaused(true);
         vm.prank(buyer);
-        escrow.setLimits(1, 2); // a paused program cannot stop a buyer tightening
-        assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 1);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.setLimits(1, 2); // D-19: a paused program refuses the limits door too
+        assertEq(escrow.escrowOf(buyer).maxVoucherAmount, 42);
     }
 
     function test_wrongState_setLimitsRefusesAWriteThatChangesNothing() public {
@@ -703,11 +704,18 @@ contract X402EscrowRedeemTest is Fixture {
         vm.expectRevert(NotRedeemer.selector);
         escrow.redeemVoucher(v, _sig(v));
 
-        // 2. pause BEFORE the voucher body — paused, and a zero amount.
+        // 2. the voucher body BEFORE the pause — paused, and a zero amount. Since audit F R7 the
+        //    only pause check on this path is `_redeem`'s `CONFIG.assertActive`, after signature
+        //    recovery; a valid voucher in a paused program is still refused `ProgramPaused`.
         Voucher memory z = _v(0, 1);
         vm.prank(redeemer);
-        vm.expectRevert(ProgramPaused.selector);
+        vm.expectRevert(ZeroAmount.selector);
         escrow.redeemVoucher(z, _sig(z));
+        Voucher memory ok = _v(1_000, 1);
+        bytes memory okSig = _sig(ok);
+        vm.prank(redeemer);
+        vm.expectRevert(ProgramPaused.selector);
+        escrow.redeemVoucher(ok, okSig);
         _setPaused(false);
 
         // 3. amount BEFORE the clock window — zero amount, and an inverted window.

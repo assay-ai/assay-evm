@@ -322,6 +322,101 @@ backend's configuration is per-deployment, and never derivable from the chain id
    prints every field decoded, plus the live implementation of each proxy.
 3. **Prove both roles work** (§6.3): the admin pauses and unpauses, the owner calls `setAdmin`
    with the current admin (a no-op that proves the owner signs).
+4. **Appoint the arbiter** (§6.5) — a person's wallet or a Safe, never a backend key.
+
+### The slash lifecycle and who acts in it (D-19)
+
+```
+proposeSlash (anyone, verifier-signed) ──► Pending ──executeSlash (anyone, after executableAt)──► Executed
+                                             │  ▲
+          disputeSlash (provider, before     │  │ upholdSlash (arbiter, before disputedAt + 30 d;
+          executableAt, once; never paused)  ▼  │   executable from max(frozen executableAt, now))
+                                           Disputed
+Pending or Disputed ──cancelSlash (admin or arbiter)──► Cancelled  (Withdrawn)
+Pending  ──expireSlash (anyone: key unusable, or executableAt + 7 d)──► Cancelled  (VerifierUnavailable | Expired)
+Disputed ──expireSlash (anyone: key unusable, or disputedAt + 30 d)──► Cancelled  (VerifierUnavailable | DisputeUnresolved)
+```
+
+`executableAt = proposedAt + slashDelaySeconds()` (72 h unless the admin set it, §6.5), frozen at
+proposal; the provider's dispute window is that delay. A record is disputed at most once
+(`AlreadyDisputed`). **The provider is never worse off for disputing early**: an uphold never
+makes a record executable before its frozen `executableAt`, and the 7-day grace runs from the
+`executableAt` the uphold leaves. At `disputedAt + 30 d` the uphold closes (`DisputeTimedOut`) in
+the same instant expire opens. The reservation (`pendingSlash`) holds from
+proposal until `Executed` or `Cancelled`, through a dispute. **Operator console:** an overturn or a
+suspend is the ARBITER's `cancelSlash`, not the admin's; a ruling against the provider is
+`upholdSlash`, after which anyone (the backend) calls `executeSlash` within 7 days. Many records
+at once: `disputeSlashBatch`, `upholdSlashBatch`, `cancelSlashBatch` (≤ 64 ids, atomic — one bad or
+duplicate id reverts the batch, so pre-filter with `slashRecordOf`).
+
+### 6.5 The arbiter, the blocklist and the slash delay (D-19)
+
+```sh
+cast send <configProxy> "setArbiter(address)" <arbiter> --rpc-url <rpc> --ledger      # ADMIN; 0x0 refused: replace, never remove
+cast send <configProxy> "setBlocked(address,bool)" <addr> true --rpc-url <rpc> --ledger # admin or arbiter; only the admin may send false
+cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledger    # ADMIN; [600, 1900800] (10 min to 22 d)
+```
+
+- [ ] The arbiter is **not** the verifier and not any key the backend holds. Config refuses an
+      arbiter that is the admin, the redeemer or a live verifier (`InvalidArbiter`); nothing
+      stops a backend key that holds no on-chain role, so check by hand.
+- [ ] A blocked address can still `revokeDelegate` and `disputeSlash`; nothing moves its funds.
+      Unblocking is the admin's alone.
+- [ ] **The blocklist binds the subjects of a door** — buyer, payer, payee/provider, delegate,
+      funder — **never the operators**: not relayers, the redeemer, keepers calling
+      `propose`/`execute`/`expireSlash`, the slash beneficiary, the treasury, the admin, the
+      arbiter or **the verifier**. Blocking a verifier does nothing to its signatures. A forging
+      verifier is stopped only by `revokeVerifier`, which is ADMIN-only; the arbiter's tool against
+      a forged slash is `cancelSlash`.
+
+- [ ] The slash delay applies to NEW proposals only. **Production keeps it at 72 h or more**; the
+      10-minute minimum is for testing, and a short delay is a short dispute window.
+- [ ] Roles stay separate, enforced in one place (`X402Config._assertRolesDistinct`, run by
+      `setAdmin`, `setArbiter`, `registerVerifier` and `updateConfig`): the admin is not a live
+      verifier (`InvalidAdmin`); the arbiter is not the admin, the redeemer or a live verifier
+      (`InvalidArbiter`); `setArbiter` refuses `0x0`.
+- [ ] **A stolen admin key alone can take provider stake within the caps** (it registers a
+      verifier, sets the arbiter, lowers the delay and sets params). Accepted by the owner on
+      2026-10-14 because the admin wallet is held as securely as the owner wallet; risk register §4a.
+
+### 6.6 Retiring a verifier key (F4)
+
+A record's verifier is re-checked at `executeSlash`, and an unusable key releases the record
+(`expireSlash`, `VerifierUnavailable`). A dispute can keep a record open for up to 30 days and an
+uphold adds the 7-day grace, so a rotation inside that span voids a timely ruling. **Rule:** a key
+retired by rotation stays **registered, not revoked, and unexpired** for at least
+`slashDelaySeconds() + 30 d + 7 d` (≈ 40 days at the 72 h default) after its LAST proposal; stop
+the backend signing with it, do not revoke it. **Revoke only a compromised key.** When enrolling,
+set `expiresAt` far enough out to cover that tail.
+
+### 6.7 Executing slashes, pauses and parameter changes
+
+- **All or wait (D-20).** `executeSlash` pays a record its WHOLE reservation or nothing. When the
+  provider's or the key's rolling window cannot take all of it, it refuses `SlashWindowNotDrained`
+  (the backend maps it to WAIT) and the record stays Pending; retry as the windows drain (they
+  reopen linearly over 24 h). There is no partial payment and no last-day exception: **an honest
+  slash crowded out for the whole 7-day grace expires unpaid.** So size `verifierDailyCap` with
+  large headroom over a day's expected judgements (or spread the load over more keys), and never
+  lower it below records already in flight.
+- **A pause longer than 7 days voids slashes.** The grace and the 30-day dispute timeout keep
+  running while paused; `executeSlash` is closed and `expireSlash` is open to anyone. **Before a
+  long pause, and again right after the unpause**, list every Pending or upheld record whose
+  `executableAt + 7 d` (or Disputed record whose `disputedAt + 30 d`) falls inside the pause, and
+  execute or re-propose them. The provider's rolling window is not frozen by a pause either.
+- **Recovering slashes a long pause voided — preferred, narrow (audit G G-4):** for each affected
+  provider, `setBlocked(provider, true)`, then unpause, re-propose its judgements under new request
+  ids, and `setBlocked(provider, false)` once they are proposed (the reservation then holds them).
+  A blocked provider cannot exit, and nothing else in the system is held.
+- **Only if that is impractical** (many providers): raise `unbondingPeriodSeconds` temporarily
+  before the unpause (`updateConfig`), so no provider whose slashes were voided can exit before
+  they are re-proposed (audit B B6). This delays every provider's exit, not just the affected ones.
+- **Two penalties per key-day.** `updateConfig` refuses `verifierDailyCap < 2 * penaltyAmount`
+  (`InvalidVerifierDailyCap`, audit G G-1), so one maximal record can never fill a key's day.
+- **Parameters re-price records in flight.** The split, the `treasury` and the `verifierDailyCap`
+  are read at execution time, not at proposal: an `updateConfig` changes what every pending record
+  will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
+  frozen.
+- **Key expiry.** The backend runs a key-expiry monitor (§6.6 gives the tail a key must cover).
 
 ### 6.3 Changing the owner or the admin (D-17)
 
@@ -393,9 +488,10 @@ cast send <configProxy> "registerVerifier(address,bytes32,uint64)" \
 **And know what `revokeVerifier` does before you ever need it**, because it does two irreversible
 things and only one of them is obvious (risk register §12): the key is retired for ever, **and**
 every judgement it has in flight becomes reapable by a stranger — `expireSlash`'s condition is
-`verifierUnavailable || graceElapsed`, and it is permissionless. That second effect is the point
+`verifierUnavailable || graceElapsed` (`|| disputeTimedOut` for a `Disputed` record), and it is
+permissionless. That second effect is the point
 of the design (it is what makes risk register §11's grief survivable) and it is exactly what makes
-a *mistaken* revocation expensive. **List the key's `Pending` records first, so they can be
+a *mistaken* revocation expensive. **List the key's `Pending` and `Disputed` records first, so they can be
 re-judged under the replacement key.**
 
 ## 7. The upgrade runbook
@@ -567,6 +663,35 @@ signed by the **current admin**, and the owner is created inside it.
    accepted); `owner()` is the fail-closed check.
 6. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `X402Config`
    (`docs/risk-register.md` §4a — the admin's indirect reach over stake and fees).
+
+### 7.5 The dispute upgrade (D-19) — prepared, not run
+
+All three implementations change; **no layout field moves** (`check-layout.sh` classifies Config
+and Stake as APPEND-ONLY, Escrow as identical) and no initializer runs (`CALL_*` empty). Config
+must land FIRST: the new Stake and Escrow call `CONFIG.assertActive`, `slashDelaySeconds` and
+`arbiter`, so behind the old Config their deposit, exit and slash doors revert.
+`UpgradeByOwner.s.sol` upgrades in the order Config, Stake, Escrow and refuses
+(`ConfigMustBeUpgradedFirst`) a Stake or Escrow upgrade behind a Config that lacks them — but that
+check and the codehash pins run only in forge's simulation. **On a Safe, send the three
+`safeCalldata()` lines as ONE MultiSend transaction, in that order**, never as three Safe
+transactions: executed out of order they brick the Stake deposit, exit and propose doors and every
+Escrow door until Config lands.
+
+1. Layout gate against the deployed commit: `./script/check-layout-branch.sh <deployed commit>`.
+2. `deploy()` with `UPGRADE_CONFIG=true UPGRADE_STAKE=true UPGRADE_ESCROW=true`; take each
+   `EXPECTED_CODEHASH_*` from the implementation `check-bytecode.sh` matched.
+3. Rehearse on an anvil fork with the owner impersonated, then `run()` (or the Safe batch).
+4. Post-check on chain: `script/postcheck-upgrade.sh` with the three `IMPL_*`,
+   `EXPECTED_SLASH_DELAY=259200` and `EXPECTED_ARBITER=0x0000000000000000000000000000000000000000`.
+5. **In the same session as the upgrade**, §6.5: appoint the arbiter. Until it is set nobody can
+   uphold; a dispute filed in that gap is NOT lost — it can still be upheld once the arbiter is
+   set, as long as that happens before its `disputedAt + 30 d` (audit G G-3). Then run
+   `script/postcheck-upgrade.sh` **a second time** with `EXPECTED_ARBITER=<the real arbiter>`.
+   Record `abiKeccak` / `abiFunctions` for Config (+7 functions, −1: `slashProviderBps` removed
+   in D-20) and Stake (+5: disputeSlash, upholdSlash and the three batch forms); Escrow's surface
+   is unchanged.
+6. **Tell the backend and frontend** before step 3: the exits now revert `ProgramPaused` while
+   paused, and every guarded door reverts `AddressBlocked` for a blocked party.
 
 ### The one thing an upgrade must never do: change the EIP-712 `name` or `version`
 

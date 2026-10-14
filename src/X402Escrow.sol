@@ -222,23 +222,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// it is a call on this contract, so the flag can reach it — and it should. A paused deposit
     /// traps nothing; it only stops a buyer funding an escrow whose redeem path is closed.
     ///
-    /// **The rule, stated so that it predicts all four money doors** — because the earlier
-    /// wording here did not. It said `set_paused.rs` draws the line at doors that "return money
-    /// to the party it already belongs to", and then added that "money coming *in* is on the
-    /// other side of that line". The second half is wrong: it predicts that
-    /// `X402Stake.depositStakeFor` should be gated, and it deliberately is not
-    /// (`Pause.t.sol::test_pauseNeverClosesAProvidersOwnStakeTopUp`). A review read
-    /// the two comments against each other and found they disagreed.
-    ///
-    /// The line that does predict the code: **the pause closes a door whose only purpose is
-    /// served by another door the pause has already closed, and never a door that lets a party
-    /// take their own money back or restore their own standing.**
-    ///
-    /// - a buyer deposit funds redemption, and redemption is paused — closing it is free;
-    /// - a provider stake top-up cures an under-stake, which is a PRECONDITION for the moment the
-    ///   pause lifts — closing it would extend the outage past the unpause;
-    /// - `withdraw()` and `withdrawStake()` return money to its owner — never gated, which is
-    ///   `set_paused.rs`'s own line and the one half of the old wording that was right.
+    /// **The pause rule since the dispute upgrade** (the owner's decision, reversing the earlier
+    /// "owner exits are never paused"): the pause closes every door that moves money or changes
+    /// a party's standing — deposits, redemption, the exit (`requestWithdraw`, `withdraw`), the
+    /// limits and delegate authorisation here, and every deposit, exit and slash door on
+    /// X402Stake. It leaves open only what reduces risk or releases a hold: `revokeDelegate`,
+    /// `disputeSlash`, `cancelSlash`, `expireSlash`, and the config roles' own calls. **It never
+    /// moves anybody's money**: there is no seize and no sweep, and a paused exit reopens on
+    /// unpause with the balance untouched. The same doors refuse a blocked party
+    /// (`X402Config.blocked`); both checks are the one `CONFIG.assertActive` call.
     ///
     /// **This is checks → INTERACTION → effects, and it is not strict CEI. Read this before
     /// copying the shape.** The pull has to happen before the credit, because what is credited is
@@ -254,7 +246,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// transfer, with the transfer strictly last, and `nonReentrant` is load-bearing there in a
     /// way it is not here.
     function depositFor(address buyer, uint64 amount) public nonReentrant {
-        if (CONFIG.paused()) revert ProgramPaused();
+        CONFIG.assertActive(buyer, msg.sender, address(0));
         if (buyer == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount(); // deposit_stake.rs:56
         _pullExact(msg.sender, amount);
@@ -343,8 +335,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
         ParamSet memory p = CONFIG.params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        if (CONFIG.paused()) revert ProgramPaused();
-        _redeem(v, sig, p);
+        _redeem(v, sig, p); // the pause is `_redeem`'s `CONFIG.assertActive` (audit F R7)
     }
 
     /// **Batching returns on EVM, because the constraint that forbade it does not exist here.**
@@ -372,7 +363,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// `params()` is read ONCE for the batch, for the same reason it is read once per redemption:
     /// a Config upgrade landing mid-transaction must not hand two items different treasuries. The
-    /// redeemer pin and the pause check are this function's; **every other rule is [`_redeem`]'s,
+    /// redeemer pin and the batch bounds are this function's; **every other rule, the pause
+    /// included, is [`_redeem`]'s,
     /// reused unchanged.** A batch with its own copy of the check list would be a second place for
     /// the replay rule to live, and `test_theBatchDelegatesToTheOneRedeemPathInTheSource` pins the
     /// delegation as source text so the copy cannot appear quietly.
@@ -388,7 +380,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     {
         ParamSet memory p = CONFIG.params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        if (CONFIG.paused()) revert ProgramPaused();
+        // No pause check here: every item's `CONFIG.assertActive` in `_redeem` refuses
+        // `ProgramPaused` (audit F R7), so an empty or malformed batch is diagnosed first.
 
         uint256 n = vs.length;
         if (n == 0) revert EmptyBatch();
@@ -402,9 +395,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         }
     }
 
-    /// The buyer's own ceilings — `set_escrow_limits.rs`. **Deliberately NOT pause-gated**:
-    /// lowering a limit is the safety direction, and an admin key must never be able to stop a
-    /// buyer tightening their own. `set_paused.rs:14-21` draws the same line.
+    /// The buyer's own ceilings — `set_escrow_limits.rs`. **Pause-gated and blocklist-gated
+    /// since the dispute upgrade** (the owner's decision): while paused nothing can redeem, so a
+    /// tightened limit protects nothing the pause has not already closed.
     ///
     /// `0` on either field is REFUSE, not "unlimited" (`state.rs:545-551`), which is why a
     /// never-configured escrow pays nobody and why this function is the whole of what
@@ -416,6 +409,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// **It consumes `authNonce`**, like every payer decision (D-18): a `SetLimitsBySig` signature
     /// the relayer withheld can then never land after this call and undo it.
     function setLimits(uint64 maxVoucherAmount, uint64 maxPerWindow) external nonReentrant {
+        CONFIG.assertActive(msg.sender, address(0), address(0));
         escrows[msg.sender].authNonce += 1;
         _setLimits(msg.sender, maxVoucherAmount, maxPerWindow);
     }
@@ -443,7 +437,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// `requestWithdrawBySig`, `authorizeDelegateBySig` and `revokeDelegateBySig`). The relayer key
     /// can never move USDG: every money-moving path is authorised by
     /// `msg.sender == buyer`, by a buyer EIP-712 signature over an exact amount, or by a
-    /// registered verifier's attestation plus 72 hours. This one exists because a buyer
+    /// registered verifier's attestation plus the slash delay. This one exists because a buyer
     /// *lowering* a ceiling — the safety direction, and the one an incident needs — must never be
     /// blocked by not holding gas. `withdraw` does not get a twin, ever; the argument is at its
     /// declaration.
@@ -454,9 +448,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// and the fee payer are independent by construction. EVM has no such split, so the consent
     /// has to travel as a message, which is what `SET_LIMITS_TYPEHASH` and [`_consumeAuth`] are.
     ///
-    /// Not pause-gated, exactly as [`setLimits`] is not: `set_escrow_limits.rs:16-19` takes no
-    /// `Config` at all, and "there is no account here to read a pause flag out of" is the
-    /// structural form of the same promise.
+    /// Pause-gated and blocklist-gated exactly as [`setLimits`] is (a divergence from
+    /// `set_escrow_limits.rs:16-19`, which takes no `Config` at all).
     function setLimitsBySig(
         address buyer,
         uint64 maxVoucherAmount,
@@ -465,6 +458,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
+        CONFIG.assertActive(buyer, address(0), address(0));
         _consumeAuth(
             buyer,
             Voucher712.hashSetLimits(buyer, maxVoucherAmount, maxPerWindow, nonce, deadline),
@@ -475,8 +469,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         _setLimits(buyer, maxVoucherAmount, maxPerWindow);
     }
 
-    /// Starts the buyer's exit clock — `request_withdraw.rs:27-44`. It moves no money, so it is
-    /// not pause-gated and it may be relayed.
+    /// Starts the buyer's exit clock — `request_withdraw.rs:27-44`. It moves no money and it may
+    /// be relayed. **Pause-gated and blocklist-gated since the dispute upgrade** (the owner's
+    /// decision, reversing the earlier "never paused" rule).
     ///
     /// The delay is `WITHDRAW_DELAY_SECONDS`, sized by `constants.rs:285`'s build-time assertion
     /// rather than chosen: every voucher the buyer signed *before* asking for their money back is
@@ -489,6 +484,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// **It consumes `authNonce`**, like every payer decision (D-18): a withheld
     /// `RequestWithdrawBySig` can then never cancel or restart this request.
     function requestWithdraw(uint64 amount) external nonReentrant {
+        CONFIG.assertActive(msg.sender, address(0), address(0));
         escrows[msg.sender].authNonce += 1;
         _requestWithdraw(msg.sender, amount);
     }
@@ -504,6 +500,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
+        CONFIG.assertActive(buyer, address(0), address(0));
         _consumeAuth(
             buyer,
             Voucher712.hashRequestWithdraw(buyer, amount, nonce, deadline),
@@ -567,9 +564,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// The buyer takes their own money out of their own escrow — `handle_withdraw`
     /// (`withdraw.rs:113-152`), and the second half of the two-step exit [`requestWithdraw`]
-    /// opens. It is the door this whole PR exists to keep open: a full compromise of every key
-    /// held in an environment variable must be unable to stop a buyer taking their own money out,
-    /// and unable to take it for them.
+    /// opens. A full compromise of every key held in an environment variable (the backend's)
+    /// can neither stop a buyer taking their own money out nor take it for them. The cold ADMIN
+    /// can hold it in place — pause and block close this door since D-19, an accepted risk
+    /// (risk register §18) — but no key can move it anywhere else.
     ///
     /// # It takes no destination and pays `msg.sender`
     ///
@@ -596,16 +594,14 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// ETH from anywhere, or the relayer funds their address with exactly the gas for one
     /// `withdraw`: bounded, logged, alerted, and never a way to move USDG.
     ///
-    /// # It is never pause-gated
+    /// # It is pause-gated and blocklist-gated (since the dispute upgrade)
     ///
-    /// `withdraw.rs:22-33` is explicit that its `Config` is loaded for one field and that there is
-    /// "no `paused` check anywhere in this file". An admin key that could freeze an owner's exit
-    /// is exactly what the pause rule (owner exits are never paused) exists to prevent, and the
-    /// party
-    /// holding that switch is the party this door protects people from. Nothing here is for a later
-    /// reader to "close
-    /// the gap" on. This port does not load `Config` at all, because the one field Anchor needs it
-    /// for — `stake_mint` — is `ASSET`, an immutable of this contract.
+    /// `withdraw.rs:22-33` has "no `paused` check anywhere in this file", and this door followed
+    /// it until the owner decided otherwise: while paused, or while the buyer is blocked, the
+    /// exit is refused. **Neither gate moves the money** — it stays the buyer's, in this escrow,
+    /// and the exit reopens on unpause or unblock. A stolen admin key can therefore hold an exit
+    /// closed for as long as it holds the pause; that risk is accepted and recorded in
+    /// `docs/risk-register.md`.
     ///
     /// # What it pays, and what it refuses
     ///
@@ -630,6 +626,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// **`totalFunded` is not touched.** It is the lifetime money-in counter, so a balance that
     /// falls must not move it; `_credit` is its only writer.
     function withdraw() external nonReentrant {
+        CONFIG.assertActive(msg.sender, address(0), address(0));
         Escrow storage e = escrows[msg.sender];
 
         uint64 requested = e.withdrawRequested;
@@ -800,6 +797,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // returns the delegate, or `address(0)` when the payer itself signed.
         address delegate =
             _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);
+
+        // The pause and the blocklist — payer, payee and (when there is one) the delegate that
+        // signed. Here and not at the entry point because the delegate is only known once the
+        // signature has been recovered; this is the redeem paths' only pause check (audit F R7).
+        CONFIG.assertActive(v.payer, v.provider, delegate);
 
         // `state.rs::admit_spend` (`state.rs:591-612`). A limit of `0` refuses everything, so an
         // unarmed escrow needs no separate branch.
@@ -979,14 +981,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// revocation must kill a withheld relayed authorisation. The cost is that a `SetLimits`
     /// signature still in flight dies too and has to be signed again.
     ///
-    /// Not pause-gated: it moves no money, and a payer must always be able to change who may
-    /// sign for them.
+    /// Pause-gated and blocklist-gated (payer and delegate) since the dispute upgrade: a new
+    /// grant adds authority, which is the risk direction. REVOKING is never gated.
     function authorizeDelegate(
         address delegate,
         uint64 maxVoucherAmount,
         uint64 maxPerWindow,
         uint64 validUntil
     ) external nonReentrant {
+        CONFIG.assertActive(msg.sender, delegate, address(0));
         escrows[msg.sender].authNonce += 1;
         _authorizeDelegate(msg.sender, delegate, maxVoucherAmount, maxPerWindow, validUntil);
     }
@@ -1005,6 +1008,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
+        CONFIG.assertActive(payer, delegate, address(0));
         _consumeAuth(
             payer,
             Voucher712.hashAuthorizeDelegate(
@@ -1027,7 +1031,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     }
 
     /// The relayed twin of [`revokeDelegate`] — the safety direction, so it must never be
-    /// blocked by the payer not holding gas.
+    /// blocked by the payer not holding gas. Neither revoke door is pause- or blocklist-gated.
     function revokeDelegateBySig(
         address payer,
         address delegate,

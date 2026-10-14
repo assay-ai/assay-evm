@@ -13,6 +13,9 @@
 #   IMPL_CONFIG IMPL_STAKE IMPL_ESCROW   (each optional) the implementation each slot must hold
 #   EXPECTED_OWNER                    (optional) config.owner()
 #   EXPECTED_PENDING_OWNER            (optional) config.pendingOwner(); 0x0…0 for "none"
+#   EXPECTED_SLASH_DELAY              (optional) config.slashDelaySeconds(); 259200 right after
+#                                     the dispute upgrade (runbook §7.5)
+#   EXPECTED_ARBITER                  (optional) config.arbiter(); 0x0…0 for "none"
 #
 # Exit 0 when every check given holds; non-zero naming the first that does not.
 set -euo pipefail
@@ -47,5 +50,15 @@ if [ -n "${EXPECTED_PENDING_OWNER:-}" ]; then
   got=$(cast call --rpc-url "$RPC" "$PROXY_CONFIG" 'pendingOwner()(address)')
   [ "$(lc "$got")" = "$(lc "$EXPECTED_PENDING_OWNER")" ] || fail "config.pendingOwner() is $got, want $EXPECTED_PENDING_OWNER"
   pass "config.pendingOwner() = $got"
+fi
+if [ -n "${EXPECTED_SLASH_DELAY:-}" ]; then
+  got=$(cast call --rpc-url "$RPC" "$PROXY_CONFIG" 'slashDelaySeconds()(uint64)') || fail "config has no slashDelaySeconds() — the dispute upgrade of Config did not land"
+  [ "${got%% *}" = "$EXPECTED_SLASH_DELAY" ] || fail "config.slashDelaySeconds() is $got, want $EXPECTED_SLASH_DELAY"
+  pass "config.slashDelaySeconds() = $got"
+fi
+if [ -n "${EXPECTED_ARBITER:-}" ]; then
+  got=$(cast call --rpc-url "$RPC" "$PROXY_CONFIG" 'arbiter()(address)') || fail "config has no arbiter()"
+  [ "$(lc "$got")" = "$(lc "$EXPECTED_ARBITER")" ] || fail "config.arbiter() is $got, want $EXPECTED_ARBITER"
+  pass "config.arbiter() = $got"
 fi
 echo "  on-chain post-check passed"

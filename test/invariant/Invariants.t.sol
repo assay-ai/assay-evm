@@ -35,7 +35,7 @@ contract InvariantsTest is Test {
         e[7] = EscrowHandler.donate.selector;
         targetSelector(FuzzSelector({addr: address(escrowHandler), selectors: e}));
 
-        bytes4[] memory s = new bytes4[](8);
+        bytes4[] memory s = new bytes4[](10);
         s[0] = StakeHandler.depositStake.selector;
         s[1] = StakeHandler.requestUnstake.selector;
         s[2] = StakeHandler.withdrawStake.selector;
@@ -44,6 +44,8 @@ contract InvariantsTest is Test {
         s[5] = StakeHandler.cancelSlash.selector;
         s[6] = StakeHandler.expireSlash.selector;
         s[7] = StakeHandler.warp.selector;
+        s[8] = StakeHandler.disputeSlash.selector;
+        s[9] = StakeHandler.upholdSlash.selector;
         targetSelector(FuzzSelector({addr: address(stakeHandler), selectors: s}));
 
         targetContract(address(escrowHandler));
@@ -91,6 +93,17 @@ contract InvariantsTest is Test {
     /// `pendingSlash`, or lowered it twice, shows up here and in no unit test.
     function invariant_pendingSlashEqualsTheSumOfPendingReservations() public view {
         assertEq(stakeHandler.sumOfPendingSlash(), stakeHandler.sumOfPendingReservations());
+    }
+
+    /// The dispute upgrade's statuses: the vault's view of every record agrees with the handler's
+    /// book — open means `Pending` or `Disputed`, closed means `Executed` or `Cancelled`.
+    function invariant_everyRecordIsInTheStateTheBookSays() public view {
+        assertTrue(stakeHandler.everyRecordIsInTheStateTheBookSays());
+    }
+
+    /// All or wait (D-20): `applied == reserved` for every Executed record.
+    function invariant_everyExecutedRecordWasPaidInFull() public view {
+        assertTrue(stakeHandler.everyExecutedRecordWasPaidInFull());
     }
 
     /// A hold can never exceed the collateral it is held against, per provider.
@@ -160,6 +173,9 @@ contract InvariantsTest is Test {
         k.proposeSlash(1, 1_000_000); // -> cancelled
         k.proposeSlash(2, 1_000_000); // -> expired
         k.cancelSlash(1);
+        k.proposeSlash(3, 1_000_000); // -> disputed, upheld, executed
+        k.disputeSlash(3);
+        k.upholdSlash(3);
         k.warp(3 * 86_400); // past SLASH_DELAY_SECONDS
         k.executeSlash(0);
         k.warp(4 * 86_400);
@@ -186,7 +202,9 @@ contract InvariantsTest is Test {
             );
         }
 
-        string[8] memory stakeOps = [
+        string[10] memory stakeOps = [
+            "disputeSlash",
+            "upholdSlash",
             "depositStake",
             "requestUnstake",
             "withdrawStake",
@@ -212,6 +230,8 @@ contract InvariantsTest is Test {
         invariant_stakeAccountingIdentity();
         invariant_pendingSlashEqualsTheSumOfPendingReservations();
         invariant_atRiskCoversPendingSlash();
+        invariant_everyRecordIsInTheStateTheBookSays();
+        invariant_everyExecutedRecordWasPaidInFull();
         invariant_theStakeVaultHoldsAtLeastWhatItOwes();
 
         // …and the state is not the empty one: the assertions above would all hold over an
@@ -237,7 +257,9 @@ contract InvariantsTest is Test {
     }
 
     function _stakeLanded() internal view returns (uint256 n) {
-        string[8] memory ops = [
+        string[10] memory ops = [
+            "disputeSlash",
+            "upholdSlash",
             "depositStake",
             "requestUnstake",
             "withdrawStake",

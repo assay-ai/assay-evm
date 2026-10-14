@@ -1591,6 +1591,16 @@ so the campaign lands nothing at all.
 
 ### The pause matrix
 
+> **Changed deliberately in D-19 (the dispute upgrade), by the owner's explicit decision.** The
+> exit rows below (`test_pauseNeverClosesTheBuyersExit`,
+> `test_pauseNeverClosesTheRequestThatStartsTheExitClock`, `test_pauseNeverClosesTheBuyersOwnLimits`,
+> `test_pauseNeverClosesAProvidersOwnStakeTopUp`, `test_pauseNeverClosesTheProvidersExit`) said
+> "if this test ever needs changing, the change is wrong"; the owner overrode that rule, and they
+> were replaced by `test_pauseClosesTheBuyersExitAndControls`, `test_pauseClosesEveryStakeDoor`
+> and `test_aPausedExitReopensWithTheBalanceUntouched` (the pause still moves no money). The
+> release rows, the upgrade row and the new `test_pauseNeverClosesTheDelegateRevocation` /
+> `X402Stake.dispute.t.sol::test_pauseNeverClosesTheDispute` stand. The text below is the history.
+
 Not mutation rows — the `never` half of the matrix is proved by tests that would fail if a
 `whenNotPaused` were *added*, which is the opposite direction from a deleted guard. The rows that
 matter, and what each refuses:
@@ -1809,3 +1819,111 @@ things it has checked rather than assumed.
   and referenced from `depositStakeFor`: the pause closes a door whose only purpose is served by
   another door the pause has already closed, and never one that lets a party take their own money
   back or restore their own standing.
+
+---
+
+## The dispute upgrade (D-19)
+
+Each mutation applied alone to the committed source, the named test run, the file restored
+byte-exact. All eight die for the stated reason.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| D1 | `_dispute`: `if (msg.sender != rec.provider) revert NotSlashedProvider();` | deleted | `X402Stake.dispute.t.sol::test_wrongSigner_onlyTheSlashedProviderMayDispute` | **DIES**: `[FAIL: next call did not revert as expected]` — anybody could freeze a provider's judgement |
+| D2 | `_uphold`: `if (arb == rec.verifier) revert ArbiterIsVerifier();` | deleted | `test_wrongSigner_anArbiterThatIsTheRecordsVerifierCannotUphold` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D3 | `_dispute`: `block.timestamp >= rec.executableAt` | `>=` → `>` | `test_boundary_disputeClosesAtExecutableAt` | **DIES**: `[FAIL: next call did not revert as expected]` — the shared instant belongs to `executeSlash`, not to the dispute |
+| D4 | `expireSlash`: a `Disputed` record times out on `disputedAt + DISPUTE_TIMEOUT_SECONDS` | → `executableAt + SLASH_EXECUTION_GRACE_SECONDS` | `test_disputeThenThirtyDaysThenAnybodyExpires` | **DIES**: `[FAIL: next call did not revert as expected]` — the ordinary grace would release a dispute after ten days |
+| D5 | `setBlocked`: `msg.sender != admin && (!value \|\| msg.sender != arbiter)` | → `msg.sender != admin && msg.sender != arbiter` | `X402Config.arbiter.t.sol::test_theArbiterMayBlockButNeverUnblock` | **DIES**: `[FAIL: next call did not revert as expected]` — the arbiter could unblock |
+| D6 | `assertActive`: `_blocked[a] \|\| _blocked[b] \|\| _blocked[c]` | third slot dropped | `AddressBlocklist.t.sol::test_redemptionRefusesABlockedPayerPayeeOrDelegate` | **DIES**: `[FAIL: next call did not revert as expected]` — a blocked delegate's voucher would redeem |
+| D7 | `_assertBatch`: `if (n > Constants.MAX_SLASH_BATCH) revert BatchTooLarge();` | deleted | `test_wrongArgs_anEmptyAndAnOversizeBatchAreRefused` | **DIES**: `[FAIL: Error != expected error: SlashNotPending() != BatchTooLarge()]` |
+| D8 | `_release`: accepts `Pending` **or** `Disputed` | `Disputed` dropped | `test_happyPath_theAdminCancelsADisputedRecord` | **DIES**: `[FAIL: SlashNotPending()]` — a disputed record could be released only by the 30-day timeout |
+
+### Review round (security review of the dispute upgrade, F1, F2, I4)
+
+The reviewer's proof tests are now regressions in `X402Stake.dispute.t.sol` (`test_review_*`),
+`X402Config.arbiter.t.sol` and `AddressBlocklist.t.sol`, asserting the fixed behaviour (F1, F2,
+I4) or the documented scope (F3, F4, I1). D2 is now proved through an arbiter enrolled as a
+verifier AFTER its appointment, because `setArbiter` refuses a live verifier. All six die.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| D9 | `_uphold`: `block.timestamp >= disputedAt + DISPUTE_TIMEOUT_SECONDS` → `DisputeTimedOut` | deleted | `test_review_F1_upholdAfterTheDisputeTimeoutIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` — the reviewer's day-40 uphold lands again |
+| D10 | same | `>=` → `>` | `test_review_F1_theTimeoutInstantBelongsToExpireAlone` | **DIES**: `[FAIL: next call did not revert as expected]` — both doors open at the instant |
+| D11 | `_uphold`: `if (nowTs > rec.executableAt) rec.executableAt = nowTs;` | → unconditional `rec.executableAt = nowTs;` | `test_review_F2_upholdNeverPullsExecutionBeforeTheFrozenDelay` | **DIES**: `[FAIL: log != expected log]` — `SlashUpheld.executableAt` is now, not the frozen instant (the execute-before-frozen assertion below it would follow) |
+| D12 | `_dispute`: `if (rec.disputedAt != 0) revert AlreadyDisputed();` | deleted | same | **DIES**: `[FAIL: next call did not revert as expected]` — an upheld record still inside its frozen delay is disputed a second time |
+| D13 | `setArbiter`: `newArbiter == admin \|\| …` | admin term dropped | `X402Config.arbiter.t.sol::test_wrongArgs_setArbiterRefusesTheAdminAndALiveVerifier` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D14 | `setArbiter`: `… \|\| (k.registered && !k.revoked)` | verifier term dropped | same | **DIES**: `[FAIL: next call did not revert as expected]` |
+
+### Audit round (audits A, B, C and D of `a4f97ab`)
+
+The auditors' proofs are regressions in `test/X402Stake.audit.t.sol` and, for audit D, the
+adopted suite `test/invariant/audit-d/` (findings inverted to `test_regression_AD*`). Nine rows
+die; D17 is an equivalent mutant.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| D15 | `executeSlash`: the cap write-off refusal `applied < owed && nowTs < executableAt + GRACE - WINDOW` → `SlashWindowNotDrained` | `false &&` prefixed | `test_audit_M1_aWindowCutPaymentIsRefusedUntilTheWindowDrains` | **DIES**: `[FAIL: next call did not revert as expected]` — the provider's dust execution one second after the window reopens lands again |
+| D16 | same, the last-day boundary `<` | `<` → `<=` | `test_audit_theLastDayOfTheGraceAllowsAPartialPayment` | **DIES**: `[FAIL: SlashWindowNotDrained()]` — the boundary instant belongs to the partial payment |
+| D17 | `owed = min(reserved, atRisk)` | → `owed = reserved` | whole suite (non-invariant) | **SURVIVED** — `519 tests passed`. **Equivalent mutant.** `atRisk >= pendingSlash >= reserved` on every reachable state: a reservation is cut to the free balance at proposal, and an execution lowers `atRisk` by `taken <= reserved` while lowering `pendingSlash` by the whole `reserved`. So `atRisk < reserved` cannot arise and both spellings compute the same `owed`. Kept because the rule is stated in those terms ("a smaller stake still pays what it has") and `invariant_atRiskCoversPendingSlash` holds the premise |
+| D18 | `setArbiter`: `newArbiter == address(0)` | term dropped | `test_audit_M2_theArbiterCanNeverBeUnset` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D19 | `setAdmin`: `newAdmin == arbiter` | term dropped | `test_audit_L3_theAdminCanNeverBecomeTheArbiter` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D20 | `registerVerifier`: `verifier == arbiter` | term dropped | `test_audit_B12_aVerifierIsNeverTheAdminOrTheArbiter` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D21 | `setBlocked`: `if (!value) revert ArbiterCannotUnblock();` | deleted | `test_audit_B10_theTwoMisleadingErrorsHaveTheirOwnNames` | **DIES**: `[FAIL: next call did not revert as expected]` — the arbiter unblocks |
+| D22 | `_validate`: `minimumStake * slashCapBps / BPS == 0` → `InvalidMinimumStake` | deleted | `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D23 | `_validate`: `penaltyAmount > verifierDailyCap` → `InvalidVerifierDailyCap` | deleted | `test_audit_C7_aPenaltyAboveTheDailyCapIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D24 | `_validate`: `redeemer == arbiter` → `RedeemerIsArbiter` | deleted | `AuditDFindings.t.sol::test_regression_AD1b_theArbiterIsNeverTheRedeemer` | **DIES**: `[FAIL: next call did not revert as expected]` |
+
+---
+
+## Simplification (audit F, D-20)
+
+### Guards removed, and why no row can prove them any more
+
+Removed code has no mutation to run. Each entry names the row it retires and the argument that
+the guard defended nothing reachable (audit F §3: `reserved <= pendingSlash <= atRisk` on every
+reachable state, held by `invariant_atRiskCoversPendingSlash`,
+`invariant_pendingSlashEqualsTheSumOfPendingReservations` and audit D's
+`invariant_pendingSlashIsTheSumOfOpenReservations`).
+
+| Removed | Was | Retires | Argument |
+|---|---|---|---|
+| `executeSlash`: `if (atRisk == 0) revert NothingToSlash();` | defensive | — | `atRisk >= reserved > 0`. `NothingToSlash` stays, raised by `proposeSlash` |
+| `executeSlash`: `atRiskCapped` / `owed = min(reserved, atRisk)` | defensive, write-off leg | **D17** (the equivalent mutant) | `owed == reserved` on every state; the rule now compares against `rec.reserved` |
+| `executeSlash`, `_release`: `pendingSlash > released ? … : 0` | saturation | **V2** keeps proving the release | now checked `-=`: a broken invariant REVERTS instead of clamping |
+| `proposeSlash`, `withdrawableOf`: `atRisk > pendingSlash ? … : 0` | saturation | — | now checked; a broken invariant reverts |
+| `_uphold`: `if (arb == rec.verifier) revert ArbiterIsVerifier();` | per-record role check | **D2** | Config's `_assertRolesDistinct` keeps the arbiter off every live verifier, so equality needs a REVOKED key, whose record can never pay; `test_anArbiterThatWasTheRecordsRevokedVerifierCannotMakeItPay` shows the uphold lands and the record still only expires |
+| `registerVerifier`'s `VerifierIsAdminOrArbiter`, `_validate`'s `RedeemerIsArbiter`, the inline checks in `setAdmin` / `setArbiter` | role checks | **D19, D20, D24** (now via F2, F3) | moved into `_assertRolesDistinct`, errors folded into `InvalidAdmin` / `InvalidArbiter` |
+| `_validate`: `unbonding < slashDelaySeconds() + SLASH_PATH_MARGIN_SECONDS`; `setSlashDelay`'s live-unbonding bound | coupling | — | the reservation holds a proposed penalty whatever the delay; `test_longDelayShortUnbondingCannotBeOutrun` |
+| `slashProviderBps()` and its saturation | view | **C19, C22, C42** | nothing read it on chain |
+| `redeemVoucher` / `redeemVoucherBatch`: `if (CONFIG.paused()) revert ProgramPaused();` | duplicate | — | `_redeem`'s `CONFIG.assertActive` refuses it; `test_pauseClosesBothRedemptionDoors` still dies without that call |
+
+### The new single points, mutated
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| F1 | `_deadline`: `status == Disputed ? disputedAt + 30 d : executableAt + 7 d` | `==` → `!=` (branches swapped) | whole suite (non-invariant) | **DIES** in five suites, e.g. `[FAIL: SlashExecutionWindowClosed()] test_B11_B12_theExecutionWindowOpensAtExactAndClosesBeforeItsFarEdge`, `test_boundary_disputeClosesAtExecutableAt`, `test_aPreUpgradeRecordTakesPartInTheDispute` |
+| F2 | `_assertRolesDistinct`: the admin is not a live verifier | deleted | `test_audit_B12_aVerifierIsNeverTheAdminOrTheArbiter` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| F3 | `_assertRolesDistinct`: `arb == _params.redeemer` | term dropped | `test_regression_AD1b_theArbiterIsNeverTheRedeemer` | **DIES**: `[FAIL: next call did not revert as expected]` |
+
+### All or wait (owner decision on audit F R4)
+
+Removed: the partial-application code (the `windowRemaining` / `keyRemaining` clamps and their
+`SlashCapExceeded` / `VerifierDailyCapExceeded` refusals at execution) and the last-day exception.
+This retires **D15** and **D16** (the write-off refusal and its 24 h boundary): there is no
+partial payment left to refuse. The A1–A3 window tests were rewritten from "clamps" to "waits,
+then pays in full", and still hold A1 (the third judgement waits only if the key meter
+accumulates) and A3 (the stepped-back clock is caught by a 250 000 judgement that fits only
+under a re-anchored meter). New invariant: `invariant_everyExecutedRecordWasPaidInFull`
+(`applied == reserved`), and audit D's handler now flags `applied != reserved`.
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| F4 | `executeSlash`: `providerCarried + reserved > capAllowance` → `SlashWindowNotDrained` | term → `false` | `test_theProvidersRollingWindowMakesTheSecondJudgementWait` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| F5 | same, `keyCarried + reserved > verifierDailyCap` | term → `false` | `test_theVerifierDailyCapMakesAJudgementWaitThenPayInFull` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| F6 | the provider term's boundary (`>`, so filling the window exactly is admitted) | `>` → `>=` | `test_theProvidersRollingWindowMakesTheSecondJudgementWait` | **DIES**: `[FAIL: SlashWindowNotDrained()]` |
+
+### Final review round (audit G)
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| G1 | `_validate`: `verifierDailyCap < 2 * penaltyAmount` → `InvalidVerifierDailyCap` | `2 *` dropped (back to one penalty) | `X402Stake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` — a cap of one penalty is admitted again |

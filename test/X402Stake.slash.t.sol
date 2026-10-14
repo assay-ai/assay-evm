@@ -696,77 +696,80 @@ contract X402StakeSlashTest is Fixture {
         assertEq(stake.totalStaked(), 0);
     }
 
-    /// The verifier's daily cap is metered at EXECUTION against the LIVE cap, and it clamps
-    /// `applied` rather than refusing outright. Proposal reserves nothing against it, so a
+    /// The verifier's daily cap is metered at EXECUTION against the LIVE cap, and since D-20 it
+    /// is ALL OR WAIT: a judgement that does not fit whole waits (`SlashWindowNotDrained`) and
+    /// pays in full once the window has drained. Proposal reserves nothing against it, so a
     /// leaked key cannot burn a day's capacity on judgements it never intends to execute.
-    ///
-    /// The fixture's cap (500 USDG) is far above two 1-USDG judgements, so the cap is lowered
-    /// with `updateConfig`, which binds immediately (D-6).
-    function test_theVerifierDailyCapClampsAtExecution() public {
+    function test_theVerifierDailyCapMakesAJudgementWaitThenPayInFull() public {
         _propose(bytes32("r1"), 1_000_000);
         _propose(bytes32("r2"), 1_000_000);
 
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_500_000; // room for one and a half judgements
+        p.penaltyAmount = 750_000; // the ceiling for NEW records (G-1: cap >= 2 * penalty)
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
+        stake.executeSlash(bytes32("r1")); // the key's window now holds 1_000_000
+        vm.expectRevert(SlashWindowNotDrained.selector); // only 500_000 of room: wait
+        stake.executeSlash(bytes32("r2"));
+        assertEq(stake.stakeOf(provider).pendingSlash, 1_000_000, "r2 still reserved");
 
-        stake.executeSlash(bytes32("r1")); // applied 1_000_000; the key's window now holds it
-        stake.executeSlash(bytes32("r2")); // keyRemaining 500_000 → applied clamps to 500_000
+        vm.warp(block.timestamp + 43_200); // half drained: 500_000 carried + 1_000_000 fits
+        stake.executeSlash(bytes32("r2"));
 
         assertEq(stake.slashRecordOf(bytes32("r1")).applied, 1_000_000);
-        assertEq(stake.slashRecordOf(bytes32("r2")).applied, 500_000);
-        assertEq(usdg.balanceOf(beneficiary), 600_000 + 300_000);
-        assertEq(usdg.balanceOf(treasury), 300_000 + 150_000);
-        // r2's unapplied remainder was RELEASED, not kept pending — Pending is left once.
+        assertEq(stake.slashRecordOf(bytes32("r2")).applied, 1_000_000, "whole, never partial");
+        assertEq(usdg.balanceOf(beneficiary), 600_000 + 600_000);
+        assertEq(usdg.balanceOf(treasury), 300_000 + 300_000);
         assertEq(stake.stakeOf(provider).pendingSlash, 0);
     }
 
-    /// And when the key's window is empty the judgement is refused outright, with the key's own
-    /// diagnosis rather than the provider's.
-    function test_wrongState_anExhaustedVerifierWindowRefusesTheNextJudgement() public {
+    /// And when the key's window cannot take the whole judgement it waits, Pending, with its
+    /// reservation intact — half a day is not enough here, a full day is.
+    function test_wrongState_anExhaustedVerifierWindowMakesTheNextJudgementWait() public {
         _propose(bytes32("r1"), 1_000_000);
         _propose(bytes32("r2"), 1_000_000);
 
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_000_000; // room for exactly one
+        p.penaltyAmount = 500_000; // the ceiling for NEW records (G-1: cap >= 2 * penalty)
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
         stake.executeSlash(bytes32("r1"));
-        vm.expectRevert(VerifierDailyCapExceeded.selector);
+        vm.expectRevert(SlashWindowNotDrained.selector);
         stake.executeSlash(bytes32("r2"));
-
-        // The record survives as Pending, its reservation intact, to be retried as the window
-        // drains — which is the reason the guard reverts rather than applying zero.
         assertEq(uint256(stake.slashRecordOf(bytes32("r2")).status), uint256(SlashStatus.Pending));
         assertEq(stake.stakeOf(provider).pendingSlash, 1_000_000);
 
-        // Half a day later the drain has returned half the capacity and it goes through.
-        vm.warp(block.timestamp + 43_200);
+        // Absolute instants, not `block.timestamp + …`: under via-ir a second `block.timestamp`
+        // read in one function can return the value from before the first warp.
+        uint256 t0 = stake.slashRecordOf(bytes32("r1")).executedAt;
+        vm.warp(t0 + 43_200); // 500_000 carried: still no room for 1_000_000
+        vm.expectRevert(SlashWindowNotDrained.selector);
         stake.executeSlash(bytes32("r2"));
-        assertEq(uint256(stake.slashRecordOf(bytes32("r2")).status), uint256(SlashStatus.Executed));
+
+        vm.warp(t0 + 86_400); // fully drained
+        stake.executeSlash(bytes32("r2"));
+        assertEq(stake.slashRecordOf(bytes32("r2")).applied, 1_000_000);
     }
 
     /// One key, THREE judgements inside one window, each well under the cap. The cap is the
-    /// key's TOTAL reach per `SLASH_WINDOW_SECONDS`, so the third must be clamped to whatever
-    /// the first two left of it — the sum is the cap, not a multiple of it.
+    /// key's TOTAL reach per `SLASH_WINDOW_SECONDS`, so the third must WAIT for what the first
+    /// two already spent of it to drain — the sum is the cap, not a multiple of it.
     ///
-    /// **Three, not two, and that is the whole point of this test.** The two tests above each
-    /// execute exactly two records, and with two executions `vw.slashedInWindow = keyCarried +
-    /// applied` and a meter that merely REMEMBERS THE LAST execution
-    /// (`vw.slashedInWindow = applied`) are indistinguishable: the second execution reads a
-    /// meter the first wrote, either way. The divergence first appears on the third. An
-    /// review proved the accumulating `+` could be deleted with all 378 tests still
-    /// green, and `Config.verifierDailyCap` is the only bound on a leaked verifier key short of
-    /// `revokeVerifier` — `slashCapBps` bounds the loss to one provider, this bounds the reach
-    /// of one key across every provider. So it gets held by a test that can see it.
+    /// **Three, not two, and that is the whole point of this test.** With two executions
+    /// `vw.slashedInWindow = keyCarried + applied` and a meter that merely REMEMBERS THE LAST
+    /// execution (`vw.slashedInWindow = applied`) are indistinguishable; the divergence first
+    /// appears on the third (mutation row A1). Under the forgetful meter the third would land at
+    /// once (400 000 + 400 000 <= 1 000 000); under the real one it waits.
     function test_oneKeysDailyCapBindsAcrossThreeJudgements() public {
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_000_000;
+        p.penaltyAmount = 500_000; // G-1: cap >= 2 * penalty
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
@@ -779,25 +782,22 @@ contract X402StakeSlashTest is Fixture {
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
         stake.executeSlash(bytes32("r1"));
         stake.executeSlash(bytes32("r2"));
-        stake.executeSlash(bytes32("r3"));
+        vm.expectRevert(SlashWindowNotDrained.selector);
+        stake.executeSlash(bytes32("r3")); // 800_000 + 400_000 > 1_000_000
 
-        uint64 a1 = stake.slashRecordOf(bytes32("r1")).applied;
-        uint64 a2 = stake.slashRecordOf(bytes32("r2")).applied;
-        uint64 a3 = stake.slashRecordOf(bytes32("r3")).applied;
-        assertEq(a1, 400_000, "r1");
-        assertEq(a2, 400_000, "r2");
-        assertEq(a3, 200_000, "r3 must be clamped by what r1+r2 already spent of the key's cap");
-        assertEq(uint256(a1) + a2 + a3, 1_000_000, "the key's 24h reach is the cap, not a multiple");
+        vm.warp(block.timestamp + 21_600); // a quarter day: 600_000 carried, 400_000 fits
+        stake.executeSlash(bytes32("r3"));
+        assertEq(stake.slashRecordOf(bytes32("r3")).applied, 400_000, "whole, after the wait");
     }
 
-    /// The PROVIDER's own rolling window, against the allowance frozen on each record: it
-    /// clamps the second judgement and refuses the third.
-    function test_theProvidersRollingWindowClampsAndThenRefuses() public {
+    /// The PROVIDER's own rolling window, against the allowance frozen on each record: the
+    /// second judgement does not fit whole, so it waits, and pays in full once the window drains.
+    function test_theProvidersRollingWindowMakesTheSecondJudgementWait() public {
         address capped = address(0xCA9);
         _stakeFor(capped, 15_000_000); // slashCapBps 1_000 → capAllowance 1_500_000
 
-        bytes32[3] memory ids = [bytes32("c1"), bytes32("c2"), bytes32("c3")];
-        for (uint256 i = 0; i < 3; i++) {
+        bytes32[2] memory ids = [bytes32("c1"), bytes32("c2")];
+        for (uint256 i = 0; i < 2; i++) {
             SlashAttestation memory a = _att(ids[i], 1_000_000);
             a.provider = capped;
             stake.proposeSlash(a, _sign(a, verifierKeyPk));
@@ -806,13 +806,13 @@ contract X402StakeSlashTest is Fixture {
 
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
         stake.executeSlash(bytes32("c1"));
+        vm.expectRevert(SlashWindowNotDrained.selector); // 1_000_000 + 1_000_000 > 1_500_000
         stake.executeSlash(bytes32("c2"));
-        vm.expectRevert(SlashCapExceeded.selector);
-        stake.executeSlash(bytes32("c3"));
+        assertEq(uint256(stake.slashRecordOf(bytes32("c2")).status), uint256(SlashStatus.Pending));
 
-        assertEq(stake.slashRecordOf(bytes32("c1")).applied, 1_000_000);
-        assertEq(stake.slashRecordOf(bytes32("c2")).applied, 500_000, "clamped by the window");
-        assertEq(uint256(stake.slashRecordOf(bytes32("c3")).status), uint256(SlashStatus.Pending));
+        vm.warp(block.timestamp + 43_200); // 500_000 carried: 1_000_000 more fits exactly
+        stake.executeSlash(bytes32("c2"));
+        assertEq(stake.slashRecordOf(bytes32("c2")).applied, 1_000_000, "whole, never partial");
         assertEq(stake.stakeOf(capped).slashedInWindow, 1_500_000);
     }
 
@@ -846,28 +846,24 @@ contract X402StakeSlashTest is Fixture {
         assertEq(stake.stakeOf(provider).slashedInWindow, 2_000_000, "nor is capacity handed back");
     }
 
-    /// The verifier key's half of the same guard. `VerifierWindow` is internal with no getter —
-    /// deliberately, since [`stakeOf`]'s reasoning about flattened tuples applies and the
-    /// external surface is pinned — so the anchor is observed through what it does rather than
-    /// read: a THIRD execution back at the high instant, where the amount of capacity the meter
-    /// has drained is exactly the distance from the anchor.
+    /// The verifier key's half of the same guard. `VerifierWindow` is internal with no getter,
+    /// so the anchor is observed through what it does: a THIRD judgement back at the high
+    /// instant, sized to fit only if the meter had drained.
     ///
-    /// With the anchor held at `tHigh`, no time has passed at the third execution and none of the
-    /// 800 000 already metered has drained, so 200 000 of the key's 1 000 000 cap is left. Had
-    /// the second execution re-anchored to `tLow`, the meter would read 10 000 seconds of drain
-    /// that never happened and hand back roughly 92 000 base units of capacity that a stepped-back
-    /// clock had created out of nothing.
+    /// With the anchor held at `tHigh`, no time has passed at the third execution and the
+    /// 800 000 metered is all still there, so 250 000 does not fit under the 1 000 000 cap and
+    /// waits. Had the second execution re-anchored to `tLow`, the meter would read 10 000 seconds
+    /// of drain that never happened (about 707 000 carried) and the 250 000 would land.
     function test_theVerifierKeysWindowAnchorNeverMovesBackwards() public {
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_000_000;
+        p.penaltyAmount = 500_000; // G-1: cap >= 2 * penalty
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
-        // The provider is bonded 1,000 USDG, so its own `capAllowance` is 100 USDG and never
-        // binds: the key's cap is the only ceiling, and the key's anchor the only one observed.
         _propose(bytes32("r1"), 400_000);
         _propose(bytes32("r2"), 400_000);
-        _propose(bytes32("r3"), 400_000);
+        _propose(bytes32("r3"), 250_000);
 
         uint64 tLow = uint64(block.timestamp) + Constants.SLASH_DELAY_SECONDS;
         uint64 tHigh = tLow + 10_000;
@@ -879,13 +875,8 @@ contract X402StakeSlashTest is Fixture {
         stake.executeSlash(bytes32("r2")); // key meter 800 000, still anchored at tHigh
 
         vm.warp(tHigh);
-        stake.executeSlash(bytes32("r3"));
-
-        assertEq(
-            stake.slashRecordOf(bytes32("r3")).applied,
-            200_000,
-            "a stepped-back clock must not drain the key's meter"
-        );
+        vm.expectRevert(SlashWindowNotDrained.selector);
+        stake.executeSlash(bytes32("r3")); // "a stepped-back clock must not drain the key's meter"
     }
 
     /// A judgement too small to divide leaves the record PENDING. Every write the handler made

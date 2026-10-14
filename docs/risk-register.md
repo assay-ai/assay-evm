@@ -98,31 +98,35 @@ moves only in two steps, so a mistyped successor never becomes the owner.
 decision (D-1). If one is wanted, make an external `TimelockController` (behind a Safe) the owner,
 with a delay longer than `WITHDRAW_DELAY_SECONDS` plus a margin; no contract change is needed.
 
-## 4a. The admin alone can redirect provider stake and fees, through parameters
+## 4a. A stolen admin key alone can take provider stake within the caps, and redirect fees — ACCEPTED
 
-Found by the independent review of D-17 (S2-1). It predates D-17. No upgrade and no owner are
-involved: every value below passes `_validate`.
+**Owner decision, 2026-10-14.** A stolen admin key alone CAN take provider stake within the caps.
+No owner, no upgrade and no other key is needed: every step below is an admin door and passes
+`_validate` (audits A H-1, B B2, C C1 measured it — about half of a stake in ten minutes, and
+nearly all of it over a few days as the window re-arms). The owner accepts this because the admin
+wallet is held as securely as the owner wallet, which can already upgrade every contract.
 
-- **Provider stake, after 72 h.** The admin can `registerVerifier` a key it holds and raise the
+**That assumption is FALSE on testnet 46630 (audit G G-6):** the testnet admin is a hot EOA. The
+acceptance therefore covers testnet only as test funds; **on mainnet the admin MUST be held like
+the owner (a Ledger or a Safe)** before this risk is accepted there — a precondition, not an
+aspiration.
+
+- **Provider stake.** The admin `registerVerifier`s a key it holds, `setArbiter`s an accomplice
+  (the arbiter cannot be removed, only replaced), `setSlashDelay`s 10 minutes, and raises the
   slash parameters with `updateConfig` (`slashCapBps` up to 5,000, `slashAgentBps` 10,000,
-  `penaltyAmount` and `verifierDailyCap` at their maxima). A `proposeSlash` naming its own
-  beneficiary then pays out **up to 50% of a provider's at-risk stake** when anyone calls
-  `executeSlash` after the 72 h delay — repeatable per provider and per window.
-  **The remedy is inside the delay:** the owner calls `setAdmin(fresh)`, and the fresh admin calls
-  `revokeVerifier` on the rogue key; `executeSlash` then reverts `VerifierRevoked`.
-- **Fees, immediately.** The admin can set `treasury` to an address it picks and `takeRateBps` up
-  to 3,000 in one `updateConfig`. From the next block **up to 30% of every redeemed voucher** goes
-  there. There is no delay; the bound is `MAX_TAKE_RATE_BPS` and how fast the owner replaces the
-  admin.
-- **Redemption ordering.** The admin can pin `redeemer` to itself, which lets it order (and so
-  void lower-seq) redemptions.
+  `penaltyAmount` and `verifierDailyCap` large). Its key proposes against each provider naming its
+  own beneficiary; the provider's dispute is upheld by the accomplice; `executeSlash` pays after
+  10 minutes — repeatable per provider and per window. A dispute does not help, and the old
+  "the owner acts inside the 72 h delay" remedy is gone, because the same key shortens the delay.
+- **Fees, immediately.** `treasury` to an address it picks and `takeRateBps` up to 3,000: up to
+  30% of every redeemed voucher, from the next block.
+- **Redemption ordering.** It can pin `redeemer` to itself.
+- **Freezing.** It can pause, and block any address, holding every exit closed (§18).
 
-**Monitoring (required, off chain):** alert, paging, on every `ConfigUpdated` and every
-`VerifierRegistered` event from `X402Config`. Each one is either a change the operator made and
-can confirm in minutes, or the start of the scenarios above — and the slash one gives 72 h to act.
-
-No contract change is made for this yet; making `registerVerifier` and a `treasury` / `redeemer`
-change owner-only is the smallest code fix, and it is an open decision.
+**What limits it:** the caps per record, per provider window and per key-day, and how fast the
+owner replaces the admin (`setAdmin`) and the fresh admin revokes the rogue key and unpauses.
+**Monitoring (required, off chain):** page on every `ConfigUpdated`, `VerifierRegistered`,
+`ArbiterSet`, `SlashDelaySet`, `PauseToggled` and `BlockedSet` from `X402Config`.
 
 ## 5. The admin and the upgrade key were the same key — resolved by D-17
 
@@ -214,7 +218,7 @@ naming neither the address nor the network.
 
 **Owner: whoever runs the mainnet deploy.** It blocks step 1 of the runbook and nothing before it.
 
-## 11. A leaked verifier key can freeze a provider's whole exit for ten days, at no cost
+## 11. A leaked verifier key can freeze a provider's whole exit until its records expire, at no cost
 
 `proposeSlash` is **permissionless** — anyone may submit a verifier-signed attestation, and the
 signature is the whole authorisation. Each accepted proposal adds `reserved` to `s.pendingSlash`,
@@ -228,8 +232,9 @@ The scenario, because "a leaked key can grief" is too abstract to act on:
 > nothing but would burn the key's `verifierDailyCap` and leave a `SlashExecuted` event. Instead
 > they submit proposals against one provider until `pendingSlash == atRisk`, in one block, for the
 > price of the gas. That provider's `withdrawStake` now returns `InsufficientUnbondingStake` for
-> every amount. Release requires `cancelSlash` (admin) or `expireSlash`, and `expireSlash` is only
-> open **72 h + 7 d** after each proposal, or immediately once the key is revoked. Nothing the
+> every amount. Release requires `cancelSlash` (admin or arbiter) or `expireSlash`, and
+> `expireSlash` is only open **`slashDelaySeconds()` + 7 d** after each proposal (72 h + 7 d by
+> default; `disputedAt` + 30 d for a disputed record), or immediately once the key is revoked. Nothing the
 > provider can do shortens it.
 
 The Anchor source states this at `propose_slash.rs`: "a leaked key can freeze a provider's exit, up
@@ -255,8 +260,10 @@ stops the bleeding and releases what is already held.
    registered, so a mistaken revocation cannot be undone by re-registering — a new keypair has to
    be generated, distributed and enrolled;
 2. **every judgement that key has in flight becomes reapable by a stranger.** `expireSlash`'s
-   condition is `verifierUnavailable || graceElapsed`, so revocation opens the reap door
-   immediately rather than after the 72 h + 7 d grace, and `expireSlash` is permissionless
+   condition is `verifierUnavailable || graceElapsed` (`|| disputeTimedOut` for a Disputed
+   record), so revocation opens the reap door
+   immediately rather than after the delay + 7 d grace (or the 30-day dispute timeout), and
+   `expireSlash` is permissionless
    (`test_expireIsPermissionlessAcrossASweepOfCallers`). Every honest pending judgement that key
    signed is released, and the evidence for re-judging has to come from off chain.
 
@@ -373,3 +380,63 @@ refused (`SignatureDeadlineTooFar`). That caps how early a signature can land, n
 lives: one with a far deadline still lands in the hour before it, unless a later decision has
 consumed `authNonce` — which is what actually kills a withheld signature. The cost: a relayed signature still in flight dies when the
 payer acts directly, and must be signed again.
+
+## 18. The dispute upgrade's new powers (D-19)
+
+**A stolen admin key can now hold an exit closed.** Pause refuses `withdraw`, `requestWithdraw`,
+`withdrawStake` and `requestUnstake` (the owner's decision; until D-19 these were never paused),
+and `setBlocked` freezes one address at every door. Neither moves a token — there is no seize and
+no sweep — so the worst case is funds held in place until the owner replaces the admin
+(`setAdmin`) and the fresh admin unpauses or unblocks. Alert on `PauseToggled` and `BlockedSet`.
+
+**A stolen arbiter key** can block addresses (never unblock), cancel any pending or disputed
+slash, and uphold a disputed one — which returns it to the ordinary `executeSlash` with every
+cap and the verifier re-check intact; it chooses no amount and no beneficiary, it cannot make a
+record executable before its frozen `executableAt`, and it cannot rule after the 30-day timeout
+(review F1/F2, fixed). The admin replaces
+it with `setArbiter`. It is never the verifier of the record it upholds.
+
+**A stolen admin key can shorten the slash delay to 10 minutes** (`setSlashDelay`), which is
+also the provider's dispute window — and with it take stake within the caps (§4a, accepted by the
+owner). Records already proposed keep their `executableAt`. **Production keeps the delay at 72 h
+or more; the 10-minute minimum exists for testing** (audit B B14). Alert on `SlashDelaySet`.
+
+**A compromised backend (verifier key) can no longer take a provider who disputes.** It can
+still reserve stake and freeze an exit (§11), now for up to `DISPUTE_TIMEOUT_SECONDS` (30 days)
+after a dispute nobody rules on, instead of the ten days of §11; the arbiter's `cancelSlash` or
+a `revokeVerifier` ends it at once.
+
+**The blocklist binds subjects, not operators (review F3, documented).** It refuses a blocked
+buyer, payer, payee/provider, delegate or funder. It does not refuse a relayer, the redeemer, a
+keeper calling `proposeSlash` / `executeSlash` / `expireSlash`, the slash beneficiary, the
+treasury, the admin, the arbiter or the verifier address. **Blocking a verifier does not stop its
+signatures**: a forging verifier is stopped only by `revokeVerifier`, which only the admin can
+call. The arbiter's own answer to a forged slash is `cancelSlash`.
+
+**A key retired mid-dispute voids the ruling (review F4, runbook rule).** A Disputed record can
+stay open 30 days, plus the 7-day grace after an uphold; if its verifier key expires or is
+revoked in that span, the provider wins without a ruling. Runbook §6.6: rotated keys stay
+registered and unexpired for delay + 30 d + 7 d after their last proposal; only a compromised
+key is revoked.
+
+**All or wait (audits A M-1, B B1, C C2, fixed; owner decision on audit F R4).**
+`executeSlash` is permissionless, so a payment cut by a rolling window let the provider pick the
+instant and discharge a judgement for dust. Now a record is paid its whole reservation or not at
+all: it executes only when it fits under the provider's window AND the key's daily cap, otherwise
+`SlashWindowNotDrained` and it stays Pending. `applied == reserved` for every executed record. The
+accepted cost: an honest judgement that never fits within its 7-day grace expires unpaid, so
+`verifierDailyCap` must be sized with large headroom.
+
+**A pause longer than 7 days voids pending and upheld slashes (A L-1, B B4, C C6).** The grace and
+the dispute timeout keep running while paused, `executeSlash` is closed and `expireSlash` is not.
+The provider's rolling window is not frozen either. Runbook §6.7.
+
+**Execution-time pricing (B3).** The split (`slashAgentBps`, `slashPlatformBps`), the `treasury`
+and the `verifierDailyCap` are read when a record executes, not when it was proposed, so a
+parameter change re-prices every record in flight. Only `capAllowance`, `reserved`, the beneficiary
+and `executableAt` are frozen.
+
+**Key expiry (B5, F4).** A record whose verifier key expires or is revoked before execution is
+released. The backend needs a key-expiry monitor (alert well before `expiresAt − (delay + 30 d +
+7 d)`) as well as the rotation rule in runbook §6.6.
+

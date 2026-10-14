@@ -299,6 +299,34 @@ ever failed on that machine, and replayed **before** the configured runs. Three 
 the consequence for the gate; the short version is that `rm -rf out cache` before a regeneration is
 not optional.
 
+## The slash batches (D-19), at `MAX_SLASH_BATCH = 64`
+
+`test/X402Stake.dispute.t.sol::test_measure_slashBatchesAtSixtyFour` — 64 pending records of one
+provider, each batch called once over all 64. **Cold** is `--isolate` (each call its own
+transaction, every slot cold — the figure a real transaction pays); **warm** is the same test in
+one test transaction, kept for comparison.
+
+| call | cold (`--isolate`) | per record | warm |
+|---|---:|---:|---:|
+| `disputeSlashBatch(64)` | **2 103 534** | 32 868 | 1 608 654 |
+| `upholdSlashBatch(64)` | **856 586** | 13 384 | 224 706 |
+| `cancelSlashBatch(64)` | **781 754** | 12 215 | 275 874 |
+
+`disputeSlashBatch` is the expensive one because it writes `disputedAt` into each record's sixth
+slot, zero to non-zero. Distinct providers add about 2.1 k each for a cold stake slot. 64 stays
+the cap: the worst batch is about 2.1 M gas, 6.6 % of Robinhood Chain's 32 M `maxTxGasLimit`.
+Measured after the review fixes (uphold reads `disputedAt` and keeps the frozen `executableAt`).
+
+```sh
+forge test --isolate --match-test test_measure_slashBatchesAtSixtyFour -vv   # cold
+forge test --match-test test_measure_slashBatchesAtSixtyFour -vv             # warm
+```
+
+D-19 also adds one `CONFIG.assertActive` static call per voucher to `_redeem` (the blocklist
+check); the redemption figures above predate it, and `.gas-snapshot` carries the new totals.
+Measured on the snapshot: `test_measure_samePayerBatchOfSixtyFour` 1 947 260 → 2 127 637 (about
++2 800 gas per voucher), `test_measure_samePayerBatchOfOne` 192 481 → 201 372.
+
 ## Contract sizes (EIP-170)
 
 Measured by `script/check-sizes.sh`, with CBOR metadata enabled (about 54 bytes of each runtime
@@ -307,9 +335,12 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `X402Config` | 5,202 | 21.2% | 5,411 |
-| `X402Escrow` | 11,881 | 48.3% | 13,308 |
-| `X402Stake` | 13,023 | 53.0% | 14,450 |
+| `X402Config` | 7,466 | 30.4% | 7,675 |
+| `X402Escrow` | 17,228 | 70.1% | 18,655 |
+| `X402Stake` | 14,791 | 60.2% | 16,218 |
+
+Re-measured for D-19 (the dispute upgrade); the commit before it measured X402Config 6,136,
+X402Escrow 16,202 and X402Stake 13,041.
 
 The gate fires at **22,000**, leaving room for an auditor's remediation round and for the append a
 future upgrade adds. If a contract ever goes over it, **the gate does not move** — the contract
