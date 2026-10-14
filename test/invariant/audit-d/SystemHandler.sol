@@ -119,7 +119,7 @@ contract SystemHandler is Test {
             penaltyAmount: 500_000_000,
             // = penaltyAmount: since audit C7 `updateConfig`/`initialize` refuse a daily cap below
             // one penalty. Window clamps are still reached through several records per day.
-            verifierDailyCap: 500_000_000,
+            verifierDailyCap: 1_000_000_000, // >= 2 * penaltyAmount (audit G G-1)
             takeRateBps: 1_000,
             slashAgentBps: 6_000,
             slashPlatformBps: 3_000,

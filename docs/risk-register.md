@@ -106,6 +106,11 @@ No owner, no upgrade and no other key is needed: every step below is an admin do
 nearly all of it over a few days as the window re-arms). The owner accepts this because the admin
 wallet is held as securely as the owner wallet, which can already upgrade every contract.
 
+**That assumption is FALSE on testnet 46630 (audit G G-6):** the testnet admin is a hot EOA. The
+acceptance therefore covers testnet only as test funds; **on mainnet the admin MUST be held like
+the owner (a Ledger or a Safe)** before this risk is accepted there — a precondition, not an
+aspiration.
+
 - **Provider stake.** The admin `registerVerifier`s a key it holds, `setArbiter`s an accomplice
   (the arbiter cannot be removed, only replaced), `setSlashDelay`s 10 minutes, and raises the
   slash parameters with `updateConfig` (`slashCapBps` up to 5,000, `slashAgentBps` 10,000,

@@ -88,12 +88,14 @@ contract X402StakeAuditTest is Fixture {
 
     /// M-1b: the same through the verifier key's shared window.
     function test_audit_M1b_theSharedKeyWindowCannotBeUsedToDischargeEither() public {
-        _params(100_000_000, 5_000, 100_000_000);
+        _params(100_000_000, 5_000, 200_000_000); // the key-day holds two penalties (G-1)
         _bond(provider2, BOND);
         _propose("other", provider2, 100_000_000);
+        _propose("other2", provider2, 100_000_000);
         _propose("mine", provider, 100_000_000);
         vm.warp(stake.slashRecordOf("mine").executableAt);
-        stake.executeSlash("other"); // fills the key's day
+        stake.executeSlash("other");
+        stake.executeSlash("other2"); // fills the key's day
 
         vm.warp(block.timestamp + 1);
         vm.prank(provider);
@@ -195,11 +197,16 @@ contract X402StakeAuditTest is Fixture {
 
     function test_audit_C7_aPenaltyAboveTheDailyCapIsRefused() public {
         ParamSet memory p = config.params();
-        p.verifierDailyCap = p.penaltyAmount - 1;
+        // Audit G G-1: the daily cap must hold TWO maximal penalties.
+        p.verifierDailyCap = 2 * p.penaltyAmount - 1;
         vm.prank(admin);
         vm.expectRevert(InvalidVerifierDailyCap.selector);
         config.updateConfig(p, address(0));
-        p.verifierDailyCap = p.penaltyAmount; // equal is admitted
+        p.verifierDailyCap = p.penaltyAmount; // one penalty is no longer enough
+        vm.prank(admin);
+        vm.expectRevert(InvalidVerifierDailyCap.selector);
+        config.updateConfig(p, address(0));
+        p.verifierDailyCap = 2 * p.penaltyAmount; // exactly two is admitted
         vm.prank(admin);
         config.updateConfig(p, address(0));
     }

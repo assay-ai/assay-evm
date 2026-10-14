@@ -65,7 +65,7 @@ contract X402ConfigParamsTest is Test {
             unbondingPeriodSeconds: 20 * 86_400,
             minimumStake: 7,
             penaltyAmount: 9,
-            verifierDailyCap: 11,
+            verifierDailyCap: 18, // >= 2 * penaltyAmount (audit G G-1)
             takeRateBps: 2_500,
             slashAgentBps: 4_000,
             slashPlatformBps: 1_000,
@@ -85,7 +85,7 @@ contract X402ConfigParamsTest is Test {
             // and a penalty that fits one key-day (audit C7: penaltyAmount <= verifierDailyCap).
             minimumStake: 10_000,
             penaltyAmount: 2,
-            verifierDailyCap: 2,
+            verifierDailyCap: 4,
             takeRateBps: 0,
             slashAgentBps: 1,
             slashPlatformBps: 0,
@@ -432,7 +432,7 @@ contract X402ConfigParamsTest is Test {
         // (`minimumStake` 10 is the smallest a 1 000-bps cap can still slash, audit C7.)
         p = _valid();
         p.minimumStake = 10;
-        p.penaltyAmount = type(uint64).max;
+        p.penaltyAmount = type(uint64).max / 2;
         p.verifierDailyCap = type(uint64).max;
         _accepted(p, "the penalty may exceed the minimum stake");
 

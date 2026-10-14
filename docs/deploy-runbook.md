@@ -403,9 +403,15 @@ set `expiresAt` far enough out to cover that tail.
   long pause, and again right after the unpause**, list every Pending or upheld record whose
   `executableAt + 7 d` (or Disputed record whose `disputedAt + 30 d`) falls inside the pause, and
   execute or re-propose them. The provider's rolling window is not frozen by a pause either.
-- **Before unpausing after a long pause**, consider raising `unbondingPeriodSeconds` temporarily
-  (`updateConfig`), so a provider whose slashes the pause voided cannot exit before they are
-  re-proposed (audit B B6).
+- **Recovering slashes a long pause voided — preferred, narrow (audit G G-4):** for each affected
+  provider, `setBlocked(provider, true)`, then unpause, re-propose its judgements under new request
+  ids, and `setBlocked(provider, false)` once they are proposed (the reservation then holds them).
+  A blocked provider cannot exit, and nothing else in the system is held.
+- **Only if that is impractical** (many providers): raise `unbondingPeriodSeconds` temporarily
+  before the unpause (`updateConfig`), so no provider whose slashes were voided can exit before
+  they are re-proposed (audit B B6). This delays every provider's exit, not just the affected ones.
+- **Two penalties per key-day.** `updateConfig` refuses `verifierDailyCap < 2 * penaltyAmount`
+  (`InvalidVerifierDailyCap`, audit G G-1), so one maximal record can never fill a key's day.
 - **Parameters re-price records in flight.** The split, the `treasury` and the `verifierDailyCap`
   are read at execution time, not at proposal: an `updateConfig` changes what every pending record
   will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
@@ -678,8 +684,12 @@ Escrow door until Config lands.
 4. Post-check on chain: `script/postcheck-upgrade.sh` with the three `IMPL_*`,
    `EXPECTED_SLASH_DELAY=259200` and `EXPECTED_ARBITER=0x0000000000000000000000000000000000000000`.
 5. **In the same session as the upgrade**, §6.5: appoint the arbiter. Until it is set nobody can
-   uphold, and every dispute filed in the gap wins at its 30-day timeout. Record `abiKeccak` / `abiFunctions` for Config (+7 functions) and
-   Stake (+5: disputeSlash, upholdSlash and the three batch forms); Escrow's surface is unchanged.
+   uphold; a dispute filed in that gap is NOT lost — it can still be upheld once the arbiter is
+   set, as long as that happens before its `disputedAt + 30 d` (audit G G-3). Then run
+   `script/postcheck-upgrade.sh` **a second time** with `EXPECTED_ARBITER=<the real arbiter>`.
+   Record `abiKeccak` / `abiFunctions` for Config (+7 functions, −1: `slashProviderBps` removed
+   in D-20) and Stake (+5: disputeSlash, upholdSlash and the three batch forms); Escrow's surface
+   is unchanged.
 6. **Tell the backend and frontend** before step 3: the exits now revert `ProgramPaused` while
    paused, and every guarded door reverts `AddressBlocked` for a blocked party.
 

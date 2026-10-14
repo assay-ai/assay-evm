@@ -304,8 +304,12 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
             revert InvalidMinimumStake();
         }
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
-        // One maximal judgement must fit in one key-day, or it could never be paid in full.
-        if (p.penaltyAmount > p.verifierDailyCap) revert InvalidVerifierDailyCap();
+        // At least two maximal judgements must fit in one key-day (audit G G-1): with all or
+        // wait, a cap of one penalty lets a single record fill the day and crowd out the next.
+        // `uint256`, so a large `penaltyAmount` cannot overflow the doubling.
+        if (uint256(p.verifierDailyCap) < 2 * uint256(p.penaltyAmount)) {
+            revert InvalidVerifierDailyCap();
+        }
     }
 
     // -------------------------------------------------------------------------------------

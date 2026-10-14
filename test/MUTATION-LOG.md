@@ -1921,3 +1921,9 @@ under a re-anchored meter). New invariant: `invariant_everyExecutedRecordWasPaid
 | F4 | `executeSlash`: `providerCarried + reserved > capAllowance` → `SlashWindowNotDrained` | term → `false` | `test_theProvidersRollingWindowMakesTheSecondJudgementWait` | **DIES**: `[FAIL: next call did not revert as expected]` |
 | F5 | same, `keyCarried + reserved > verifierDailyCap` | term → `false` | `test_theVerifierDailyCapMakesAJudgementWaitThenPayInFull` | **DIES**: `[FAIL: next call did not revert as expected]` |
 | F6 | the provider term's boundary (`>`, so filling the window exactly is admitted) | `>` → `>=` | `test_theProvidersRollingWindowMakesTheSecondJudgementWait` | **DIES**: `[FAIL: SlashWindowNotDrained()]` |
+
+### Final review round (audit G)
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| G1 | `_validate`: `verifierDailyCap < 2 * penaltyAmount` → `InvalidVerifierDailyCap` | `2 *` dropped (back to one penalty) | `X402Stake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` — a cap of one penalty is admitted again |

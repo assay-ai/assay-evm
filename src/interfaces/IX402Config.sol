@@ -36,7 +36,8 @@ interface IX402Config {
     function assertCanSign(address verifier) external view;
 
     /// The dispute arbiter (EVM only): rules on `X402Stake.upholdSlash` and may `cancelSlash`.
-    /// A person's wallet or a Safe, never the backend. `address(0)` means none.
+    /// A person's wallet or a Safe, never the backend. Reads `address(0)` only before the first
+    /// `setArbiter`; after that it can be replaced but never unset.
     function arbiter() external view returns (address);
 
     /// The delay `X402Stake.proposeSlash` freezes into a new record's `executableAt`, and so the

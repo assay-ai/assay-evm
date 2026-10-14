@@ -138,10 +138,10 @@ contract AuditDSlashEdgesTest is Fixture {
         cap = uint16(bound(cap, 1, Constants.MAX_SLASH_CAP_BPS));
         agent = uint16(bound(agent, 1, 10_000));
         plat = uint16(bound(plat, 0, 10_000 - agent));
-        daily = uint64(bound(daily, 1, type(uint64).max));
-        // Since audit C7 the penalty ceiling may not exceed the key's daily cap.
-        penalty = uint64(bound(penalty, 1, daily));
-        _params(daily, daily, cap, agent, plat);
+        daily = uint64(bound(daily, 2, type(uint64).max));
+        // Since audit G G-1 the penalty ceiling is at most half the key's daily cap.
+        penalty = uint64(bound(penalty, 1, daily / 2));
+        _params(daily / 2, daily, cap, agent, plat);
 
         _fund(p2, bond);
         vm.startPrank(p2);

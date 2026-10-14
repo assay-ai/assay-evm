@@ -244,7 +244,7 @@ contract X402StakeDisputeTest is Fixture {
         // All or wait (D-20): a 1 USDG record can never fit a 0.4 USDG key-day, so it waits —
         // to the last instant of its grace — and then expires unpaid.
         ParamSet memory p = config.params();
-        p.penaltyAmount = 400_000;
+        p.penaltyAmount = 200_000; // G-1: cap >= 2 * penalty
         p.verifierDailyCap = 400_000;
         vm.prank(admin);
         config.updateConfig(p, address(0));

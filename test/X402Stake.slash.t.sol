@@ -706,6 +706,7 @@ contract X402StakeSlashTest is Fixture {
 
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_500_000; // room for one and a half judgements
+        p.penaltyAmount = 750_000; // the ceiling for NEW records (G-1: cap >= 2 * penalty)
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
@@ -733,6 +734,7 @@ contract X402StakeSlashTest is Fixture {
 
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_000_000; // room for exactly one
+        p.penaltyAmount = 500_000; // the ceiling for NEW records (G-1: cap >= 2 * penalty)
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
@@ -767,7 +769,7 @@ contract X402StakeSlashTest is Fixture {
     function test_oneKeysDailyCapBindsAcrossThreeJudgements() public {
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_000_000;
-        p.penaltyAmount = 1_000_000;
+        p.penaltyAmount = 500_000; // G-1: cap >= 2 * penalty
         vm.prank(admin);
         config.updateConfig(p, address(0));
 
@@ -855,7 +857,7 @@ contract X402StakeSlashTest is Fixture {
     function test_theVerifierKeysWindowAnchorNeverMovesBackwards() public {
         ParamSet memory p = config.params();
         p.verifierDailyCap = 1_000_000;
-        p.penaltyAmount = 1_000_000;
+        p.penaltyAmount = 500_000; // G-1: cap >= 2 * penalty
         vm.prank(admin);
         config.updateConfig(p, address(0));
 

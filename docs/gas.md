@@ -335,7 +335,7 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `X402Config` | 7,454 | 30.3% | 7,663 |
+| `X402Config` | 7,466 | 30.4% | 7,675 |
 | `X402Escrow` | 17,228 | 70.1% | 18,655 |
 | `X402Stake` | 14,791 | 60.2% | 16,218 |
 
