@@ -25,15 +25,15 @@
       "type": "t_uint256"
     },
     {
-      "astId": 7193,
+      "astId": 7205,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "CONFIG",
       "offset": 0,
       "slot": "3",
-      "type": "t_contract(IX402Config)9414"
+      "type": "t_contract(IX402Config)9449"
     },
     {
-      "astId": 7196,
+      "astId": 7208,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "ASSET",
       "offset": 0,
@@ -41,23 +41,23 @@
       "type": "t_contract(IERC20)947"
     },
     {
-      "astId": 7202,
+      "astId": 7214,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "stakes",
       "offset": 0,
       "slot": "5",
-      "type": "t_mapping(t_address,t_struct(ProviderStake)7183_storage)"
+      "type": "t_mapping(t_address,t_struct(ProviderStake)7195_storage)"
     },
     {
-      "astId": 7207,
+      "astId": 7219,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "verifierWindows",
       "offset": 0,
       "slot": "6",
-      "type": "t_mapping(t_address,t_struct(VerifierWindow)7189_storage)"
+      "type": "t_mapping(t_address,t_struct(VerifierWindow)7201_storage)"
     },
     {
-      "astId": 7210,
+      "astId": 7222,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "totalStaked",
       "offset": 0,
@@ -65,7 +65,7 @@
       "type": "t_uint128"
     },
     {
-      "astId": 7212,
+      "astId": 7224,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "totalDeposited",
       "offset": 16,
@@ -73,7 +73,7 @@
       "type": "t_uint128"
     },
     {
-      "astId": 7214,
+      "astId": 7226,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "totalWithdrawn",
       "offset": 0,
@@ -81,7 +81,7 @@
       "type": "t_uint128"
     },
     {
-      "astId": 7216,
+      "astId": 7228,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "totalSlashed",
       "offset": 16,
@@ -89,15 +89,15 @@
       "type": "t_uint128"
     },
     {
-      "astId": 7867,
+      "astId": 7879,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "slashRecords",
       "offset": 0,
       "slot": "9",
-      "type": "t_mapping(t_bytes32,t_struct(SlashRecord)7862_storage)"
+      "type": "t_mapping(t_bytes32,t_struct(SlashRecord)7874_storage)"
     },
     {
-      "astId": 9323,
+      "astId": 9358,
       "contract": "src/X402Stake.sol:X402Stake",
       "label": "__gap",
       "offset": 0,
@@ -127,49 +127,49 @@
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IX402Config)9414": {
+    "t_contract(IX402Config)9449": {
       "encoding": "inplace",
       "label": "contract IX402Config",
       "numberOfBytes": "20"
     },
-    "t_enum(SlashStatus)7065": {
+    "t_enum(SlashStatus)7077": {
       "encoding": "inplace",
       "label": "enum SlashStatus",
       "numberOfBytes": "1"
     },
-    "t_mapping(t_address,t_struct(ProviderStake)7183_storage)": {
+    "t_mapping(t_address,t_struct(ProviderStake)7195_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct X402Stake.ProviderStake)",
       "numberOfBytes": "32",
-      "value": "t_struct(ProviderStake)7183_storage"
+      "value": "t_struct(ProviderStake)7195_storage"
     },
-    "t_mapping(t_address,t_struct(VerifierWindow)7189_storage)": {
+    "t_mapping(t_address,t_struct(VerifierWindow)7201_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct X402Stake.VerifierWindow)",
       "numberOfBytes": "32",
-      "value": "t_struct(VerifierWindow)7189_storage"
+      "value": "t_struct(VerifierWindow)7201_storage"
     },
-    "t_mapping(t_bytes32,t_struct(SlashRecord)7862_storage)": {
+    "t_mapping(t_bytes32,t_struct(SlashRecord)7874_storage)": {
       "encoding": "mapping",
       "key": "t_bytes32",
       "label": "mapping(bytes32 => struct X402Stake.SlashRecord)",
       "numberOfBytes": "32",
-      "value": "t_struct(SlashRecord)7862_storage"
+      "value": "t_struct(SlashRecord)7874_storage"
     },
     "t_string_storage": {
       "encoding": "bytes",
       "label": "string",
       "numberOfBytes": "32"
     },
-    "t_struct(ProviderStake)7183_storage": {
+    "t_struct(ProviderStake)7195_storage": {
       "encoding": "inplace",
       "label": "struct X402Stake.ProviderStake",
       "numberOfBytes": "128",
       "members": [
         {
-          "astId": 7164,
+          "astId": 7176,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "bonded",
           "offset": 0,
@@ -177,7 +177,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 7166,
+          "astId": 7178,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "unbonding",
           "offset": 16,
@@ -185,7 +185,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7168,
+          "astId": 7180,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "unbondingStartedAt",
           "offset": 24,
@@ -193,7 +193,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7170,
+          "astId": 7182,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "slashedInWindow",
           "offset": 0,
@@ -201,7 +201,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7172,
+          "astId": 7184,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "slashWindowStartedAt",
           "offset": 8,
@@ -209,7 +209,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7174,
+          "astId": 7186,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "pendingSlash",
           "offset": 16,
@@ -217,7 +217,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7176,
+          "astId": 7188,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "__gap",
           "offset": 24,
@@ -225,7 +225,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7178,
+          "astId": 7190,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "totalDeposited",
           "offset": 0,
@@ -233,7 +233,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 7180,
+          "astId": 7192,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "totalWithdrawn",
           "offset": 16,
@@ -241,7 +241,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 7182,
+          "astId": 7194,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "totalSlashed",
           "offset": 0,
@@ -250,13 +250,13 @@
         }
       ]
     },
-    "t_struct(SlashRecord)7862_storage": {
+    "t_struct(SlashRecord)7874_storage": {
       "encoding": "inplace",
       "label": "struct X402Stake.SlashRecord",
       "numberOfBytes": "192",
       "members": [
         {
-          "astId": 7832,
+          "astId": 7844,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "provider",
           "offset": 0,
@@ -264,15 +264,15 @@
           "type": "t_address"
         },
         {
-          "astId": 7835,
+          "astId": 7847,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "status",
           "offset": 20,
           "slot": "0",
-          "type": "t_enum(SlashStatus)7065"
+          "type": "t_enum(SlashStatus)7077"
         },
         {
-          "astId": 7837,
+          "astId": 7849,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "penalty",
           "offset": 21,
@@ -280,7 +280,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7839,
+          "astId": 7851,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "beneficiary",
           "offset": 0,
@@ -288,7 +288,7 @@
           "type": "t_address"
         },
         {
-          "astId": 7841,
+          "astId": 7853,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "proposedAt",
           "offset": 20,
@@ -296,7 +296,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7843,
+          "astId": 7855,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "__gap",
           "offset": 28,
@@ -304,7 +304,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 7845,
+          "astId": 7857,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "verifier",
           "offset": 0,
@@ -312,7 +312,7 @@
           "type": "t_address"
         },
         {
-          "astId": 7847,
+          "astId": 7859,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "executableAt",
           "offset": 20,
@@ -320,7 +320,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7849,
+          "astId": 7861,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "__gap2",
           "offset": 28,
@@ -328,7 +328,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 7851,
+          "astId": 7863,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "reserved",
           "offset": 0,
@@ -336,7 +336,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7853,
+          "astId": 7865,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "capAllowance",
           "offset": 8,
@@ -344,7 +344,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7855,
+          "astId": 7867,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "applied",
           "offset": 16,
@@ -352,7 +352,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7857,
+          "astId": 7869,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "executedAt",
           "offset": 24,
@@ -360,7 +360,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7859,
+          "astId": 7871,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "policy",
           "offset": 0,
@@ -368,7 +368,7 @@
           "type": "t_bytes32"
         },
         {
-          "astId": 7861,
+          "astId": 7873,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "disputedAt",
           "offset": 0,
@@ -377,13 +377,13 @@
         }
       ]
     },
-    "t_struct(VerifierWindow)7189_storage": {
+    "t_struct(VerifierWindow)7201_storage": {
       "encoding": "inplace",
       "label": "struct X402Stake.VerifierWindow",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 7186,
+          "astId": 7198,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "slashedInWindow",
           "offset": 0,
@@ -391,7 +391,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 7188,
+          "astId": 7200,
           "contract": "src/X402Stake.sol:X402Stake",
           "label": "windowStartedAt",
           "offset": 8,
