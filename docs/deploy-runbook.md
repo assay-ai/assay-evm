@@ -555,7 +555,7 @@ places. Both are here; the redeploy half is the last paragraph.)*
       `abiFunctions` in the record in the same commit as the upgrade, and say in the commit message
       what was added and why it is safe to expose. `script/abi-surface.sh` states what the
       comparison can and cannot see.
-- [ ] **The new implementation's EIP-712 constructor is still `EIP712("x402 Settlement", "2")`.**
+- [ ] **The new implementation's EIP-712 constructor is still `EIP712("Assay Settlement", "2")`.**
       `grep -rn 'EIP712("' src/` must print exactly two lines, `X402Escrow.sol` and `X402Stake.sol`,
       both with those two strings. See the warning below.
 

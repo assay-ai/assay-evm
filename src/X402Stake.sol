@@ -102,7 +102,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// The name and version are ShortString immutables baked in here, and every future
     /// implementation must be constructed with the SAME two strings or the attestation
     /// domain moves under the verifier's feet (D-1; asserted in `test/Upgrade.t.sol`).
-    constructor() EIP712("x402 Settlement", "2") {
+    constructor() EIP712("Assay Settlement", "2") {
         _disableInitializers();
     }
 

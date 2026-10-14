@@ -717,7 +717,7 @@ the third column.
 | E19 | `_authorizeUpgrade` reads `CONFIG.admin()` **live** | → `address(0xADAA)` (a cached/hard-coded admin) | `test_theUpgradeAuthorityFollowsConfigsAdmin` (`NotAdmin`) | **FAILED**: `[FAIL: next call did not revert as expected] (gas: 1339179)` — after `updateConfig` hands Config to a new admin, the OLD admin still upgrades the escrow. This is the row that proves "read live, never cached". |
 | E20 | `_credit`: `emit Deposited(buyer, msg.sender, …)` | → `emit Deposited(buyer, buyer, …)` | `test_happyPath_theEventNamesTheFunderNotTheBuyer` | **FAILED**: `[FAIL: log != expected log] (gas: 233518)` |
 | E21 | `initialize`: the `WITHDRAW_DELAY_SECONDS > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE` check | deleted | whole `X402EscrowDepositTest` (38 tests) | **SURVIVED** — `38 passed; 0 failed`. **Equivalent mutant, necessarily.** Every term is a compile-time constant, so the condition is folded to `false` by the optimiser and no input can reach it; `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher` is the assertion that goes red if the numbers ever change. The check exists so that such a change also produces a deployment that cannot be initialised. No test was written to pretend otherwise. |
-| E22 | constructor: `EIP712("x402 Settlement", "2")` | → `"3"` | `test_theDomainSeparatorIsTheProxysAndNamesX402Settlement` | **FAILED**: `[FAIL: assertion failed: 0x305b68806b7a42f818a801dab9f7ca9004b7703c4c3d9d3d2e82fd0ce745fc09 != 0xd7b9716ac8a5e91f19e6961d69dec8565fb16cf93e7a9f48d0f8219f7915a5b9]` — the domain separator moved, which is every outstanding voucher dead (D-1/D-7) |
+| E22 | constructor: `EIP712("x402 Settlement", "2")` | → `"3"` | `test_theDomainSeparatorIsTheProxysAndNamesAssaySettlement` | **FAILED**: `[FAIL: assertion failed: 0x305b68806b7a42f818a801dab9f7ca9004b7703c4c3d9d3d2e82fd0ce745fc09 != 0xd7b9716ac8a5e91f19e6961d69dec8565fb16cf93e7a9f48d0f8219f7915a5b9]` — the domain separator moved, which is every outstanding voucher dead (D-1/D-7) |
 
 ### The degenerates
 
@@ -750,7 +750,7 @@ the third column.
   `test_wrongSigner_aPermit2SignatureIsBoundToOneEscrow` — the two halves of the Permit2 rule:
   the credited account is the `owner` the signature is checked against, and the digest binds
   `msg.sender`, so one escrow's signature is not another's. Both assert `nothing moved` afterwards.
-- `test_theDomainSeparatorIsTheProxysAndNamesX402Settlement` — the only test that kills E22, and
+- `test_theDomainSeparatorIsTheProxysAndNamesAssaySettlement` — the only test that kills E22, and
   the only one that pins the two strings that may never change. Recomputed from the literals, not
   read back from the contract.
 - `test_theUpgradeAuthorityFollowsConfigsAdmin` — the only test that kills E19.
@@ -928,7 +928,7 @@ Each is the whole repo suite (`forge test`, 9 suites, 157 tests), not only the d
 |---|---|---|
 | G1 | **`_recover` ignores `v`**: `ECDSA.tryRecover(digest, 27, r, s)`, the guard left in place | **DIES**: `154 tests passed, 3 failed` — `test_happyPath_recoversThePayer`, `test_aVoucherSignedForOneDeploymentDoesNotVerifyOnAnother`, `testFuzz_recoverIsTheInverseOfSignForAnyKeyAndAnyVoucher`. The fixture's buyer signs with `v = 28`, so the happy path recovers a stranger; the fuzz test would kill it for whichever constant were chosen. |
 | G2 | **`hashVoucher` ignores one field**: `v.requestHash` dropped | **DIES**: `151 tests passed, 6 failed` — the struct-hash test, the happy path, both replay tests, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey`, the fuzz test |
-| G3 | **the domain separator ignores `chainId`**: a hand-built `EIP712Domain(string name,string version,address verifyingContract)` used by `DOMAIN_SEPARATOR()` **and** by the digest, so the happy path still agrees with the signer | **DIES**: `155 tests passed, 2 failed` — `test_aVoucherSignedForOneChainDoesNotVerifyOnAnother` (this round) and `test_theDomainSeparatorIsTheProxysAndNamesX402Settlement` (the deposit round). Note it takes a *pair* of tests: the deposit round's one pins the separator's shape, this one pins that it follows `block.chainid`. |
+| G3 | **the domain separator ignores `chainId`**: a hand-built `EIP712Domain(string name,string version,address verifyingContract)` used by `DOMAIN_SEPARATOR()` **and** by the digest, so the happy path still agrees with the signer | **DIES**: `155 tests passed, 2 failed` — `test_aVoucherSignedForOneChainDoesNotVerifyOnAnother` (this round) and `test_theDomainSeparatorIsTheProxysAndNamesAssaySettlement` (the deposit round). Note it takes a *pair* of tests: the deposit round's one pins the separator's shape, this one pins that it follows `block.chainid`. |
 | G4 | **`recoverVoucherSigner` returns `v.payer`** and never recovers anything | **DIES**: `145 tests passed, 12 failed` — every guard test, both replay tests, the flip test, the boundary tests and the cross-kind test |
 
 ### The degenerates that SURVIVE, recorded rather than hidden

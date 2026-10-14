@@ -22,7 +22,7 @@ import {X402Escrow} from "../../src/X402Escrow.sol";
 /// layout gate accepts, and the shape that keeps the contract's total footprint fixed.
 ///
 /// Constructed through the inherited constructor, so the EIP-712 name and version are
-/// `("x402 Settlement", "2")` — identical to the parent's. That is the whole property
+/// `("Assay Settlement", "2")` — identical to the parent's. That is the whole property
 /// `test_anUpgradePreservesEveryBalanceTheDomainAndAnOutstandingVoucher` protects, and
 /// `X402EscrowBadDomainV2` is what its violation looks like.
 contract X402EscrowV2 is X402Escrow {

@@ -289,7 +289,7 @@ X402EscrowDepositTest:test_happyPath_theDepositedEventCarriesTheFunderAndTheRunn
 X402EscrowDepositTest:test_happyPath_theEventNamesTheFunderNotTheBuyer() (gas: 184584)
 X402EscrowDepositTest:test_happyPath_unpausingReopensTheDoor() (gas: 197035)
 X402EscrowDepositTest:test_theBalancesAreThisProxysOwn() (gas: 387807)
-X402EscrowDepositTest:test_theDomainSeparatorIsTheProxysAndNamesX402Settlement() (gas: 19160)
+X402EscrowDepositTest:test_theDomainSeparatorIsTheProxysAndNamesAssaySettlement() (gas: 19160)
 X402EscrowDepositTest:test_theStorageLayoutIsTheOneTheSnapshotCommitsTo() (gas: 195699)
 X402EscrowDepositTest:test_theStoredAddressesAreThisProxysOwn() (gas: 231323)
 X402EscrowDepositTest:test_theTwelveEscrowFieldsDecodeFromTheFourSlotsTheSnapshotCommitsTo() (gas: 30546)

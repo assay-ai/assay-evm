@@ -251,13 +251,13 @@ contract X402EscrowDepositTest is Fixture {
     /// The separator is the PROXY's, and its name and version are the two strings that may never
     /// change. Recomputed here from the literals rather than read back from the contract, so an
     /// implementation that renamed either fails this test instead of agreeing with itself.
-    function test_theDomainSeparatorIsTheProxysAndNamesX402Settlement() public view {
+    function test_theDomainSeparatorIsTheProxysAndNamesAssaySettlement() public view {
         bytes32 expected = keccak256(
             abi.encode(
                 keccak256(
                     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
                 ),
-                keccak256(bytes("x402 Settlement")),
+                keccak256(bytes("Assay Settlement")),
                 keccak256(bytes("2")),
                 block.chainid,
                 address(escrow)
