@@ -414,13 +414,13 @@ revoked in that span, the provider wins without a ruling. Runbook §6.6: rotated
 registered and unexpired for delay + 30 d + 7 d after their last proposal; only a compromised
 key is revoked.
 
-**The cap write-off rule (audits A M-1, B B1, C C2 — fixed).** `executeSlash` is permissionless,
-so a payment cut by a rolling window let the provider pick the instant and discharge a judgement
-for dust. Now a payment that the provider's or the key's window would cut below
-`min(reserved, atRisk)` is refused (`SlashWindowNotDrained`) and the record stays Pending, until
-the last `SLASH_WINDOW_SECONDS` (24 h) before `executableAt + 7 d`, where a partial payment is
-allowed as before. The backend retries refused records as the window drains, and must execute them
-before that last day if it wants the full amount.
+**All or wait (audits A M-1, B B1, C C2, fixed; owner decision on audit F R4).**
+`executeSlash` is permissionless, so a payment cut by a rolling window let the provider pick the
+instant and discharge a judgement for dust. Now a record is paid its whole reservation or not at
+all: it executes only when it fits under the provider's window AND the key's daily cap, otherwise
+`SlashWindowNotDrained` and it stays Pending. `applied == reserved` for every executed record. The
+accepted cost: an honest judgement that never fits within its 7-day grace expires unpaid, so
+`verifierDailyCap` must be sized with large headroom.
 
 **A pause longer than 7 days voids pending and upheld slashes (A L-1, B B4, C C6).** The grace and
 the dispute timeout keep running while paused, `executeSlash` is closed and `expireSlash` is not.

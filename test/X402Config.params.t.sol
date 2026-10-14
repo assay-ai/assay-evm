@@ -267,8 +267,7 @@ contract X402ConfigParamsTest is Test {
     /// **Every** bound `state.rs::Config::validate` states is reached through *this* door too, by
     /// name, and each refusal moves nothing. `test_wrongState_everyBoundIsRefusedAtConstruction`
     /// proves the same eleven rows through `initialize`; that a set reaching `_params` through
-    /// `initialize` is bounded says nothing about a set reaching it through `updateConfig`, and
-    /// C22's "the saturation in `slashProviderBps` is unreachable" rests on *both* doors.
+    /// `initialize` is bounded says nothing about a set reaching it through `updateConfig`.
     function test_wrongState_updateRefusesEveryBoundJustAsInitializeDoes() public {
         ParamSet memory p = _valid();
         p.treasury = address(0);
@@ -509,20 +508,5 @@ contract X402ConfigParamsTest is Test {
         vm.prank(admin);
         config.updateConfig(_third(), address(0));
         assertFalse(config.paused(), "an unpaused config stays unpaused across an update");
-    }
-
-    /// `slashProviderBps()` is derived from `_params`, so it must follow an update rather than
-    /// hold the value it was initialised with. Three sets, three pinned answers — never the sum
-    /// identity alone, which any subtraction satisfies (see C20/C21 in the mutation log).
-    function test_theDerivedProviderShareFollowsAnUpdate() public {
-        assertEq(config.slashProviderBps(), 1_000, "6000 + 3000 leaves the provider 10%");
-
-        vm.prank(admin);
-        config.updateConfig(_other(), address(0)); // 4000 + 1000
-        assertEq(config.slashProviderBps(), 5_000, "4000 + 1000 leaves the provider 50%");
-
-        vm.prank(admin);
-        config.updateConfig(_third(), address(0)); // 1 + 0
-        assertEq(config.slashProviderBps(), 9_999, "1 + 0 leaves the provider almost all of it");
     }
 }

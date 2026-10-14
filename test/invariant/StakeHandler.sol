@@ -128,6 +128,18 @@ contract StakeHandler is Test {
         return true;
     }
 
+    /// All or wait (D-20): every Executed record was paid its whole reservation — `applied` equals
+    /// the `reserved` this handler booked at proposal, never less.
+    function everyExecutedRecordWasPaidInFull() external view returns (bool) {
+        for (uint256 i = 0; i < proposedIds.length; i++) {
+            X402Stake.SlashRecord memory r = stake.slashRecordOf(proposedIds[i]);
+            if (r.status == SlashStatus.Executed && r.applied != reservedOf[proposedIds[i]]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// The new status in the invariant: every record this handler believes open is `Pending`
     /// or `Disputed` on chain, and every record it believes closed is `Executed` or `Cancelled`.
     function everyRecordIsInTheStateTheBookSays() external view returns (bool) {

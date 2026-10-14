@@ -31,6 +31,10 @@ import {
 } from "../../../src/Types.sol";
 import "../../../src/Errors.sol";
 
+// Removed from `src/Errors.sol` in D-20 (all-or-wait folded it into `SlashWindowNotDrained`);
+// declared here so this verbatim pre-upgrade copy still compiles.
+error VerifierDailyCapExceeded();
+
 /// Provider collateral, and the two-phase slash. Holds no buyer money and holds no
 /// reference to X402Escrow — the only edge between them points the other way and is a view.
 ///

@@ -105,28 +105,29 @@ contract X402StakeAuditTest is Fixture {
         assertEq(stake.slashRecordOf("mine").applied, 100_000_000, "paid in full");
     }
 
-    /// The exception: in the last `SLASH_WINDOW_SECONDS` before `executableAt + grace` a
-    /// window-cut payment is allowed, so the record is paid something before it expires. The
-    /// boundary instant belongs to the partial payment.
-    function test_audit_theLastDayOfTheGraceAllowsAPartialPayment() public {
+    /// All or wait (owner decision, audit F R4): there is no last-day exception. A judgement that
+    /// never fits whole before its deadline is not paid in part — it expires in the provider's
+    /// favour, and `applied == reserved` holds for every executed record.
+    function test_audit_noPartialPaymentEvenInTheLastDay() public {
         _params(100_000_000, 1_000, 500_000_000);
         _propose("s1", provider, 100_000_000);
         _propose("s2", provider, 100_000_000);
-        uint256 lastDay = uint256(stake.slashRecordOf("s2").executableAt)
-            + Constants.SLASH_EXECUTION_GRACE_SECONDS - Constants.SLASH_WINDOW_SECONDS;
+        uint256 deadline = uint256(stake.slashRecordOf("s2").executableAt)
+            + Constants.SLASH_EXECUTION_GRACE_SECONDS;
 
-        vm.warp(lastDay - 2);
-        stake.executeSlash("s1"); // fills the window
-        vm.warp(lastDay - 1);
+        vm.warp(deadline - 2);
+        stake.executeSlash("s1"); // fills the provider's window
+        vm.warp(deadline - 1);
         vm.expectRevert(SlashWindowNotDrained.selector);
         stake.executeSlash("s2");
 
-        vm.warp(lastDay);
+        vm.warp(deadline);
+        vm.expectRevert(SlashExecutionWindowClosed.selector);
         stake.executeSlash("s2");
-        X402Stake.SlashRecord memory r = stake.slashRecordOf("s2");
-        assertEq(uint256(r.status), uint256(SlashStatus.Executed));
-        assertLt(r.applied, 100_000_000, "a partial payment, as before");
-        assertGt(r.applied, 0);
+        stake.expireSlash("s2");
+        assertEq(uint256(stake.slashRecordOf("s2").status), uint256(SlashStatus.Cancelled));
+        assertEq(stake.slashRecordOf("s2").applied, 0, "never paid in part");
+        assertEq(stake.slashRecordOf("s1").applied, 100_000_000, "s1 paid whole");
         assertEq(stake.stakeOf(provider).pendingSlash, 0);
     }
 
@@ -142,8 +143,9 @@ contract X402StakeAuditTest is Fixture {
     // === fix 3: one key in two roles (A L-3, B B12) ===========================================
 
     function test_audit_L3_theAdminCanNeverBecomeTheArbiter() public {
+        // `_assertRolesDistinct` (audit F R5) names the arbiter overlap `InvalidArbiter`.
         vm.prank(owner);
-        vm.expectRevert(InvalidAdmin.selector);
+        vm.expectRevert(InvalidArbiter.selector);
         config.setAdmin(arb);
         assertEq(config.admin(), admin);
     }
@@ -151,9 +153,9 @@ contract X402StakeAuditTest is Fixture {
     function test_audit_B12_aVerifierIsNeverTheAdminOrTheArbiter() public {
         uint64 exp = uint64(block.timestamp) + 30 days;
         vm.startPrank(admin);
-        vm.expectRevert(VerifierIsAdminOrArbiter.selector);
+        vm.expectRevert(InvalidArbiter.selector);
         config.registerVerifier(arb, bytes32("x"), exp);
-        vm.expectRevert(VerifierIsAdminOrArbiter.selector);
+        vm.expectRevert(InvalidAdmin.selector);
         config.registerVerifier(admin, bytes32("x"), exp);
         vm.stopPrank();
         assertFalse(config.verifierKey(arb).registered);
@@ -200,5 +202,38 @@ contract X402StakeAuditTest is Fixture {
         p.verifierDailyCap = p.penaltyAmount; // equal is admitted
         vm.prank(admin);
         config.updateConfig(p, address(0));
+    }
+
+    // === audit F R3: the delay is not coupled to the unbonding period ============================
+
+    /// The longest delay (22 d) over the shortest unbonding (11 d) — refused by the old coupling —
+    /// cannot be outrun: once proposed, the reservation holds, so a fully matured exit takes only
+    /// `BOND - reserved`, and the slash later executes in full.
+    function test_longDelayShortUnbondingCannotBeOutrun() public {
+        ParamSet memory p = config.params();
+        p.unbondingPeriodSeconds = Constants.MIN_UNBONDING_PERIOD_SECONDS;
+        vm.startPrank(admin);
+        config.updateConfig(p, address(0));
+        config.setSlashDelay(Constants.MAX_SLASH_DELAY_SECONDS);
+        vm.stopPrank();
+
+        _propose("long", provider, 1_000_000);
+        uint64 reserved = stake.slashRecordOf("long").reserved;
+        assertEq(reserved, 1_000_000);
+
+        vm.prank(provider);
+        stake.requestUnstake(BOND);
+        vm.warp(block.timestamp + Constants.MIN_UNBONDING_PERIOD_SECONDS);
+        assertEq(stake.withdrawableOf(provider), BOND - reserved, "only the free part can leave");
+        vm.prank(provider);
+        vm.expectRevert(InsufficientUnbondingStake.selector);
+        stake.withdrawStake(BOND);
+        vm.prank(provider);
+        stake.withdrawStake(BOND - reserved);
+
+        vm.warp(stake.slashRecordOf("long").executableAt);
+        stake.executeSlash("long");
+        assertEq(stake.slashRecordOf("long").applied, reserved, "paid in full");
+        assertEq(usdg.balanceOf(beneficiary), 600_000);
     }
 }

@@ -15,16 +15,9 @@ interface IX402Config {
     /// meaningful together, and `state.rs::Config::validate` is written the same way.
     function params() external view returns (ParamSet memory);
 
-    /// `Config::slash_provider_bps()` — `state.rs:127-131`. The provider's own share of a
-    /// penalty, `10_000 - agent - platform`, **derived and never stored** so it cannot disagree
-    /// with the two shares it is the complement of. It lives here rather than at X402Stake's use
-    /// site for the same reason: one derivation, on the contract that owns the parameters. That
-    /// the provider keeps a share of every penalty is a deliberate economic property of this
-    /// system (the provider keeps the remainder of every penalty), not an accounting remainder.
-    function slashProviderBps() external view returns (uint16);
-
-    /// `Config.paused` — `state.rs:85`. Closes the doors that move money on somebody else's
-    /// say-so and never a door that returns money to its owner (`set_paused.rs:13-22`).
+    /// `Config.paused` — `state.rs:85`. Since D-19 it closes every user door, the owner exits
+    /// included (a deliberate reversal of `set_paused.rs:13-22`), and leaves open only what
+    /// releases a hold or removes authority. It never moves money.
     function paused() external view returns (bool);
 
     /// `Config.admin` — `state.rs:23`. The operational key. NOT the upgrade authority since D-17.
@@ -37,8 +30,9 @@ interface IX402Config {
     /// `VerifierKey::assert_can_sign` as a predicate — `state.rs:248`.
     function canSign(address verifier) external view returns (bool);
 
-    /// `VerifierKey::assert_can_sign` — `state.rs:248`. Reverts `VerifierRevoked` or
-    /// `VerifierKeyExpired` rather than returning false, so a caller cannot ignore it.
+    /// `VerifierKey::assert_can_sign` — `state.rs:248`. Reverts `VerifierNotRegistered`,
+    /// `VerifierRevoked` or `VerifierKeyExpired` rather than returning false, so a caller cannot
+    /// ignore it.
     function assertCanSign(address verifier) external view;
 
     /// The dispute arbiter (EVM only): rules on `X402Stake.upholdSlash` and may `cancelSlash`.

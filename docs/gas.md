@@ -335,9 +335,9 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `X402Config` | 7,651 | 31.1% | 7,860 |
-| `X402Escrow` | 17,443 | 71.0% | 18,870 |
-| `X402Stake` | 15,269 | 62.1% | 16,696 |
+| `X402Config` | 7,454 | 30.3% | 7,663 |
+| `X402Escrow` | 17,228 | 70.1% | 18,655 |
+| `X402Stake` | 14,791 | 60.2% | 16,218 |
 
 Re-measured for D-19 (the dispute upgrade); the commit before it measured X402Config 6,136,
 X402Escrow 16,202 and X402Stake 13,041.

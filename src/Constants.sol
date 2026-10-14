@@ -33,7 +33,7 @@ library Constants {
     ///
     /// **Since the dispute upgrade this is the DEFAULT, not the delay.** The live value is
     /// `X402Config.slashDelaySeconds()`, which the admin may set inside
-    /// `[MIN_SLASH_DELAY_SECONDS, unbondingPeriodSeconds - SLASH_PATH_MARGIN_SECONDS]` and which
+    /// `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` and which
     /// reads back as this constant until it is first set — so a proxy upgraded from the earlier
     /// code keeps 72 hours. A stolen admin key can shorten it to the minimum, never to zero, and
     /// a proposal's `executableAt` is frozen when it is made.
@@ -43,12 +43,11 @@ library Constants {
     /// long enough for a test run to dispute, short enough to be useful on a testnet.
     uint64 internal constant MIN_SLASH_DELAY_SECONDS = 10 * 60;
 
-    /// EVM only. The rest of `MIN_UNBONDING_PERIOD_SECONDS`'s "longest path" once the delay is
-    /// taken out of it: 7d SLA window + 1d execution margin. `X402Config` keeps
-    /// `unbondingPeriodSeconds >= slashDelaySeconds() + this` at both setters, which at the
-    /// default delay is exactly `MIN_UNBONDING_PERIOD_SECONDS`.
-    uint64 internal constant SLASH_PATH_MARGIN_SECONDS =
-        MIN_UNBONDING_PERIOD_SECONDS - SLASH_DELAY_SECONDS;
+    /// EVM only. The longest settable slash delay: 22 days, the largest value the earlier
+    /// delay-to-unbonding coupling ever admitted (`MAX_UNBONDING_PERIOD_SECONDS - 8 d`). A fixed
+    /// bound since audit F R3: the reservation, not the unbonding clock, is what holds a
+    /// proposed penalty.
+    uint64 internal constant MAX_SLASH_DELAY_SECONDS = 22 * 86_400;
 
     /// EVM only. How long a `Disputed` slash may wait for the arbiter. After it, anybody may
     /// release the reservation with `expireSlash` (`CancelReason.DisputeUnresolved`): a hold
@@ -120,9 +119,10 @@ library Constants {
     /// safe: an unrotated key stops being able to slash.
     uint64 internal constant MAX_VERIFIER_KEY_LIFETIME_SECONDS = 365 * 86_400;
 
-    /// constants.rs:171 — `MIN_UNBONDING_PERIOD_SECONDS: i64 = 11 * 86_400`. The longest path
-    /// from breach to executed penalty: 7d SLA window + 3d dispute + 1d execution margin. Below
-    /// it, a provider outruns any penalty on the way out.
+    /// constants.rs:171 — `MIN_UNBONDING_PERIOD_SECONDS: i64 = 11 * 86_400`. Sized by Anchor as
+    /// the path from breach to executed penalty (7d SLA window + 3d dispute + 1d margin). On EVM
+    /// what it must cover is the breach-to-PROPOSAL leg: once proposed, `pendingSlash` holds the
+    /// penalty whatever the slash delay. Below it, a provider exits before a judgement lands.
     uint64 internal constant MIN_UNBONDING_PERIOD_SECONDS = 11 * 86_400;
 
     /// constants.rs:186 — `MAX_UNBONDING_PERIOD_SECONDS: i64 = 30 * 24 * 3_600`. Defends the

@@ -662,7 +662,7 @@ contract X402ConfigVerifierTest is Test {
             second, bytes32(type(uint256).max), uint64(block.timestamp) + 365 * 86_400
         );
         // The admin may NOT enrol itself since audit A L-3 / B B12: one key, one role.
-        vm.expectRevert(VerifierIsAdminOrArbiter.selector);
+        vm.expectRevert(InvalidAdmin.selector);
         config.registerVerifier(admin, LABEL, uint64(block.timestamp) + 1_000);
         // A duplicate label across two keys. Labels are not identifiers.
         config.registerVerifier(stranger, LABEL, uint64(block.timestamp) + 1_000);

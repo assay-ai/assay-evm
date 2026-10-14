@@ -268,36 +268,6 @@ contract X402ConfigAdminTest is Test {
         assertEq(_deploy(p, admin).params().slashAgentBps, 9_001, "9_001 is legal against 999");
     }
 
-    /// `Config::slash_provider_bps()` — `state.rs:127-131`.
-    ///
-    /// **Pins the value, three times, at three different answers.** A test asserting only that
-    /// the three shares sum to 10,000 is satisfied by any implementation that computes the
-    /// remainder *somehow* — including one that reads the wrong field, since the identity is
-    /// structural once the remainder is defined by subtraction. So each row states the number,
-    /// and the rows are chosen so that no single wrong formula produces all three: dropping the
-    /// platform term gives 4,000 / 1,000 / 9,999 and dropping the agent term gives 7,000 /
-    /// 9,000 / 10,000, against the correct 1,000 / 0 / 9,999.
-    function test_theProviderKeepsTheRemainderOfEveryPenalty() public {
-        ParamSet memory p = _valid(); // 6_000 + 3_000
-        assertEq(config.slashProviderBps(), 1_000, "the provider keeps 10% of _valid()");
-
-        p.slashAgentBps = 9_000;
-        p.slashPlatformBps = 1_000;
-        assertEq(_deploy(p, admin).slashProviderBps(), 0, "a 90/10 split leaves the provider none");
-
-        p.slashAgentBps = 1;
-        p.slashPlatformBps = 0;
-        assertEq(_deploy(p, admin).slashProviderBps(), 9_999, "and almost all of it at the floor");
-
-        // The sum identity holds too — asserted after the values, never instead of them.
-        ParamSet memory q = config.params();
-        assertEq(
-            uint256(q.slashAgentBps) + q.slashPlatformBps + config.slashProviderBps(),
-            10_000,
-            "the three shares are a partition of the penalty"
-        );
-    }
-
     /// **The order of the checks, which nothing else can see.** Every other refusal test violates
     /// exactly one bound, and a set with one violation names the same error under any ordering —
     /// measured: reversing all nine checks end to end leaves the whole suite green.

@@ -15,8 +15,8 @@ pragma solidity 0.8.24;
 ///
 /// # The accounting against `error.rs`, in full
 ///
-/// `error.rs` declares **55** `ErrorCode` variants. **47** of them appear below under the same
-/// name, and **48** errors below have no Anchor counterpart at all. The remaining **8** are
+/// `error.rs` declares **55** `ErrorCode` variants. **46** of them appear below under the same
+/// name, and **45** errors below have no Anchor counterpart at all. The remaining **9** are
 /// absent, and named here so that "the port is complete" is a claim a reader can check. (The
 /// counts are the output of a set difference over the two files, as `script/check-errors.sh`
 /// computes it; if you change either file, redo it rather than adjusting these by one.)
@@ -33,16 +33,19 @@ pragma solidity 0.8.24;
 ///   `VerifierNotRegistered` / `VerifierRevoked` / `VerifierKeyExpired`, which `assertCanSign`
 ///   raises for the recovered attestation signer. `ecrecover` always yields *some* address, so a
 ///   "missing" signature is never the condition — a signature by the wrong key is.
+/// - **Folded into the wait (D-20):** `VerifierDailyCapExceeded` → [`SlashWindowNotDrained`].
+///   Execution is all or wait, so a full key window is the same condition as a full provider
+///   window: retry later.
 ///
 /// Five errors with no producer were removed in D-18 rather than kept for name parity
 /// (`AmountExceedsUint64`, `NotBuyer`, `SignerIsNotVerifier`, `EscrowLimitsRequireBuyer`,
 /// `DestinationIsVault`), with `WalletCheckUnderfunded` (EIP-1271) and `Permit2NotConfigured`
 /// (the Permit2 deposit), whose doors went. `docs/divergences.md` carries the history.
 ///
-/// The 48 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+/// The 45 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
 /// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
 /// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
-/// voucher delegation, the four of the owner/admin split and the seq jump cap, and the fourteen of
+/// voucher delegation, the four of the owner/admin split and the seq jump cap, and the eleven of
 /// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay).
 ///
 /// The six PDA seed constants in `constants.rs:5-60` have no counterpart in `Constants.sol` for
@@ -73,7 +76,9 @@ error NotAdmin();
 /// is `updateConfig(ParamSet calldata p, address newAdmin)` — the admin is a separate argument
 /// by design (`newAdmin == address(0)` means "leave the admin alone", so the zero
 /// address doubles as the sentinel exactly as `Pubkey::default()` is refused on Solana). So
-/// `ParamSet` omitting `admin` is correct and only looks like a gap.
+/// `ParamSet` omitting `admin` is correct and only looks like a gap. Also raised by `setAdmin`
+/// for `address(0)`, and by any role writer that would make the admin a live verifier
+/// (`X402Config._assertRolesDistinct`, D-19).
 error InvalidAdmin();
 error NotRedeemer();
 /// EVM only. The caller of an upgrade on `X402Stake` or `X402Escrow` is not `CONFIG.owner()`.
@@ -215,7 +220,6 @@ error InvalidAttestationWindow();
 error StatusDoesNotSlash();
 error NothingToSlash();
 error SlashCapExceeded();
-error VerifierDailyCapExceeded();
 error PenaltyTooSmallToSplit();
 error PenaltyExceedsMaximum();
 error SlashNotPending();
@@ -232,26 +236,19 @@ error DisputeWindowClosed();
 error SlashNotDisputed();
 /// `upholdSlash` from anybody but `X402Config.arbiter()`.
 error NotArbiter();
-/// `upholdSlash` by an arbiter that is the record's own verifier: the key that judged may not
-/// also rule on the dispute of that judgement.
-error ArbiterIsVerifier();
 /// A party `X402Config.blocked()` names, at a door the blocklist closes.
 error AddressBlocked();
-/// `setSlashDelay` below `MIN_SLASH_DELAY_SECONDS`, or so long that `unbondingPeriodSeconds`
-/// no longer covers the delay plus `SLASH_PATH_MARGIN_SECONDS`.
+/// `setSlashDelay` outside `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]`.
 error InvalidSlashDelay();
 /// `upholdSlash` at or after `disputedAt + DISPUTE_TIMEOUT_SECONDS`: only `expireSlash` remains.
 error DisputeTimedOut();
 /// `disputeSlash` on a record that was already disputed once (`disputedAt != 0`).
 error SlashAlreadyDisputed();
-/// `executeSlash` whose payment a rolling window (the provider's or the key's) would cut below
-/// `min(reserved, atRisk)`, before the last day of the grace. Retry as the window drains.
+/// `executeSlash` whose WHOLE reservation does not fit under the provider's rolling window or
+/// the verifier key's (all or wait, D-20). The record stays Pending: retry as the windows drain.
 error SlashWindowNotDrained();
 /// `setBlocked(account, false)` from the arbiter: only the admin unblocks.
 error ArbiterCannotUnblock();
-/// `registerVerifier` naming the current admin or arbiter.
-error VerifierIsAdminOrArbiter();
-/// `updateConfig` (or `initialize`) whose `redeemer` is the current arbiter.
-error RedeemerIsArbiter();
-/// `setArbiter` naming the current admin or a registered, non-revoked verifier.
+/// `setArbiter(address(0))`, or any role writer that would make the arbiter the admin, the
+/// redeemer or a live verifier (`X402Config._assertRolesDistinct`).
 error InvalidArbiter();

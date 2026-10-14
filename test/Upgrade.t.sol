@@ -436,8 +436,8 @@ contract UpgradeTest is Fixture {
         // renounceOwnership — which always reverts — setAdmin and initializeV2); D-18 removed
         // verifierExpiry. The dispute upgrade added the arbiter, the blocklist and the slash delay
         // (arbiter, setArbiter, blocked, setBlocked, assertActive, slashDelaySeconds,
-        // setSlashDelay).
-        string[30] memory expected = [
+        // setSlashDelay); audit F R7 removed slashProviderBps.
+        string[29] memory expected = [
             "UPGRADE_INTERFACE_VERSION()",
             "acceptOwnership()",
             "admin()",
@@ -462,18 +462,17 @@ contract UpgradeTest is Fixture {
             "setPaused(bool)",
             "setSlashDelay(uint64)",
             "slashDelaySeconds()",
-            "slashProviderBps()",
             "transferOwnership(address)",
             "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)",
             "upgradeToAndCall(address,bytes)",
             "verifierKey(address)",
-            "" // the 30th slot is deliberately empty: a 30th function makes this test red
+            "" // the 29th slot is deliberately empty: a 29th function makes this test red
         ];
-        string[] memory dyn = new string[](30);
-        for (uint256 i = 0; i < 30; i++) {
+        string[] memory dyn = new string[](29);
+        for (uint256 i = 0; i < 29; i++) {
             dyn[i] = expected[i];
         }
-        _assertSurface("X402Config", 29, dyn);
+        _assertSurface("X402Config", 28, dyn);
     }
 
     function test_theStakeFunctionSurfaceIsPinnedByName() public view {

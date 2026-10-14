@@ -147,13 +147,14 @@ contract X402ConfigArbiterTest is Fixture {
         }
     }
 
-    /// Lower bound: `MIN_SLASH_DELAY_SECONDS`. Upper bound: the live unbonding period (14 days
-    /// in the fixture) minus `SLASH_PATH_MARGIN_SECONDS` (8 days), so 6 days here.
+    /// Fixed bounds since audit F R3: `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]`,
+    /// 10 minutes to 22 days, whatever the unbonding period.
     function test_boundary_theSlashDelayBounds() public {
         uint64 min = Constants.MIN_SLASH_DELAY_SECONDS;
-        uint64 max = config.params().unbondingPeriodSeconds - Constants.SLASH_PATH_MARGIN_SECONDS;
-        assertEq(Constants.SLASH_PATH_MARGIN_SECONDS, 8 * 86_400);
-        assertEq(max, 6 * 86_400);
+        uint64 max = Constants.MAX_SLASH_DELAY_SECONDS;
+        assertEq(min, 600);
+        assertEq(max, 22 * 86_400);
+        assertLt(config.params().unbondingPeriodSeconds, max, "the fixture's 14 d is below it");
 
         vm.startPrank(admin);
         vm.expectRevert(InvalidSlashDelay.selector);
@@ -171,26 +172,13 @@ contract X402ConfigArbiterTest is Fixture {
         vm.stopPrank();
     }
 
-    /// The other side of the same inequality: once the delay is long, the unbonding period
-    /// cannot be lowered under `delay + margin`, so a provider still cannot outrun the path.
-    function test_boundary_theUnbondingPeriodCoversTheLiveDelay() public {
+    /// The coupling is gone in both directions: with the delay at its maximum, the unbonding
+    /// period may still go down to `MIN_UNBONDING_PERIOD_SECONDS`, and not below.
+    function test_boundary_theUnbondingFloorIsIndependentOfTheDelay() public {
         vm.prank(admin);
-        config.setSlashDelay(5 * 86_400); // needs unbonding >= 13 days
+        config.setSlashDelay(Constants.MAX_SLASH_DELAY_SECONDS);
 
         ParamSet memory p = config.params();
-        p.unbondingPeriodSeconds = 13 * 86_400 - 1;
-        vm.prank(admin);
-        vm.expectRevert(UnbondingPeriodTooShort.selector);
-        config.updateConfig(p, address(0));
-
-        p.unbondingPeriodSeconds = 13 * 86_400;
-        vm.prank(admin);
-        config.updateConfig(p, address(0));
-        assertEq(config.params().unbondingPeriodSeconds, 13 * 86_400);
-
-        // At or below the default delay, the floor stays MIN_UNBONDING_PERIOD_SECONDS.
-        vm.prank(admin);
-        config.setSlashDelay(Constants.MIN_SLASH_DELAY_SECONDS);
         p.unbondingPeriodSeconds = Constants.MIN_UNBONDING_PERIOD_SECONDS - 1;
         vm.prank(admin);
         vm.expectRevert(UnbondingPeriodTooShort.selector);
@@ -198,6 +186,7 @@ contract X402ConfigArbiterTest is Fixture {
         p.unbondingPeriodSeconds = Constants.MIN_UNBONDING_PERIOD_SECONDS;
         vm.prank(admin);
         config.updateConfig(p, address(0));
+        assertEq(config.params().unbondingPeriodSeconds, Constants.MIN_UNBONDING_PERIOD_SECONDS);
     }
 
     /// None of the three new setters is the owner's: `onlyOwner` still gates only the upgrade

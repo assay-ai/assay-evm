@@ -335,8 +335,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
         ParamSet memory p = CONFIG.params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        if (CONFIG.paused()) revert ProgramPaused();
-        _redeem(v, sig, p);
+        _redeem(v, sig, p); // the pause is `_redeem`'s `CONFIG.assertActive` (audit F R7)
     }
 
     /// **Batching returns on EVM, because the constraint that forbade it does not exist here.**
@@ -364,7 +363,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// `params()` is read ONCE for the batch, for the same reason it is read once per redemption:
     /// a Config upgrade landing mid-transaction must not hand two items different treasuries. The
-    /// redeemer pin and the pause check are this function's; **every other rule is [`_redeem`]'s,
+    /// redeemer pin and the batch bounds are this function's; **every other rule, the pause
+    /// included, is [`_redeem`]'s,
     /// reused unchanged.** A batch with its own copy of the check list would be a second place for
     /// the replay rule to live, and `test_theBatchDelegatesToTheOneRedeemPathInTheSource` pins the
     /// delegation as source text so the copy cannot appear quietly.
@@ -380,7 +380,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     {
         ParamSet memory p = CONFIG.params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        if (CONFIG.paused()) revert ProgramPaused();
+        // No pause check here: every item's `CONFIG.assertActive` in `_redeem` refuses
+        // `ProgramPaused` (audit F R7), so an empty or malformed batch is diagnosed first.
 
         uint256 n = vs.length;
         if (n == 0) revert EmptyBatch();
@@ -563,9 +564,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// The buyer takes their own money out of their own escrow — `handle_withdraw`
     /// (`withdraw.rs:113-152`), and the second half of the two-step exit [`requestWithdraw`]
-    /// opens. It is the door this whole PR exists to keep open: a full compromise of every key
-    /// held in an environment variable must be unable to stop a buyer taking their own money out,
-    /// and unable to take it for them.
+    /// opens. A full compromise of every key held in an environment variable (the backend's)
+    /// can neither stop a buyer taking their own money out nor take it for them. The cold ADMIN
+    /// can hold it in place — pause and block close this door since D-19, an accepted risk
+    /// (risk register §18) — but no key can move it anywhere else.
     ///
     /// # It takes no destination and pays `msg.sender`
     ///
@@ -796,9 +798,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         address delegate =
             _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);
 
-        // The blocklist: payer, payee and (when there is one) the delegate that signed. Here and
-        // not at the entry point because the delegate is only known once the signature has been
-        // recovered. It re-reads the pause flag the entry point already checked, which is free.
+        // The pause and the blocklist — payer, payee and (when there is one) the delegate that
+        // signed. Here and not at the entry point because the delegate is only known once the
+        // signature has been recovered; this is the redeem paths' only pause check (audit F R7).
         CONFIG.assertActive(v.payer, v.provider, delegate);
 
         // `state.rs::admit_spend` (`state.rs:591-612`). A limit of `0` refuses everything, so an

@@ -354,13 +354,12 @@ duplicate id reverts the batch, so pre-filter with `slashRecordOf`).
 ```sh
 cast send <configProxy> "setArbiter(address)" <arbiter> --rpc-url <rpc> --ledger      # ADMIN; 0x0 refused: replace, never remove
 cast send <configProxy> "setBlocked(address,bool)" <addr> true --rpc-url <rpc> --ledger # admin or arbiter; only the admin may send false
-cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledger    # ADMIN; [600, unbondingPeriodSeconds - 691200]
+cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledger    # ADMIN; [600, 1900800] (10 min to 22 d)
 ```
 
-- [ ] The arbiter is **not** the verifier and not any key the backend holds. `setArbiter` refuses
-      the admin and any registered, non-revoked verifier (`InvalidArbiter`), and `upholdSlash`
-      still refuses an arbiter equal to the record's verifier; nothing stops a backend key that
-      is not a verifier, so check by hand.
+- [ ] The arbiter is **not** the verifier and not any key the backend holds. Config refuses an
+      arbiter that is the admin, the redeemer or a live verifier (`InvalidArbiter`); nothing
+      stops a backend key that holds no on-chain role, so check by hand.
 - [ ] A blocked address can still `revokeDelegate` and `disputeSlash`; nothing moves its funds.
       Unblocking is the admin's alone.
 - [ ] **The blocklist binds the subjects of a door** — buyer, payer, payee/provider, delegate,
@@ -372,9 +371,10 @@ cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledg
 
 - [ ] The slash delay applies to NEW proposals only. **Production keeps it at 72 h or more**; the
       10-minute minimum is for testing, and a short delay is a short dispute window.
-- [ ] Roles stay separate: `setAdmin` refuses the arbiter, `registerVerifier` refuses the admin
-      and the arbiter, `setArbiter` refuses `0x0`, the admin, the redeemer and any live verifier,
-      and `updateConfig` refuses a `redeemer` equal to the arbiter.
+- [ ] Roles stay separate, enforced in one place (`X402Config._assertRolesDistinct`, run by
+      `setAdmin`, `setArbiter`, `registerVerifier` and `updateConfig`): the admin is not a live
+      verifier (`InvalidAdmin`); the arbiter is not the admin, the redeemer or a live verifier
+      (`InvalidArbiter`); `setArbiter` refuses `0x0`.
 - [ ] **A stolen admin key alone can take provider stake within the caps** (it registers a
       verifier, sets the arbiter, lowers the delay and sets params). Accepted by the owner on
       2026-10-14 because the admin wallet is held as securely as the owner wallet; risk register §4a.
@@ -391,10 +391,13 @@ set `expiresAt` far enough out to cover that tail.
 
 ### 6.7 Executing slashes, pauses and parameter changes
 
-- **The cap write-off rule.** `executeSlash` refuses `SlashWindowNotDrained` when the provider's
-  or the key's rolling window would cut the payment below `min(reserved, atRisk)`; the record stays
-  Pending. Retry as the window drains (it reopens linearly over 24 h). In the last 24 h before
-  `executableAt + 7 d` a partial payment is accepted, so execute well before then.
+- **All or wait (D-20).** `executeSlash` pays a record its WHOLE reservation or nothing. When the
+  provider's or the key's rolling window cannot take all of it, it refuses `SlashWindowNotDrained`
+  (the backend maps it to WAIT) and the record stays Pending; retry as the windows drain (they
+  reopen linearly over 24 h). There is no partial payment and no last-day exception: **an honest
+  slash crowded out for the whole 7-day grace expires unpaid.** So size `verifierDailyCap` with
+  large headroom over a day's expected judgements (or spread the load over more keys), and never
+  lower it below records already in flight.
 - **A pause longer than 7 days voids slashes.** The grace and the 30-day dispute timeout keep
   running while paused; `executeSlash` is closed and `expireSlash` is open to anyone. **Before a
   long pause, and again right after the unpause**, list every Pending or upheld record whose

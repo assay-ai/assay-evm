@@ -880,7 +880,8 @@ contract SystemHandler is Test {
         X402Stake.SlashRecord memory q = stake.slashRecordOf(id);
         X402Stake.ProviderStake memory s2 = stake.stakeOf(r.provider);
         (uint64 vUsed,) = _verifierWindow(r.verifier);
-        if (q.applied > r.reserved) _violate("caps", "applied above reserved");
+        // All or wait (D-20): an execution pays the whole reservation, never part of it.
+        if (q.applied != r.reserved) _violate("caps", "applied != reserved");
         if (s2.slashedInWindow > r.capAllowance) _violate("caps", "provider window above cap");
         if (vUsed > p.verifierDailyCap) _violate("caps", "verifier window above daily cap");
         uint64 agent = Fee.bpsOf(q.applied, p.slashAgentBps);
@@ -1047,9 +1048,9 @@ contract SystemHandler is Test {
         address caller = callerSeed % 4 == 0 ? _anyCaller(callerSeed >> 2) : _admin();
         d = uint64(bound(d, 0, 30 * 86_400));
         if (callerSeed % 5 == 1) d = Constants.MIN_SLASH_DELAY_SECONDS;
+        // Fixed bounds since audit F R3: no coupling to the unbonding period.
         bool want = caller == _admin() && d >= Constants.MIN_SLASH_DELAY_SECONDS
-            && uint256(d) + Constants.SLASH_PATH_MARGIN_SECONDS
-                <= config.params().unbondingPeriodSeconds;
+            && d <= Constants.MAX_SLASH_DELAY_SECONDS;
         bool s = _call(caller, address(config), abi.encodeCall(X402Config.setSlashDelay, (d)));
         if (s != want) _violate("role", "setSlashDelay outcome mismatch");
     }

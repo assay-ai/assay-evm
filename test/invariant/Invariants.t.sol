@@ -101,6 +101,11 @@ contract InvariantsTest is Test {
         assertTrue(stakeHandler.everyRecordIsInTheStateTheBookSays());
     }
 
+    /// All or wait (D-20): `applied == reserved` for every Executed record.
+    function invariant_everyExecutedRecordWasPaidInFull() public view {
+        assertTrue(stakeHandler.everyExecutedRecordWasPaidInFull());
+    }
+
     /// A hold can never exceed the collateral it is held against, per provider.
     function invariant_atRiskCoversPendingSlash() public view {
         assertTrue(stakeHandler.everyProviderCoversItsPendingSlash());
@@ -226,6 +231,7 @@ contract InvariantsTest is Test {
         invariant_pendingSlashEqualsTheSumOfPendingReservations();
         invariant_atRiskCoversPendingSlash();
         invariant_everyRecordIsInTheStateTheBookSays();
+        invariant_everyExecutedRecordWasPaidInFull();
         invariant_theStakeVaultHoldsAtLeastWhatItOwes();
 
         // …and the state is not the empty one: the assertions above would all hold over an

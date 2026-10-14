@@ -51,7 +51,7 @@ contract AuditDFindingsTest is Fixture {
     /// current arbiter, so the arbiter can never propose a slash alone.
     function test_regression_AD1_registerVerifierRefusesTheCurrentArbiter() public {
         vm.prank(admin);
-        vm.expectRevert(VerifierIsAdminOrArbiter.selector);
+        vm.expectRevert(InvalidArbiter.selector);
         config.registerVerifier(arb, bytes32("oops"), uint64(block.timestamp) + 30 days);
         assertFalse(config.canSign(arb), "the arbiter is not a verifier");
 
@@ -64,7 +64,7 @@ contract AuditDFindingsTest is Fixture {
     /// AD-2 (invariant_arbiterIsNeverTheAdmin): `setAdmin` now refuses the current arbiter.
     function test_regression_AD2_setAdminRefusesTheCurrentArbiter() public {
         vm.prank(owner);
-        vm.expectRevert(InvalidAdmin.selector);
+        vm.expectRevert(InvalidArbiter.selector); // `_assertRolesDistinct`, audit F R5
         config.setAdmin(arb);
         assertTrue(config.admin() != config.arbiter());
 
@@ -81,7 +81,7 @@ contract AuditDFindingsTest is Fixture {
         ParamSet memory p = config.params();
         p.redeemer = arb;
         vm.prank(admin);
-        vm.expectRevert(RedeemerIsArbiter.selector);
+        vm.expectRevert(InvalidArbiter.selector);
         config.updateConfig(p, address(0));
 
         address r = config.params().redeemer;
