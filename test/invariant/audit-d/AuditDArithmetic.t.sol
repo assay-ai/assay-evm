@@ -117,6 +117,10 @@ contract AuditDSlashEdgesTest is Fixture {
         p.slashCapBps = cap;
         p.slashAgentBps = agent;
         p.slashPlatformBps = plat;
+        // The smallest minimum the provider-day rule admits (review R-1). `minimumStake` gates
+        // only escrow redemption, so it does not constrain the bonds fuzzed below.
+        uint256 floor_ = (2 * uint256(penaltyMax) * 10_000 + cap - 1) / cap;
+        if (p.minimumStake < floor_) p.minimumStake = uint64(floor_);
         vm.prank(admin);
         config.updateConfig(p, address(0));
     }
@@ -139,9 +143,15 @@ contract AuditDSlashEdgesTest is Fixture {
         agent = uint16(bound(agent, 1, 10_000));
         plat = uint16(bound(plat, 0, 10_000 - agent));
         daily = uint64(bound(daily, 2, type(uint64).max));
-        // Since audit G G-1 the penalty ceiling is at most half the key's daily cap.
-        penalty = uint64(bound(penalty, 1, daily / 2));
-        _params(daily / 2, daily, cap, agent, plat);
+        // Since audit G G-1 the penalty ceiling is at most half the key's daily cap, and since
+        // review R-1 at most half of a minimum-stake provider's capped day; the largest
+        // `minimumStake` (uint64 max) bounds it at `max * cap / 10_000 / 2`. Still far above any
+        // small `bond`, so the penalty-above-the-stake case stays in the domain.
+        uint64 penaltyMax = daily / 2;
+        uint256 stakeCeiling = uint256(type(uint64).max) * cap / 10_000 / 2;
+        if (penaltyMax > stakeCeiling) penaltyMax = uint64(stakeCeiling);
+        penalty = uint64(bound(penalty, 1, penaltyMax));
+        _params(penaltyMax, daily, cap, agent, plat);
 
         _fund(p2, bond);
         vm.startPrank(p2);

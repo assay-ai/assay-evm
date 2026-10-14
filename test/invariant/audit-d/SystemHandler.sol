@@ -115,11 +115,13 @@ contract SystemHandler is Test {
             treasury: TREASURY,
             redeemer: REDEEMER,
             unbondingPeriodSeconds: 14 * 86_400,
-            minimumStake: 100_000_000,
-            penaltyAmount: 500_000_000,
-            // = penaltyAmount: since audit C7 `updateConfig`/`initialize` refuse a daily cap below
-            // one penalty. Window clamps are still reached through several records per day.
-            verifierDailyCap: 1_000_000_000, // >= 2 * penaltyAmount (audit G G-1)
+            // = the providers' opening bond, and the smallest the provider-day rule admits
+            // (review R-1: 1 000 USDG * 1 000 bps = 100 USDG = 2 * penaltyAmount). Both day caps
+            // hold exactly two maximal records, so window clamps are reached through several
+            // records per day; a provider slashed under the minimum also stops redeeming.
+            minimumStake: 1_000_000_000,
+            penaltyAmount: 50_000_000,
+            verifierDailyCap: 100_000_000, // = 2 * penaltyAmount (audit G G-1)
             takeRateBps: 1_000,
             slashAgentBps: 6_000,
             slashPlatformBps: 3_000,
@@ -1113,13 +1115,15 @@ contract SystemHandler is Test {
         address caller = callerSeed % 4 == 0 ? _anyCaller(callerSeed >> 2) : _admin();
         ParamSet memory p = config.params();
         p.unbondingPeriodSeconds = uint64(bound(unbonding, 10 * 86_400, 31 * 86_400));
-        p.penaltyAmount = uint64(bound(penalty, 0, 2_000_000_000));
+        p.penaltyAmount = uint64(bound(penalty, 0, 200_000_000));
         p.verifierDailyCap = uint64(bound(dailyCap, 0, 1_000_000_000));
         p.takeRateBps = uint16(bound(take, 0, 3_200));
         p.slashAgentBps = uint16(bound(agent, 0, 10_000));
         p.slashPlatformBps = uint16(bound(platform, 0, 10_000 - p.slashAgentBps + 50));
         p.slashCapBps = uint16(bound(cap, 0, 5_200));
-        p.minimumStake = uint64(bound(callerSeed >> 8, 0, 200_000_000));
+        // Up to twice the opening minimum, so sets that satisfy the provider-day rule (review R-1)
+        // stay reachable alongside the ones it refuses.
+        p.minimumStake = uint64(bound(callerSeed >> 8, 0, 2_000_000_000));
         bool s =
             _call(caller, address(config), abi.encodeCall(X402Config.updateConfig, (p, address(0))));
         if (s && caller != _admin()) _violate("role", "updateConfig by a non-admin");

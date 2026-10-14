@@ -299,8 +299,12 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
             revert UnbondingPeriodTooLong();
         }
         if (p.minimumStake == 0) revert InvalidMinimumStake();
-        // A provider at the minimum must be slashable: its cap allowance may not round to 0.
-        if (uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR == 0) {
+        // A provider at the minimum must fit two maximal records in one provider-day (the
+        // provider-side twin of G-1): with all or wait, a record that fills the whole cap pays
+        // only on an empty window, so one small execution a day starves it until it expires.
+        // With a penalty above 0 this also keeps that cap allowance above 0; a penalty of 0
+        // (shadow mode) slashes nothing, so it needs no allowance.
+        if (uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR < 2 * uint256(p.penaltyAmount)) {
             revert InvalidMinimumStake();
         }
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
