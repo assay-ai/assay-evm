@@ -107,8 +107,9 @@ contract UpgradeByOwner is Script {
 
         address sampleBuyer = vm.envAddress("SAMPLE_BUYER");
         address sampleProvider = vm.envAddress("SAMPLE_PROVIDER");
-        bytes32 escrowDomain = escrow.DOMAIN_SEPARATOR();
-        bytes32 stakeDomain = stake.DOMAIN_SEPARATOR();
+        // A deliberate domain rename passes the separators it must land on; otherwise none may move.
+        bytes32 escrowDomain = vm.envOr("EXPECTED_ESCROW_DOMAIN", escrow.DOMAIN_SEPARATOR());
+        bytes32 stakeDomain = vm.envOr("EXPECTED_STAKE_DOMAIN", stake.DOMAIN_SEPARATOR());
         bytes32 buyerBefore = keccak256(abi.encode(escrow.escrowOf(sampleBuyer)));
         bytes32 providerBefore = keccak256(abi.encode(stake.stakeOf(sampleProvider)));
         uint128 escrowedBefore = escrow.totalEscrowed();
