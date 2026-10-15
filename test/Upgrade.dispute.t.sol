@@ -174,7 +174,19 @@ contract UpgradeDisputeTest is Fixture {
         assertEq(s.totalDeposited(), totals[1]);
         assertEq(s.totalWithdrawn(), totals[2]);
         assertEq(s.totalSlashed(), totals[3]);
-        assertEq(s.DOMAIN_SEPARATOR(), sep, "the attestation domain must not move");
+        // The pre-dispute build is named "x402 Settlement"; the current one "Assay Settlement".
+        // Only the name moves: same version, chain and proxy.
+        bytes32 renamed = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("Assay Settlement"),
+                keccak256("2"),
+                block.chainid,
+                address(s)
+            )
+        );
+        assertTrue(sep != renamed, "the pre-dispute build carries the old name");
+        assertEq(s.DOMAIN_SEPARATOR(), renamed, "the attestation domain moves by its name only");
         assertEq(usdg.balanceOf(address(s)), vault);
         assertEq(address(s.CONFIG()), address(c));
 

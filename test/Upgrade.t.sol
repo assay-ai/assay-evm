@@ -331,7 +331,7 @@ contract UpgradeTest is Fixture {
     }
 
     /// The same failure reached from the other side: the **name**, not the version. Kept separate
-    /// because an operator changing "x402 Settlement" to "X402 Settlement" while tidying a string
+    /// because an operator changing "Assay Settlement" to "X402 Settlement" while tidying a string
     /// is a more plausible mistake than bumping a version deliberately, and because one test
     /// proving one of the two fields would leave the other unmeasured.
     ///
@@ -345,7 +345,7 @@ contract UpgradeTest is Fixture {
         bytes32 live = keccak256(
             abi.encode(
                 typeHash,
-                keccak256("x402 Settlement"),
+                keccak256("Assay Settlement"),
                 keccak256("2"),
                 block.chainid,
                 address(escrow)

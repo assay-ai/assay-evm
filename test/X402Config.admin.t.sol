@@ -92,7 +92,7 @@ contract X402ConfigAdminTest is Test {
         q.treasury = address(0xF00D);
         q.redeemer = address(0xCAFE);
         q.unbondingPeriodSeconds = 20 * 86_400;
-        q.minimumStake = 7;
+        q.minimumStake = 37; // 37 * 4 999 / 10 000 = 18 = 2 * penaltyAmount (review R-1)
         q.penaltyAmount = 9;
         q.verifierDailyCap = 18;
         q.takeRateBps = 2_500;
@@ -227,21 +227,37 @@ contract X402ConfigAdminTest is Test {
         assertEq(floor_.params().takeRateBps, 0, "a zero take rate is not refused");
     }
 
-    /// `penalty_amount` is unbounded in `state.rs` — `0` **is** on-chain shadow mode. Since
-    /// audit G G-1 its only ceiling is half of `verifierDailyCap` (two judgements must fit one
-    /// key-day); there is no other bound in either direction.
-    function test_boundary_penaltyAmountIsBoundedOnlyByTheDailyCap() public {
+    /// `penalty_amount` is unbounded in `state.rs` — `0` **is** on-chain shadow mode. It has
+    /// two ceilings and no other bound in either direction: half of `verifierDailyCap` (two
+    /// judgements must fit one key-day, audit G G-1) and half of a minimum-stake provider's
+    /// capped day, `minimumStake * slashCapBps / 10_000` (two must fit one provider-day, review
+    /// 2026-10-15 R-1).
+    function test_boundary_penaltyAmountIsBoundedOnlyByTheTwoDailyCaps() public {
         ParamSet memory p = _valid();
         p.penaltyAmount = 0;
         assertEq(_deploy(p, admin).params().penaltyAmount, 0, "zero penalty is shadow mode");
 
+        // Both caps at their largest: max * 5 000 / 10 000 = 2^63 - 1 holds two of max / 4.
         p.verifierDailyCap = type(uint64).max;
-        p.penaltyAmount = type(uint64).max / 2;
+        p.minimumStake = type(uint64).max;
+        p.slashCapBps = 5_000; // MAX_SLASH_CAP_BPS
+        p.penaltyAmount = type(uint64).max / 4;
         assertEq(
             _deploy(p, admin).params().penaltyAmount,
-            type(uint64).max / 2,
-            "no ceiling but the daily cap"
+            type(uint64).max / 4,
+            "no ceiling but the two daily caps"
         );
+
+        // One more than the provider-day ceiling.
+        p.penaltyAmount = type(uint64).max / 4 + 1;
+        vm.expectRevert(InvalidMinimumStake.selector);
+        _deploy(p, admin);
+
+        // The key-day ceiling still binds on its own.
+        p.penaltyAmount = type(uint64).max / 4;
+        p.verifierDailyCap = 2 * p.penaltyAmount - 1;
+        vm.expectRevert(InvalidVerifierDailyCap.selector);
+        _deploy(p, admin);
     }
 
     /// **The set-wise property.** `validate` runs once, over the whole `ParamSet`, exactly as

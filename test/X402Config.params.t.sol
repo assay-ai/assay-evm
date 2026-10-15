@@ -63,7 +63,7 @@ contract X402ConfigParamsTest is Test {
             treasury: address(0xF00D),
             redeemer: address(0xCAFE),
             unbondingPeriodSeconds: 20 * 86_400,
-            minimumStake: 7,
+            minimumStake: 37, // 37 * 4 999 / 10 000 = 18 >= 2 * penaltyAmount (review R-1)
             penaltyAmount: 9,
             verifierDailyCap: 18, // >= 2 * penaltyAmount (audit G G-1)
             takeRateBps: 2_500,
@@ -81,9 +81,10 @@ contract X402ConfigParamsTest is Test {
             treasury: address(0xB0A7),
             redeemer: address(0xD0E5),
             unbondingPeriodSeconds: 30 * 86_400,
-            // The smallest minimum a 1-bps cap can still slash (audit C7: 10 000 * 1 / 10 000 = 1),
-            // and a penalty that fits one key-day (audit C7: penaltyAmount <= verifierDailyCap).
-            minimumStake: 10_000,
+            // The smallest minimum a 1-bps cap admits for this penalty: two penalties fit one
+            // provider-day (review R-1: 40 000 * 1 / 10 000 = 4 = 2 * 2), and two fit one
+            // key-day (audit G G-1: verifierDailyCap = 2 * penaltyAmount).
+            minimumStake: 40_000,
             penaltyAmount: 2,
             verifierDailyCap: 4,
             takeRateBps: 0,
@@ -317,6 +318,22 @@ contract X402ConfigParamsTest is Test {
         p = _valid();
         p.verifierDailyCap = 0;
         _refused(p, InvalidVerifierDailyCap.selector, "zero verifier daily cap");
+
+        // The provider-day twin of G-1: a minimum-stake provider's cap must hold two penalties.
+        p = _valid();
+        p.penaltyAmount = uint64(uint256(p.minimumStake) * p.slashCapBps / 10_000 / 2 + 1);
+        if (p.verifierDailyCap < 2 * p.penaltyAmount) p.verifierDailyCap = 2 * p.penaltyAmount;
+        _refused(p, InvalidMinimumStake.selector, "minimum-stake cap under two penalties");
+    }
+
+    /// Exactly two penalties in a minimum-stake provider's day is allowed.
+    function test_aMinimumStakeCapOfExactlyTwoPenaltiesIsAccepted() public {
+        ParamSet memory p = _valid();
+        p.penaltyAmount = uint64(uint256(p.minimumStake) * p.slashCapBps / 10_000 / 2);
+        if (p.verifierDailyCap < 2 * p.penaltyAmount) p.verifierDailyCap = 2 * p.penaltyAmount;
+        vm.prank(config.admin());
+        config.updateConfig(p, address(0));
+        assertEq(config.params().penaltyAmount, p.penaltyAmount);
     }
 
     /// An invalid set moves nothing — not the parameters and not the admin.
@@ -402,8 +419,9 @@ contract X402ConfigParamsTest is Test {
     /// Every other refusal test asks "is this bad set refused?". None of them can see a bound the
     /// port **invented** — a precondition the reference does not have — because an invented
     /// precondition only ever refuses sets no test sends. Measured: `q.treasury == q.redeemer`
-    /// refused survives the entire suite (mutation log C45), as does a
-    /// `penaltyAmount <= minimumStake` rule (C46).
+    /// refused survives the entire suite (mutation log C45), as did a
+    /// `penaltyAmount <= minimumStake` rule (C46) — since review 2026-10-15 R-1 implied by the
+    /// provider-day rule, and the one row below that the port refuses on purpose.
     ///
     /// Each row below is legal under `state.rs:134-191` — read it against that function, not
     /// against intuition — and each is a set some plausible extra rule would refuse. A set that
@@ -427,14 +445,20 @@ contract X402ConfigParamsTest is Test {
         p.treasury = address(config);
         _accepted(p, "the config's own address is a legal treasury");
 
-        // a penalty larger than the whole minimum stake. `state.rs:68-75` bounds `penalty_amount`
-        // at neither end; what bounds the damage is `slashCapBps`, a fraction of the stake held.
-        // (`minimumStake` 10 is the smallest a 1 000-bps cap can still slash, audit C7.)
+        // A penalty larger than the whole minimum stake WAS accepted here (`state.rs:68-75`
+        // bounds `penalty_amount` at neither end). Since review 2026-10-15 R-1 it is a deliberate
+        // refusal: a provider at the minimum must fit two penalties in its capped day, so
+        // `penaltyAmount <= minimumStake * slashCapBps / 20_000 <= minimumStake / 4`.
         p = _valid();
         p.minimumStake = 10;
         p.penaltyAmount = type(uint64).max / 2;
         p.verifierDailyCap = type(uint64).max;
-        _accepted(p, "the penalty may exceed the minimum stake");
+        _refused(p, InvalidMinimumStake.selector, "a penalty above the minimum stake");
+        // The ceiling itself: a quarter of the minimum stake, at the 5 000-bps cap.
+        p.slashCapBps = 5_000;
+        p.minimumStake = 4_000_000;
+        p.penaltyAmount = 1_000_000;
+        _accepted(p, "the penalty may be a quarter of the minimum stake");
 
         // A daily cap smaller than a single penalty WAS accepted here; since audit C7 it is a
         // deliberate refusal (one judgement could never be paid in full), tested in

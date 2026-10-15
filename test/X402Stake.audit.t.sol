@@ -52,16 +52,39 @@ contract X402StakeAuditTest is Fixture {
         stake.proposeSlash(a, sig);
     }
 
+    /// Also raises `minimumStake` to the smallest the provider-day rule admits (a provider at the
+    /// minimum fits two penalties a day). `minimumStake` gates only escrow redemption, so the
+    /// 1 000 USDG `BOND` here may sit below it: that is the reachable case (a provider slashed
+    /// under the minimum) where one record can still fill a provider-day, which these tests need.
     function _params(uint64 penalty, uint16 capBps, uint64 dailyCap) internal {
         ParamSet memory p = config.params();
         p.penaltyAmount = penalty;
         p.slashCapBps = capBps;
         p.verifierDailyCap = dailyCap;
+        uint256 floor_ = (2 * uint256(penalty) * 10_000 + capBps - 1) / capBps;
+        if (p.minimumStake < floor_) p.minimumStake = uint64(floor_);
         vm.prank(admin);
         config.updateConfig(p, address(0));
     }
 
     // === fix 1: the cap write-off (A M-1, B B1, C C2) ========================================
+
+    /// Review 2026-10-15 R-5: the stake proxy as beneficiary would strand the 60 % share.
+    function test_review_theStakeProxyCannotBeTheBeneficiary() public {
+        SlashAttestation memory a = SlashAttestation({
+            requestId: "self",
+            provider: provider,
+            beneficiary: address(stake),
+            status: uint8(ResponseClass.DataFail),
+            penalty: 1_000_000,
+            policy: keccak256("p"),
+            issuedAt: uint64(block.timestamp),
+            expiresAt: uint64(block.timestamp) + 1 days
+        });
+        bytes memory sig = VoucherSigner.signAttestation(vPk, stake.DOMAIN_SEPARATOR(), a);
+        vm.expectRevert(MissingBeneficiary.selector);
+        stake.proposeSlash(a, sig);
+    }
 
     /// The auditor's M-1: the provider executed s2 one second after s1 filled its window and
     /// discharged a 100 USDG judgement for ~0.001 USDG. Now the dust execution is refused, the
@@ -184,15 +207,24 @@ contract X402StakeAuditTest is Fixture {
 
     // === fix 5: parameter cross-checks (C C7) =================================================
 
+    /// Since review 2026-10-15 R-1 the C7 rule is subsumed by the provider-day rule
+    /// (`minimumStake * slashCapBps / 10_000 >= 2 * penaltyAmount`): with any non-zero penalty a
+    /// cap that rounds to 0 is refused, and so is one that holds a single penalty.
     function test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused() public {
         ParamSet memory p = config.params(); // slashCapBps 1 000
+        p.penaltyAmount = 1;
         p.minimumStake = 9; // 9 * 1000 / 10000 = 0
         vm.prank(admin);
         vm.expectRevert(InvalidMinimumStake.selector);
         config.updateConfig(p, address(0));
-        p.minimumStake = 10; // = 1: slashable
+        p.minimumStake = 19; // = 1: slashable, but one penalty fills the provider-day
+        vm.prank(admin);
+        vm.expectRevert(InvalidMinimumStake.selector);
+        config.updateConfig(p, address(0));
+        p.minimumStake = 20; // = 2: two penalties fit
         vm.prank(admin);
         config.updateConfig(p, address(0));
+        assertEq(config.params().minimumStake, 20);
     }
 
     function test_audit_C7_aPenaltyAboveTheDailyCapIsRefused() public {

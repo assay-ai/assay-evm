@@ -9,7 +9,7 @@ import {IX402Config} from "../../src/interfaces/IX402Config.sol";
 import "../../src/Errors.sol";
 
 /// The NEGATIVE case, and the reason every X402 implementation must be constructed with
-/// `EIP712("x402 Settlement", "2")`. The name and version are ShortString IMMUTABLES compiled
+/// `EIP712("Assay Settlement", "2")`. The name and version are ShortString IMMUTABLES compiled
 /// into the implementation; change either and the proxy's domain separator changes on the next
 /// block, and every voucher a buyer has already signed becomes unredeemable. Nothing on chain
 /// stops this — `_authorizeUpgrade` checks *who*, never *what* — so the only controls are the
@@ -29,7 +29,7 @@ contract X402EscrowBadDomainV2 is Initializable, UUPSUpgradeable, EIP712, Reentr
     IX402Config public CONFIG;
 
     /// Version "3" where the shipped implementations say "2". One character.
-    constructor() EIP712("x402 Settlement", "3") {
+    constructor() EIP712("Assay Settlement", "3") {
         _disableInitializers();
     }
 

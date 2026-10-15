@@ -159,7 +159,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// it).
     /// `_disableInitializers()` makes the implementation itself permanently uninitialisable —
     /// without it anyone may initialize it, become its admin and upgrade it directly.
-    constructor() EIP712("x402 Settlement", "2") {
+    constructor() EIP712("Assay Settlement", "2") {
         _disableInitializers();
     }
 

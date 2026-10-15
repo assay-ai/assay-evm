@@ -182,7 +182,7 @@ SEQ=$((SEQHIGH + 1))
 cat > "$OUT/voucher.json" <<JSON
 {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],
 "Voucher":[{"name":"payer","type":"address"},{"name":"provider","type":"address"},{"name":"amount","type":"uint64"},{"name":"resourceHash","type":"bytes32"},{"name":"requestHash","type":"bytes32"},{"name":"seq","type":"uint64"},{"name":"issuedAt","type":"uint64"},{"name":"expiresAt","type":"uint64"}]},
-"primaryType":"Voucher","domain":{"name":"x402 Settlement","version":"2","chainId":46630,"verifyingContract":"$E"},
+"primaryType":"Voucher","domain":{"name":"Assay Settlement","version":"2","chainId":46630,"verifyingContract":"$E"},
 "message":{"payer":"$SAMPLE_BUYER","provider":"$SAMPLE_PROVIDER","amount":1000,"resourceHash":"0x$(printf '%064x' 1)","requestHash":"0x$(printf '%064x' 5)","seq":$SEQ,"issuedAt":$NOW,"expiresAt":$((NOW + 60))}}
 JSON
 SIG=$(cast wallet sign --private-key "$DKEY" --data --from-file "$OUT/voucher.json")

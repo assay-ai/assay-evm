@@ -99,10 +99,11 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     );
     event StakeWithdrawn(address indexed provider, uint64 amount, uint128 bonded, uint64 unbonding);
 
-    /// The name and version are ShortString immutables baked in here, and every future
-    /// implementation must be constructed with the SAME two strings or the attestation
-    /// domain moves under the verifier's feet (D-1; asserted in `test/Upgrade.t.sol`).
-    constructor() EIP712("x402 Settlement", "2") {
+    /// The name and version are ShortString immutables baked in here. An implementation built
+    /// with other strings moves the attestation domain under the verifier's feet (D-1; asserted
+    /// in `test/Upgrade.t.sol`), so that only ever happens on purpose: the rename to
+    /// "Assay Settlement" (from "x402 Settlement") was one, shipped with the backend's domain.
+    constructor() EIP712("Assay Settlement", "2") {
         _disableInitializers();
     }
 
@@ -358,7 +359,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     function proposeSlash(SlashAttestation calldata a, bytes calldata sig) external nonReentrant {
         if (CONFIG.paused()) revert ProgramPaused();
         if (a.penalty == 0) revert ZeroAmount();
-        if (a.beneficiary == address(0)) revert MissingBeneficiary();
+        // The stake proxy itself would keep the share as an untracked balance. (Stake holds no
+        // reference to the escrow; the backend never names it.)
+        if (a.beneficiary == address(0) || a.beneficiary == address(this)) revert MissingBeneficiary();
         // The response-class rule: only DataFail touches stake. The class is a SIGNED byte, so
         // the platform cannot relabel a judgement to move it between rows.
         if (a.status != uint8(ResponseClass.DataFail)) revert StatusDoesNotSlash();

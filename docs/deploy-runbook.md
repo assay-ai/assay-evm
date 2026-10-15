@@ -412,6 +412,11 @@ set `expiresAt` far enough out to cover that tail.
   they are re-proposed (audit B B6). This delays every provider's exit, not just the affected ones.
 - **Two penalties per key-day.** `updateConfig` refuses `verifierDailyCap < 2 * penaltyAmount`
   (`InvalidVerifierDailyCap`, audit G G-1), so one maximal record can never fill a key's day.
+- **Two penalties per provider-day at the minimum.** `updateConfig` refuses
+  `minimumStake * slashCapBps / 10_000 < 2 * penaltyAmount` (`InvalidMinimumStake`, review
+  2026-10-15 R-1), so a provider at the minimum fits two maximal records in its capped day. Raise
+  `minimumStake` (or lower `penaltyAmount`) before raising the penalty; a provider slashed below
+  the minimum can still have one record fill its day.
 - **Parameters re-price records in flight.** The split, the `treasury` and the `verifierDailyCap`
   are read at execution time, not at proposal: an `updateConfig` changes what every pending record
   will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
@@ -555,7 +560,7 @@ places. Both are here; the redeploy half is the last paragraph.)*
       `abiFunctions` in the record in the same commit as the upgrade, and say in the commit message
       what was added and why it is safe to expose. `script/abi-surface.sh` states what the
       comparison can and cannot see.
-- [ ] **The new implementation's EIP-712 constructor is still `EIP712("x402 Settlement", "2")`.**
+- [ ] **The new implementation's EIP-712 constructor is still `EIP712("Assay Settlement", "2")`.**
       `grep -rn 'EIP712("' src/` must print exactly two lines, `X402Escrow.sol` and `X402Stake.sol`,
       both with those two strings. See the warning below.
 

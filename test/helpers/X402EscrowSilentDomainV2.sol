@@ -31,7 +31,7 @@ contract X402EscrowSilentDomainV2 is X402Escrow {
         bytes32 wrongSeparator = keccak256(
             abi.encode(
                 TYPE_HASH,
-                keccak256("x402 Settlement"),
+                keccak256("Assay Settlement"),
                 keccak256("3"), // the only difference, and it is invisible from outside
                 block.chainid,
                 address(this)
