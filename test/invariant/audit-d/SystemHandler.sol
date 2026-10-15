@@ -593,6 +593,7 @@ contract SystemHandler is Test {
         } else {
             s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (del)));
         }
+        if (s) revokedAtGhost[buyer][del] = block.timestamp;
         if (listed && !s) _violate("revokeLiveness", "revokeDelegate refused a listed delegate");
         if (!listed && s) {
             _violate("revokeLiveness", "revokeDelegate accepted an unlisted delegate");
@@ -677,17 +678,28 @@ contract SystemHandler is Test {
         }
     }
 
+    /// When each (payer, delegate) grant was last revoked, by this handler.
+    mapping(address => mapping(address => uint256)) internal revokedAtGhost;
+
+    /// The caps are the EFFECTIVE ones (current, or lowered less than TIGHTEN_DELAY ago), and a
+    /// revoked delegate may still be paid for TIGHTEN_DELAY after the revocation.
     function _checkRedeemCaps(Voucher memory v, address del) internal {
         X402Escrow.Escrow memory e = escrow.escrowOf(v.payer);
-        if (v.amount > e.maxVoucherAmount) _violate("caps", "voucher above per-call limit");
-        if (e.spentInWindow > e.maxPerWindow) _violate("caps", "escrow window above cap");
+        (uint64 capV, uint64 capW, uint64 dCapV, uint64 dCapW) =
+            escrow.effectiveCapsOf(v.payer, del);
+        if (v.amount > capV) _violate("caps", "voucher above per-call limit");
+        if (e.spentInWindow > capW) _violate("caps", "escrow window above cap");
         if (del != address(0)) {
             X402Escrow.Delegation memory d = escrow.delegationOf(v.payer, del);
-            if (d.revoked || block.timestamp > d.validUntil) {
-                _violate("delegate", "revoked/expired delegate paid");
+            if (block.timestamp > d.validUntil) _violate("delegate", "expired delegate paid");
+            if (
+                d.revoked
+                    && block.timestamp > revokedAtGhost[v.payer][del] + Constants.TIGHTEN_DELAY_SECONDS
+            ) {
+                _violate("delegate", "a revoked delegate paid past the tighten delay");
             }
-            if (v.amount > d.maxVoucherAmount) _violate("caps", "voucher above delegate per-call");
-            if (d.spentInWindow > d.maxPerWindow) _violate("caps", "delegate window above cap");
+            if (v.amount > dCapV) _violate("caps", "voucher above delegate per-call");
+            if (d.spentInWindow > dCapW) _violate("caps", "delegate window above cap");
         }
     }
 

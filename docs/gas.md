@@ -121,7 +121,9 @@ Pre-validation is the same list `_redeem` applies, evaluated off chain against c
 voucher window (`expiresAt > issuedAt`, lifetime ≤ 300 s, issued no more than 120 s ahead, redeemed
 no more than 1 800 s late), `seq > seqHigh` **for that payer**, the payer's per-call and
 rolling-window ceilings, the provider's `bonded` stake against `minimumStake`, and the payer's
-balance.
+balance. Since D-21 the ceilings are the EFFECTIVE ones and a revoked delegate signs for 3,600 s
+after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps `0` = that
+delegate cannot sign now), not from `escrowOf` / `delegationOf`.
 
 Three rules bite specifically in the batch shape, and a job that does not know them will build
 batches that revert:

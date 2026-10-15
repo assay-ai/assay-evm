@@ -99,6 +99,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// in `delegateList[payer]`, `0` when the delegate is not listed (never authorised, or
     /// revoked). The window counters survive a revocation and a re-authorisation, so revoking
     /// and re-granting inside one window hands the delegate no fresh capacity.
+    ///
+    /// A revocation sets `revoked` at once and leaves the other fields alone; the grant keeps
+    /// redeeming for `TIGHTEN_DELAY` after it, timed by `priorDelegateCaps` (see
+    /// [`_revokeDelegate`]).
     struct Delegation {
         uint64 maxVoucherAmount; //    slot 0
         uint64 maxPerWindow; //         ↑
@@ -145,6 +149,25 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// until revoked), so an off-chain reader can enumerate them without scanning logs. Bounded
     /// by `Constants.MAX_DELEGATES_PER_PAYER`.
     mapping(address => address[]) internal delegateList;
+
+    /// Caps a payer LOWERED, still honoured until `until` ("signed means collectable"). One slot.
+    /// While `now <= until` the effective cap is the larger of the current cap and this one, so a
+    /// voucher that was valid when the payer tightened stays redeemable for `TIGHTEN_DELAY`
+    /// (3,600 s), longer than any voucher lives (2,220 s). Raising a cap takes effect at once.
+    struct PriorCaps {
+        uint64 maxVoucherAmount;
+        uint64 maxPerWindow;
+        uint64 until;
+    }
+
+    /// `payer → caps before the last lowering of the escrow's limits`. Appended before `__gap`,
+    /// which shrank by the two slots this mapping and the next take (D-7).
+    mapping(address => PriorCaps) internal priorEscrowCaps;
+
+    /// `payer → delegate → caps before the last lowering of that delegate's caps`. A revocation
+    /// writes it too, and its `until` is then also the end of the revoked grant's grace. A grant
+    /// revoked before this mapping existed reads `until == 0`, so it stays dead after the upgrade.
+    mapping(address => mapping(address => PriorCaps)) internal priorDelegateCaps;
 
     /// `events.rs::StakeDeposited` (`events.rs:61-69`) is the nearest analogue — the same
     /// `(funder, amount, running-total)` shape, because a buyer deposit and a provider stake
@@ -417,11 +440,21 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// A write that changes nothing is refused rather than accepted silently: the event is the
     /// only record that a buyer moved their own ceiling, and an emitted no-op is an event that
     /// says a decision was taken when none was.
+    ///
+    /// A LOWERING binds a voucher that is already valid only after `TIGHTEN_DELAY`: the caps in
+    /// force before this call are kept in `priorEscrowCaps` until then (see [`_holdIfLowered`]).
     function _setLimits(address buyer, uint64 maxVoucherAmount, uint64 maxPerWindow) internal {
         Escrow storage e = escrows[buyer];
         if (e.maxVoucherAmount == maxVoucherAmount && e.maxPerWindow == maxPerWindow) {
             revert EscrowLimitsUnchanged();
         }
+        _holdIfLowered(
+            priorEscrowCaps[buyer],
+            e.maxVoucherAmount,
+            e.maxPerWindow,
+            maxVoucherAmount,
+            maxPerWindow
+        );
         e.maxVoucherAmount = maxVoucherAmount;
         e.maxPerWindow = maxPerWindow;
         emit EscrowLimitsSet(buyer, maxVoucherAmount, maxPerWindow);
@@ -478,8 +511,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// dead before the withdrawal matures (3,600 > 2,220). `initialize` re-states that inequality
     /// because Solidity has no `const _: () = assert!(…)`.
     ///
-    /// It does NOT block [`redeemVoucher`], exactly as the Anchor original does not: a voucher the
-    /// buyer signs *after* the request is the platform's risk, not the buyer's.
+    /// It does NOT block [`redeemVoucher`], exactly as the Anchor original does not. A voucher
+    /// signed before the request is redeemed (or dead) before the withdrawal matures, so the buyer
+    /// cannot take out money such a voucher needs. One signed *after* the request is covered by
+    /// nothing here: the backend must not admit vouchers while a request stands (below).
     ///
     /// **It consumes `authNonce`**, like every payer decision (D-18): a withheld
     /// `RequestWithdrawBySig` can then never cancel or restart this request.
@@ -804,11 +839,17 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         CONFIG.assertActive(v.payer, v.provider, delegate);
 
         // `state.rs::admit_spend` (`state.rs:591-612`). A limit of `0` refuses everything, so an
-        // unarmed escrow needs no separate branch.
-        if (v.amount > e.maxVoucherAmount) revert VoucherExceedsPerCallLimit();
-        uint64 carried = Window.decay(e.spentInWindow, e.windowStartedAt, nowTs);
-        uint256 spent = uint256(carried) + v.amount;
-        if (spent > e.maxPerWindow) revert EscrowWindowLimitExceeded();
+        // unarmed escrow needs no separate branch. The caps are the EFFECTIVE ones: the current
+        // caps, or caps the payer lowered less than `TIGHTEN_DELAY` ago ([`_effectiveCaps`]).
+        // The held caps are read only when a current cap is exceeded, since the effective cap is
+        // never below the current one; the common path reads no extra slot.
+        uint256 spent = uint256(Window.decay(e.spentInWindow, e.windowStartedAt, nowTs)) + v.amount;
+        if (v.amount > e.maxVoucherAmount || spent > e.maxPerWindow) {
+            (uint64 capV, uint64 capW) =
+                _effectiveCaps(e.maxVoucherAmount, e.maxPerWindow, priorEscrowCaps[v.payer], nowTs);
+            if (v.amount > capV) revert VoucherExceedsPerCallLimit();
+            if (spent > capW) revert EscrowWindowLimitExceeded();
+        }
 
         // A delegate-signed voucher clears the delegate's OWN caps as well as the escrow's. The
         // storage reference is taken unconditionally (it reads nothing); it is only read and
@@ -817,10 +858,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         Delegation storage d = delegations[v.payer][delegate];
         uint256 delegateSpent;
         if (delegate != address(0)) {
-            if (v.amount > d.maxVoucherAmount) revert DelegateVoucherExceedsPerCallLimit();
             delegateSpent =
                 uint256(Window.decay(d.spentInWindow, d.windowStartedAt, nowTs)) + v.amount;
-            if (delegateSpent > d.maxPerWindow) revert DelegateWindowLimitExceeded();
+            if (v.amount > d.maxVoucherAmount || delegateSpent > d.maxPerWindow) {
+                (uint64 capV, uint64 capW) = _effectiveCaps(
+                    d.maxVoucherAmount, d.maxPerWindow, priorDelegateCaps[v.payer][delegate], nowTs
+                );
+                if (v.amount > capV) revert DelegateVoucherExceedsPerCallLimit();
+                if (delegateSpent > capW) revert DelegateWindowLimitExceeded();
+            }
         }
 
         // `redeem_voucher.rs:148-153` — being paid is the counterpart of being slashable.
@@ -835,8 +881,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // --- effects -------------------------------------------------------------------------
         e.seqHigh = v.seq;
         e.balance -= v.amount;
-        // The truncation is unreachable — `spent <= e.maxPerWindow`, checked four lines above, and
-        // `maxPerWindow` is a `uint64`. It goes through [`Cast.toUint64`] anyway, and it is
+        // The truncation is unreachable — `spent` is at most an effective `maxPerWindow`, checked
+        // above, and every cap is a `uint64`. It goes through [`Cast.toUint64`] anyway, and it is
         // narrowed ONCE into a named local rather than cast at each of the two places it is used:
         // the second of those was twenty-four lines from its guard, inside the event argument list.
         // An earlier version argued for a bare cast on the ground that the bound here is the guard
@@ -851,7 +897,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         totalEscrowed -= v.amount; // the pooled solvency counter; `totalFunded` is NOT touched
         uint64 delegateSpentAfter;
         if (delegate != address(0)) {
-            delegateSpentAfter = Cast.toUint64(delegateSpent); // `<= d.maxPerWindow`, checked above
+            delegateSpentAfter = Cast.toUint64(delegateSpent); // `<=` a uint64 cap, checked above
             d.spentInWindow = delegateSpentAfter;
             d.windowStartedAt = nowTs > d.windowStartedAt ? nowTs : d.windowStartedAt;
         }
@@ -885,13 +931,18 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// The voucher's authority (D-16, narrowed by D-18). Exactly one of:
     ///
     ///   (a) an ECDSA signature by `payer` itself;
-    ///   (b) an ECDSA signature by a DELEGATE that `payer` authorised here, not revoked and not
-    ///       past `validUntil` (its caps are [`_redeem`]'s to apply, beside the escrow's).
+    ///   (b) an ECDSA signature by a DELEGATE that `payer` authorised here, not past
+    ///       `validUntil` (its caps are [`_redeem`]'s to apply, beside the escrow's). A REVOKED
+    ///       delegate still counts for `TIGHTEN_DELAY` after the revocation (until
+    ///       `priorDelegateCaps[payer][delegate].until`): a voucher it signed before the
+    ///       revocation stays collectable. Only the redeemer can redeem, and the backend admits no
+    ///       new voucher from a revoked delegate.
     ///
     /// Returns the delegate for (b) and `address(0)` for (a). Recovery is the strict
     /// [`Sig.recover`], so a malformed signature keeps the name its guard gives it
     /// (`InvalidSignature`, `MalleableSignature`, `BadSignatureV`). Otherwise the refusal is the
-    /// most specific true one: a known delegate that was revoked or has lapsed is named as such;
+    /// most specific true one: a known delegate that can no longer sign is named
+    /// `DelegateIsRevoked` if it was revoked and `DelegateIsExpired` if not;
     /// anything else is [`SignerIsNotPayer`].
     ///
     /// **There is no EIP-1271 branch (D-18).** It was the only call to payer-chosen code in the
@@ -908,8 +959,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
         Delegation storage d = delegations[payer][signer];
         if (d.validUntil != 0) {
-            if (d.revoked) revert DelegateIsRevoked();
-            if (nowTs > d.validUntil) revert DelegateIsExpired();
+            if (!_canSign(d, priorDelegateCaps[payer][signer], nowTs)) {
+                if (d.revoked) revert DelegateIsRevoked();
+                revert DelegateIsExpired();
+            }
             return signer;
         }
         revert SignerIsNotPayer();
@@ -956,10 +1009,83 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         return delegateList[payer];
     }
 
+    /// The caps [`_redeem`] applies right now: the escrow's, and `delegate`'s — zero when
+    /// `delegate` cannot sign now (no grant, past `validUntil`, or revoked more than
+    /// `TIGHTEN_DELAY` ago). Each is the current cap, or a cap the payer lowered less than
+    /// `TIGHTEN_DELAY` ago if that is larger. Off-chain prevalidation mirrors the chain with
+    /// this; ADMISSION of a new voucher should keep reading the current caps and `revoked`.
+    function effectiveCapsOf(address payer, address delegate)
+        external
+        view
+        returns (
+            uint64 maxVoucherAmount,
+            uint64 maxPerWindow,
+            uint64 delegateMaxVoucherAmount,
+            uint64 delegateMaxPerWindow
+        )
+    {
+        uint64 nowTs = Cast.toUint64(block.timestamp);
+        Escrow storage e = escrows[payer];
+        (maxVoucherAmount, maxPerWindow) =
+            _effectiveCaps(e.maxVoucherAmount, e.maxPerWindow, priorEscrowCaps[payer], nowTs);
+        Delegation storage d = delegations[payer][delegate];
+        PriorCaps storage held = priorDelegateCaps[payer][delegate];
+        if (d.validUntil != 0 && _canSign(d, held, nowTs)) {
+            (delegateMaxVoucherAmount, delegateMaxPerWindow) =
+                _effectiveCaps(d.maxVoucherAmount, d.maxPerWindow, held, nowTs);
+        }
+    }
+
+    /// Whether a written grant can sign at `nowTs`: not past `validUntil`, and, if revoked, not
+    /// more than `TIGHTEN_DELAY` after the revocation (`held.until`, which [`_revokeDelegate`]
+    /// writes). The hold is read only for a revoked grant.
+    function _canSign(Delegation storage d, PriorCaps storage held, uint64 nowTs)
+        internal
+        view
+        returns (bool)
+    {
+        if (nowTs > d.validUntil) return false;
+        return !d.revoked || nowTs <= held.until;
+    }
+
+    /// The larger of each current cap and the held one, while the hold lasts (`nowTs <= until`;
+    /// a never-written hold has `until == 0` and is never in force).
+    function _effectiveCaps(uint64 curV, uint64 curW, PriorCaps storage p, uint64 nowTs)
+        internal
+        view
+        returns (uint64 capV, uint64 capW)
+    {
+        capV = curV;
+        capW = curW;
+        if (nowTs <= p.until) {
+            if (p.maxVoucherAmount > capV) capV = p.maxVoucherAmount;
+            if (p.maxPerWindow > capW) capW = p.maxPerWindow;
+        }
+    }
+
+    /// When a change lowers either stored cap (`curV`/`curW` → `newV`/`newW`), holds the caps in
+    /// force now — the stored ones with the running hold applied — until `now + TIGHTEN_DELAY`, so
+    /// every voucher valid at this instant keeps a full delay. A change that lowers neither
+    /// leaves the hold as it is: a raise applies at once and neither extends nor cuts a hold.
+    function _holdIfLowered(PriorCaps storage p, uint64 curV, uint64 curW, uint64 newV, uint64 newW)
+        internal
+    {
+        if (newV >= curV && newW >= curW) return;
+        uint64 nowTs = Cast.toUint64(block.timestamp);
+        (uint64 capV, uint64 capW) = _effectiveCaps(curV, curW, p, nowTs);
+        p.maxVoucherAmount = capV;
+        p.maxPerWindow = capW;
+        p.until = nowTs + Constants.TIGHTEN_DELAY_SECONDS;
+    }
+
     /// The payer grants `delegate` the right to sign vouchers on `msg.sender`'s escrow, within
     /// `maxVoucherAmount` per voucher and `maxPerWindow` per rolling window, until `validUntil`.
     /// Writing again over a standing grant replaces its caps and horizon (the window counters
     /// carry over).
+    ///
+    /// `validUntil` must be at least `now + TIGHTEN_DELAY`, so neither a new grant nor a
+    /// shortened one can end before a voucher valid now has had `TIGHTEN_DELAY` to be redeemed.
+    /// Lowering the caps of a grant that can still sign holds its old caps for `TIGHTEN_DELAY`.
     ///
     /// # What a delegate can and cannot do
     ///
@@ -1021,10 +1147,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         _authorizeDelegate(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
     }
 
-    /// Ends a delegate's authority immediately: every voucher it signed that has not yet been
-    /// redeemed is refused from the next block. Like `requestWithdraw`, a voucher signed BEFORE
-    /// the revocation and redeemed after it is the platform's risk, not the payer's. Consumes
-    /// `authNonce` (see [`authorizeDelegate`]).
+    /// Ends a delegate's authority `TIGHTEN_DELAY` after this call (or at `validUntil`, if that
+    /// is sooner): the grant is marked `revoked` and unlisted at once (the backend admits nothing
+    /// new from it), and a voucher it signed before the revocation stays redeemable until then,
+    /// within the caps in force now — as a withdrawal request waits out the vouchers signed
+    /// before it. Consumes `authNonce` (see [`authorizeDelegate`]).
     function revokeDelegate(address delegate) external nonReentrant {
         escrows[msg.sender].authNonce += 1;
         _revokeDelegate(msg.sender, delegate);
@@ -1066,15 +1193,22 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
             revert DelegateCapsExceedEscrowLimits();
         }
         uint64 nowTs = Cast.toUint64(block.timestamp);
-        if (validUntil <= nowTs || validUntil - nowTs > Constants.MAX_DELEGATION_LIFETIME_SECONDS) {
-            revert DelegateValidUntilInvalid();
-        }
+        if (
+            validUntil < nowTs + Constants.TIGHTEN_DELAY_SECONDS
+                || validUntil - nowTs > Constants.MAX_DELEGATION_LIFETIME_SECONDS
+        ) revert DelegateValidUntilInvalid();
 
         Delegation storage d = delegations[payer][delegate];
         if (
             d.listPosition != 0 && d.maxVoucherAmount == maxVoucherAmount
                 && d.maxPerWindow == maxPerWindow && d.validUntil == validUntil
         ) revert DelegationUnchanged();
+        // Only a grant that can still sign has vouchers to protect (a revoked one included,
+        // during its grace); a lapsed, long-revoked or never-written grant holds nothing.
+        PriorCaps storage held = priorDelegateCaps[payer][delegate];
+        if (d.validUntil != 0 && _canSign(d, held, nowTs)) {
+            _holdIfLowered(held, d.maxVoucherAmount, d.maxPerWindow, maxVoucherAmount, maxPerWindow);
+        }
 
         bool isNew = d.listPosition == 0;
         if (isNew) {
@@ -1112,11 +1246,18 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
         d.listPosition = 0;
         d.revoked = true;
+        // The grace: hold the caps in force now for `TIGHTEN_DELAY`. `until` is also what
+        // [`_canSign`] reads for a revoked grant.
+        PriorCaps storage held = priorDelegateCaps[payer][delegate];
+        uint64 nowTs = Cast.toUint64(block.timestamp);
+        (held.maxVoucherAmount, held.maxPerWindow) =
+            _effectiveCaps(d.maxVoucherAmount, d.maxPerWindow, held, nowTs);
+        held.until = nowTs + Constants.TIGHTEN_DELAY_SECONDS;
         emit DelegateRevoked(payer, delegate);
     }
 
     /// The append budget the D-7 upgrade-safety gate spends. A new field is added ABOVE this
     /// line and the array shrinks by exactly the slots it consumes — the script refuses
     /// anything else.
-    uint256[48] private __gap;
+    uint256[46] private __gap;
 }
