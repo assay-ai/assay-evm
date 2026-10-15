@@ -222,7 +222,13 @@ contract SystemHandler is Test {
         return actionNames.length;
     }
 
+    /// Handler calls in this run that did not revert, early returns included. Every action
+    /// reaches its target through `_call`, so in practice this is every fuzzed call. Read by
+    /// `SystemInvariantsTest.afterInvariant` to tell a full run from a shrunk sequence.
+    uint256 public steps;
+
     modifier step(bytes32 name) {
+        steps += 1;
         currentAction = name;
         _pre();
         _;

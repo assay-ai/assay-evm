@@ -368,9 +368,19 @@ vouchers it strands — is more contract surface and is the owner's decision (pe
   One slot holds one pair, though: a SECOND lowering while a hold still runs merges the two pairs
   field by field (and restarts the hour from the second lowering), because a voucher valid at
   that instant may rely on either. Only then can a held pair be one the payer never set as a
-  whole, and only payer calls inside one hour create it. The total stays within caps the payer
-  authorised field by field, inside that hour. A second slot or a per-pair `until` would remove
-  it; not worth the storage.
+  whole, and only payer calls create it. The merge carries forward: a payer who lowers again
+  within each hour keeps the first and loosest pair in force for as long as that pattern goes
+  on. For the escrow's own caps there is no end; for a delegate the bound is `validUntil`,
+  which a re-grant can extend. So the total stays within the field-wise max of every pair in
+  force since the last gap of more than 3,600 s between lowerings, all of them caps the payer
+  set. Only the payer can cause it (a delegate, the redeemer or a relayer cannot write or extend
+  a hold), and only by tightening repeatedly; it matters most when a payer lowers several times
+  after a key leak (F2). A second slot or a per-pair `until` would remove it; not worth the
+  storage. A cheaper fix exists for the escrow's caps only: drop the running hold from the
+  merge once every voucher that relied on it has expired (written more than 2,220 s ago, i.e.
+  `until + 2,220 < now + TIGHTEN_DELAY`). A delegate hold's `until` may already be cut to
+  `validUntil`, so its age cannot be read back from it without a new field. Not built, to keep
+  the two hold paths one rule; revisit if repeated lowering becomes a real pattern.
 - **F7, more signing keys than the list limit.** A revoked delegate in its grace is unlisted but
   can still sign, so revoke-and-grant churn can give a payer more than `MAX_DELEGATES_PER_PAYER`
   signing keys for up to an hour. Only the payer can cause it, and lookups go through a mapping,

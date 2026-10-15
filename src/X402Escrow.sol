@@ -1279,6 +1279,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         ) revert DelegationUnchanged();
         // Only a grant that can still sign has vouchers to protect (a revoked one included,
         // during its grace); a lapsed, long-revoked or never-written grant holds nothing.
+        // Keep this precondition: it is not only a skip of a no-op. A grant revoked and past its
+        // grace but not yet past `validUntil` cannot sign, yet its caps are still stored here;
+        // without the check, a lowering re-grant would hold them until
+        // `min(now + TIGHTEN_DELAY, validUntil)` and so revive a dead grant's caps.
         PriorCaps storage held = priorDelegateCaps[payer][delegate];
         if (d.validUntil != 0 && _canSign(d, held, nowTs)) {
             _holdIfLowered(

@@ -473,6 +473,79 @@ contract X402EscrowTightenTest is Fixture {
         escrow.revokeDelegate(delegate);
     }
 
+    /// Re-review N6 (risk register §14b). A second lowering while a hold runs merges the running
+    /// hold with the caps in force, field by field, and restarts the hour from the second
+    /// lowering. (400k, 1M) → (600k, 600k) holds (400k, 1M); → (1, 1) then holds (600k, 1M), a
+    /// pair the payer never set whole, until `t2 + DELAY`, past the first hold's own end.
+    function test_n6_aSecondLoweringWhileAHoldRunsMergesThePairsAndRestartsTheHour() public {
+        uint64 t1 = _now();
+        vm.expectEmit(address(escrow));
+        emit X402Escrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, t1 + DELAY);
+        vm.prank(buyer);
+        escrow.authorizeDelegate(delegate, 600_000, 600_000, _now() + 30 days);
+
+        vm.warp(t1 + 1_000);
+        uint64 t2 = _now();
+        vm.expectEmit(address(escrow));
+        emit X402Escrow.CapsHeld(buyer, delegate, 600_000, D_PER_WINDOW, t2 + DELAY);
+        vm.prank(buyer);
+        escrow.authorizeDelegate(delegate, 1, 1, _now() + 30 days);
+
+        vm.warp(t1 + DELAY + 1); // the first hold would have ended here; the merged one runs
+        (,, uint64 dCapV, uint64 dCapW) = _caps();
+        assertEq(dCapV, 600_000, "merged per-call");
+        assertEq(dCapW, D_PER_WINDOW, "merged window");
+        // 600k then 400k: 1M in the window at 600k per call, which neither (400k, 1M) nor
+        // (600k, 600k) allowed whole. It is the field-wise max of two pairs the payer set.
+        Voucher memory a = _v(600_000, 1);
+        _redeem(a, _byDelegate(a));
+        Voucher memory b = _v(400_000, 2);
+        _redeem(b, _byDelegate(b));
+        Voucher memory over = _v(1_000, 3);
+        _expect(over, _byDelegate(over), DelegateWindowLimitExceeded.selector);
+
+        vm.warp(t2 + DELAY);
+        (,, dCapV,) = _caps();
+        assertEq(dCapV, 600_000, "the merged hold runs to t2 + DELAY");
+        vm.warp(t2 + DELAY + 1);
+        (,, dCapV, dCapW) = _caps();
+        assertEq(dCapV, 1);
+        assertEq(dCapW, 1);
+        Voucher memory late = _v(2, 4);
+        _expect(late, _byDelegate(late), DelegateVoucherExceedsPerCallLimit.selector);
+    }
+
+    /// Re-review N6. A revocation of a grant whose `validUntil` is sooner than `now + DELAY`
+    /// cuts its grace to `validUntil`: the hold ends there, a voucher signed before the
+    /// revocation redeems up to that instant, and one second later the grant signs nothing.
+    function test_n6_aRevocationGraceIsCutToValidUntil() public {
+        vm.prank(buyer);
+        escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _now() + DELAY);
+        uint64 end = _now() + DELAY;
+        vm.warp(_now() + 2_000);
+        Voucher memory v = _v(D_PER_CALL, 1);
+        bytes memory sig = _byDelegate(v);
+        assertLt(end, _now() + DELAY, "the grant ends inside the grace");
+        vm.expectEmit(address(escrow));
+        emit X402Escrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, end);
+        vm.prank(buyer);
+        escrow.revokeDelegate(delegate);
+
+        vm.warp(end); // `_deadline(v)` is later, so `end` is the voucher's last instant
+        assertLt(end, _deadline(v));
+        (,, uint64 dCapV, uint64 dCapW) = _caps();
+        assertEq(dCapV, D_PER_CALL, "the grace runs through validUntil");
+        assertEq(dCapW, D_PER_WINDOW);
+        _redeem(v, sig);
+
+        vm.warp(end + 1); // inside `revokedAt + DELAY`, past the cut grace
+        (,, dCapV, dCapW) = _caps();
+        assertEq(dCapV, 0, "no caps past validUntil");
+        assertEq(dCapW, 0);
+        Voucher memory late = _v(1_000, 2);
+        _expect(late, _byDelegate(late), DelegateIsRevoked.selector);
+    }
+
     function _capsHeldLogs() internal returns (uint256 n) {
         bytes32 topic = X402Escrow.CapsHeld.selector;
         Vm.Log[] memory logs = vm.getRecordedLogs();
