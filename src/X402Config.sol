@@ -304,7 +304,10 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         // only on an empty window, so one small execution a day starves it until it expires.
         // With a penalty above 0 this also keeps that cap allowance above 0; a penalty of 0
         // (shadow mode) slashes nothing, so it needs no allowance.
-        if (uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR < 2 * uint256(p.penaltyAmount)) {
+        if (
+            uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR
+                < 2 * uint256(p.penaltyAmount)
+        ) {
             revert InvalidMinimumStake();
         }
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
