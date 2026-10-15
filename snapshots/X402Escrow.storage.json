@@ -30,7 +30,7 @@
       "label": "CONFIG",
       "offset": 0,
       "slot": "3",
-      "type": "t_contract(IX402Config)9710"
+      "type": "t_contract(IX402Config)9833"
     },
     {
       "astId": 7210,
@@ -38,7 +38,7 @@
       "label": "STAKE",
       "offset": 0,
       "slot": "4",
-      "type": "t_contract(IX402StakeView)9721"
+      "type": "t_contract(IX402StakeView)9844"
     },
     {
       "astId": 7213,
@@ -105,7 +105,7 @@
       "type": "t_mapping(t_address,t_mapping(t_address,t_struct(PriorCaps)7247_storage))"
     },
     {
-      "astId": 9625,
+      "astId": 9748,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "__gap",
       "offset": 0,
@@ -141,12 +141,12 @@
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IX402Config)9710": {
+    "t_contract(IX402Config)9833": {
       "encoding": "inplace",
       "label": "contract IX402Config",
       "numberOfBytes": "20"
     },
-    "t_contract(IX402StakeView)9721": {
+    "t_contract(IX402StakeView)9844": {
       "encoding": "inplace",
       "label": "contract IX402StakeView",
       "numberOfBytes": "20"

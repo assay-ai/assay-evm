@@ -121,9 +121,18 @@ Pre-validation is the same list `_redeem` applies, evaluated off chain against c
 voucher window (`expiresAt > issuedAt`, lifetime ≤ 300 s, issued no more than 120 s ahead, redeemed
 no more than 1 800 s late), `seq > seqHigh` **for that payer**, the payer's per-call and
 rolling-window ceilings, the provider's `bonded` stake against `minimumStake`, and the payer's
-balance. Since D-21 the ceilings are the EFFECTIVE ones and a revoked delegate signs for 3,600 s
-after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps `0` = that
-delegate cannot sign now), not from `escrowOf` / `delegationOf`.
+balance. Since D-21 the ceilings are the EFFECTIVE ones and a revoked delegate signs for up to
+3,600 s after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps
+`0` = that delegate cannot sign now), not from `escrowOf` / `delegationOf`. `effectiveCapsOf` is
+the per-field envelope: the chain also requires the voucher to fit ONE pair whole — the stored
+caps, or the held caps of the last `CapsHeld` for that `(payer, delegate)` while `now <= until`.
+A voucher inside the envelope can still revert after a payer lowered one cap and raised the
+other; an exact prevalidation checks the two pairs from `escrowOf`/`delegationOf` and `CapsHeld`.
+
+**Prevalidation is not admission.** `effectiveCapsOf` (and the held caps) are only for a voucher
+that was ALREADY admitted. Admission of a NEW voucher reads `delegationOf(...).revoked` and the
+current (stored) caps, never `effectiveCapsOf`: a revoked delegate's key, or caps the payer just
+lowered, still pass on chain for up to 3,600 s (risk register §14a).
 
 Three rules bite specifically in the batch shape, and a job that does not know them will build
 batches that revert:

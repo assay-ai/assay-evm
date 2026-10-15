@@ -151,9 +151,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     mapping(address => address[]) internal delegateList;
 
     /// Caps a payer LOWERED, still honoured until `until` ("signed means collectable"). One slot.
-    /// While `now <= until` the effective cap is the larger of the current cap and this one, so a
-    /// voucher that was valid when the payer tightened stays redeemable for `TIGHTEN_DELAY`
-    /// (3,600 s), longer than any voucher lives (2,220 s). Raising a cap takes effect at once.
+    /// While `now <= until` a voucher passes if it fits the current pair of caps OR this pair,
+    /// each pair checked whole ([`_heldRefusal`]), so a voucher that was valid when the payer
+    /// tightened stays redeemable for `TIGHTEN_DELAY` (3,600 s), longer than any voucher lives
+    /// (2,220 s). A delegate's hold never runs past the grant's `validUntil` before the change.
+    /// Raising a cap takes effect at once. Every write emits [`CapsHeld`].
     struct PriorCaps {
         uint64 maxVoucherAmount;
         uint64 maxPerWindow;
@@ -168,6 +170,18 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// writes it too, and its `until` is then also the end of the revoked grant's grace. A grant
     /// revoked before this mapping existed reads `until == 0`, so it stays dead after the upgrade.
     mapping(address => mapping(address => PriorCaps)) internal priorDelegateCaps;
+
+    /// A hold was written ([`_hold`]): until `until`, a voucher that fits (`maxVoucherAmount`,
+    /// `maxPerWindow`) as a pair still redeems where the current caps refuse it. `delegate` is
+    /// `address(0)` for the escrow's own caps. For a revoked delegate `until` is also the end of
+    /// its grace. A later `CapsHeld` for the same (payer, delegate) replaces this one.
+    event CapsHeld(
+        address indexed payer,
+        address indexed delegate,
+        uint64 maxVoucherAmount,
+        uint64 maxPerWindow,
+        uint64 until
+    );
 
     /// `events.rs::StakeDeposited` (`events.rs:61-69`) is the nearest analogue — the same
     /// `(funder, amount, running-total)` shape, because a buyer deposit and a provider stake
@@ -450,10 +464,13 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         }
         _holdIfLowered(
             priorEscrowCaps[buyer],
+            buyer,
+            address(0),
             e.maxVoucherAmount,
             e.maxPerWindow,
             maxVoucherAmount,
-            maxPerWindow
+            maxPerWindow,
+            Cast.toUint64(block.timestamp) + Constants.TIGHTEN_DELAY_SECONDS
         );
         e.maxVoucherAmount = maxVoucherAmount;
         e.maxPerWindow = maxPerWindow;
@@ -839,16 +856,16 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         CONFIG.assertActive(v.payer, v.provider, delegate);
 
         // `state.rs::admit_spend` (`state.rs:591-612`). A limit of `0` refuses everything, so an
-        // unarmed escrow needs no separate branch. The caps are the EFFECTIVE ones: the current
-        // caps, or caps the payer lowered less than `TIGHTEN_DELAY` ago ([`_effectiveCaps`]).
-        // The held caps are read only when a current cap is exceeded, since the effective cap is
-        // never below the current one; the common path reads no extra slot.
+        // unarmed escrow needs no separate branch. A voucher passes if it fits the current pair
+        // of caps, or the pair held when the payer last lowered them, while that hold runs
+        // ([`_heldRefusal`]); a pair is checked whole, never field by field. The hold is read
+        // only when the current pair refuses, so the common path reads no extra slot.
         uint256 spent = uint256(Window.decay(e.spentInWindow, e.windowStartedAt, nowTs)) + v.amount;
         if (v.amount > e.maxVoucherAmount || spent > e.maxPerWindow) {
-            (uint64 capV, uint64 capW) =
-                _effectiveCaps(e.maxVoucherAmount, e.maxPerWindow, priorEscrowCaps[v.payer], nowTs);
-            if (v.amount > capV) revert VoucherExceedsPerCallLimit();
-            if (spent > capW) revert EscrowWindowLimitExceeded();
+            uint256 why =
+                _heldRefusal(priorEscrowCaps[v.payer], v.amount, spent, e.maxVoucherAmount, nowTs);
+            if (why == 1) revert VoucherExceedsPerCallLimit();
+            if (why == 2) revert EscrowWindowLimitExceeded();
         }
 
         // A delegate-signed voucher clears the delegate's OWN caps as well as the escrow's. The
@@ -861,11 +878,15 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
             delegateSpent =
                 uint256(Window.decay(d.spentInWindow, d.windowStartedAt, nowTs)) + v.amount;
             if (v.amount > d.maxVoucherAmount || delegateSpent > d.maxPerWindow) {
-                (uint64 capV, uint64 capW) = _effectiveCaps(
-                    d.maxVoucherAmount, d.maxPerWindow, priorDelegateCaps[v.payer][delegate], nowTs
+                uint256 why = _heldRefusal(
+                    priorDelegateCaps[v.payer][delegate],
+                    v.amount,
+                    delegateSpent,
+                    d.maxVoucherAmount,
+                    nowTs
                 );
-                if (v.amount > capV) revert DelegateVoucherExceedsPerCallLimit();
-                if (delegateSpent > capW) revert DelegateWindowLimitExceeded();
+                if (why == 1) revert DelegateVoucherExceedsPerCallLimit();
+                if (why == 2) revert DelegateWindowLimitExceeded();
             }
         }
 
@@ -1009,11 +1030,14 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         return delegateList[payer];
     }
 
-    /// The caps [`_redeem`] applies right now: the escrow's, and `delegate`'s — zero when
-    /// `delegate` cannot sign now (no grant, past `validUntil`, or revoked more than
-    /// `TIGHTEN_DELAY` ago). Each is the current cap, or a cap the payer lowered less than
-    /// `TIGHTEN_DELAY` ago if that is larger. Off-chain prevalidation mirrors the chain with
-    /// this; ADMISSION of a new voucher should keep reading the current caps and `revoked`.
+    /// The ENVELOPE of the caps [`_redeem`] applies right now: the escrow's, and `delegate`'s —
+    /// zero when `delegate` cannot sign now (no grant, past `validUntil`, or revoked and past
+    /// its grace). Each field is the larger of the current cap and the held one while a hold
+    /// runs. It is a necessary bound, not a sufficient one: [`_redeem`] also needs the voucher to
+    /// fit ONE pair whole (current, or held), so a voucher inside this envelope can still revert
+    /// after a payer lowered one cap and raised the other; the held pair itself is in
+    /// [`CapsHeld`]. Use it to prevalidate a voucher that was already admitted. ADMISSION of a
+    /// new voucher must read the current caps and `revoked` (`delegationOf`), never this.
     function effectiveCapsOf(address payer, address delegate)
         external
         view
@@ -1049,7 +1073,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     }
 
     /// The larger of each current cap and the held one, while the hold lasts (`nowTs <= until`;
-    /// a never-written hold has `until == 0` and is never in force).
+    /// a never-written hold has `until == 0` and is never in force). Used for the envelope
+    /// ([`effectiveCapsOf`]) and to merge a running hold into a new one ([`_hold`]); [`_redeem`]
+    /// checks the pairs whole instead ([`_heldRefusal`]).
     function _effectiveCaps(uint64 curV, uint64 curW, PriorCaps storage p, uint64 nowTs)
         internal
         view
@@ -1063,19 +1089,67 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         }
     }
 
+    /// Why a voucher the CURRENT pair refused (its amount above `curV`, or its window total
+    /// `spent` above the current window cap) is refused: `0` if it fits the held pair `p` whole
+    /// while the hold runs, so it is NOT refused; `1` if no pair in force allows its amount;
+    /// `2` if one does, but not with this window total. The window counter is the same one for
+    /// both pairs: a hold changes which ceiling a total is compared with, never the total.
+    function _heldRefusal(
+        PriorCaps storage p,
+        uint256 amount,
+        uint256 spent,
+        uint64 curV,
+        uint64 nowTs
+    ) internal view returns (uint256) {
+        if (nowTs <= p.until && amount <= p.maxVoucherAmount) {
+            return spent <= p.maxPerWindow ? 0 : 2;
+        }
+        return amount > curV ? 1 : 2;
+    }
+
     /// When a change lowers either stored cap (`curV`/`curW` → `newV`/`newW`), holds the caps in
-    /// force now — the stored ones with the running hold applied — until `now + TIGHTEN_DELAY`, so
-    /// every voucher valid at this instant keeps a full delay. A change that lowers neither
-    /// leaves the hold as it is: a raise applies at once and neither extends nor cuts a hold.
-    function _holdIfLowered(PriorCaps storage p, uint64 curV, uint64 curW, uint64 newV, uint64 newW)
-        internal
-    {
+    /// force now until `until` ([`_hold`]). A change that lowers neither leaves the hold as it
+    /// is: a raise applies at once and neither extends nor cuts a hold.
+    function _holdIfLowered(
+        PriorCaps storage p,
+        address payer,
+        address delegate,
+        uint64 curV,
+        uint64 curW,
+        uint64 newV,
+        uint64 newW,
+        uint64 until
+    ) internal {
         if (newV >= curV && newW >= curW) return;
-        uint64 nowTs = Cast.toUint64(block.timestamp);
-        (uint64 capV, uint64 capW) = _effectiveCaps(curV, curW, p, nowTs);
+        _hold(p, payer, delegate, curV, curW, until);
+    }
+
+    /// Holds the caps in force now until `until`: the stored pair (`curV`, `curW`), merged field
+    /// by field with a hold that is still running, since one slot holds one pair and a voucher
+    /// valid now may rely on either (the residual is risk register §14b). The escrow's hold
+    /// ends at `now + TIGHTEN_DELAY`; a delegate's at [`_delegateHoldEnd`].
+    function _hold(
+        PriorCaps storage p,
+        address payer,
+        address delegate,
+        uint64 curV,
+        uint64 curW,
+        uint64 until
+    ) internal {
+        (uint64 capV, uint64 capW) = _effectiveCaps(curV, curW, p, Cast.toUint64(block.timestamp));
         p.maxVoucherAmount = capV;
         p.maxPerWindow = capW;
-        p.until = nowTs + Constants.TIGHTEN_DELAY_SECONDS;
+        p.until = until;
+        emit CapsHeld(payer, delegate, capV, capW, until);
+    }
+
+    /// The end of a delegate hold: `now + TIGHTEN_DELAY`, but never past the grant's own
+    /// `validUntil` as it stood BEFORE the change. No voucher that grant signed can redeem after
+    /// `validUntil` anyway, so the cut loses no voucher, and it keeps a lapsed grant's caps (or
+    /// caps beyond the old horizon) from coming back through a re-grant.
+    function _delegateHoldEnd(uint64 validUntil, uint64 nowTs) internal pure returns (uint64) {
+        uint64 end = nowTs + Constants.TIGHTEN_DELAY_SECONDS;
+        return validUntil < end ? validUntil : end;
     }
 
     /// The payer grants `delegate` the right to sign vouchers on `msg.sender`'s escrow, within
@@ -1207,7 +1281,16 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // during its grace); a lapsed, long-revoked or never-written grant holds nothing.
         PriorCaps storage held = priorDelegateCaps[payer][delegate];
         if (d.validUntil != 0 && _canSign(d, held, nowTs)) {
-            _holdIfLowered(held, d.maxVoucherAmount, d.maxPerWindow, maxVoucherAmount, maxPerWindow);
+            _holdIfLowered(
+                held,
+                payer,
+                delegate,
+                d.maxVoucherAmount,
+                d.maxPerWindow,
+                maxVoucherAmount,
+                maxPerWindow,
+                _delegateHoldEnd(d.validUntil, nowTs)
+            );
         }
 
         bool isNew = d.listPosition == 0;
@@ -1246,13 +1329,20 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
         d.listPosition = 0;
         d.revoked = true;
-        // The grace: hold the caps in force now for `TIGHTEN_DELAY`. `until` is also what
-        // [`_canSign`] reads for a revoked grant.
-        PriorCaps storage held = priorDelegateCaps[payer][delegate];
+        // The grace: hold the caps in force now for `TIGHTEN_DELAY`, never past `validUntil`.
+        // `until` is also what [`_canSign`] reads for a revoked grant. A grant that has already
+        // lapsed signs nothing and has nothing to protect, so its revocation writes no hold.
         uint64 nowTs = Cast.toUint64(block.timestamp);
-        (held.maxVoucherAmount, held.maxPerWindow) =
-            _effectiveCaps(d.maxVoucherAmount, d.maxPerWindow, held, nowTs);
-        held.until = nowTs + Constants.TIGHTEN_DELAY_SECONDS;
+        if (nowTs <= d.validUntil) {
+            _hold(
+                priorDelegateCaps[payer][delegate],
+                payer,
+                delegate,
+                d.maxVoucherAmount,
+                d.maxPerWindow,
+                _delegateHoldEnd(d.validUntil, nowTs)
+            );
+        }
         emit DelegateRevoked(payer, delegate);
     }
 

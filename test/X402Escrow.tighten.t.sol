@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.24;
 
+import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {X402Escrow} from "../src/X402Escrow.sol";
@@ -344,13 +345,140 @@ contract X402EscrowTightenTest is Fixture {
         _redeem(v, sig);
     }
 
-    /// Lowering one cap and raising the other: each field is the larger of current and held.
-    function test_escrowCaps_eachFieldIsHeldOnItsOwn() public {
+    /// Lowering one cap and raising the other: the view reports the per-field envelope, but a
+    /// voucher must fit ONE pair whole — (old per-call, new window) was never authorised.
+    function test_escrowCaps_aPairIsCheckedWhole() public {
         vm.prank(buyer);
         escrow.setLimits(1, 2 * ESCROW_PER_WINDOW);
         (uint64 capV, uint64 capW,,) = _caps();
-        assertEq(capV, ESCROW_PER_CALL);
-        assertEq(capW, 2 * ESCROW_PER_WINDOW);
+        assertEq(capV, ESCROW_PER_CALL, "envelope per-call");
+        assertEq(capW, 2 * ESCROW_PER_WINDOW, "envelope window");
+
+        // Five per-call-sized vouchers fill the held window (1M, 5M) exactly; a sixth would
+        // need the held per-call cap AND the current window cap at once.
+        for (uint64 i = 1; i <= 5; i++) {
+            Voucher memory v = _v(ESCROW_PER_CALL, i);
+            _redeem(v, _byPayer(v));
+        }
+        Voucher memory mixed = _v(ESCROW_PER_CALL, 6);
+        _expect(mixed, _byPayer(mixed), EscrowWindowLimitExceeded.selector);
+        // The current pair alone still admits what it allows.
+        Voucher memory small = _v(1, 7);
+        _redeem(small, _byPayer(small));
+    }
+
+    // --- review 2026-10-16 (step 5): the hold's horizon, whole pairs, CapsHeld ---------------
+
+    /// Review F1. Revoking a LAPSED grant writes no hold, so a re-grant inside the hour gets its
+    /// new caps and nothing of the lapsed grant's.
+    function test_f1_revokingALapsedGrantHoldsNothingAndARegrantGetsOnlyItsNewCaps() public {
+        vm.prank(buyer);
+        escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _now() + DELAY);
+        vm.warp(_now() + DELAY + 1 days); // lapsed a day ago
+        vm.recordLogs();
+        vm.startPrank(buyer);
+        escrow.revokeDelegate(delegate); // a cleanup, to free a list slot
+        assertEq(_capsHeldLogs(), 0, "a lapsed grant's revocation holds nothing");
+        escrow.authorizeDelegate(delegate, 1, 1, _now() + 30 days);
+        vm.stopPrank();
+        assertEq(_capsHeldLogs(), 0, "a re-grant of a lapsed grant holds nothing");
+        (,, uint64 dCapV, uint64 dCapW) = _caps();
+        assertEq(dCapV, 1, "no lapsed per-call cap");
+        assertEq(dCapW, 1, "no lapsed window cap");
+        Voucher memory v = _v(D_PER_CALL, 1);
+        _expect(v, _byDelegate(v), DelegateVoucherExceedsPerCallLimit.selector);
+    }
+
+    /// Review F4. Lowering the caps while extending the horizon holds the old caps only up to
+    /// the OLD `validUntil`, the last instant a voucher of the old grant could redeem.
+    function test_f4_aLoweringHoldsTheOldCapsNoLongerThanTheOldHorizon() public {
+        vm.prank(buyer);
+        escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _now() + DELAY);
+        uint64 oldEnd = _now() + DELAY;
+        vm.warp(oldEnd - 1);
+        Voucher memory signedBefore = _v(D_PER_CALL, 1);
+        bytes memory sig = _byDelegate(signedBefore);
+        vm.expectEmit(address(escrow));
+        emit X402Escrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, oldEnd);
+        vm.prank(buyer);
+        escrow.authorizeDelegate(delegate, 1, 1, _now() + 30 days);
+
+        vm.warp(oldEnd); // the old grant's last instant: its voucher still redeems
+        _redeem(signedBefore, sig);
+        vm.warp(oldEnd + 1);
+        (,, uint64 dCapV, uint64 dCapW) = _caps();
+        assertEq(dCapV, 1);
+        assertEq(dCapW, 1);
+        vm.warp(oldEnd + 3_000);
+        Voucher memory v = _v(D_PER_CALL, 2);
+        _expect(v, _byDelegate(v), DelegateVoucherExceedsPerCallLimit.selector);
+    }
+
+    /// Review F3. (400k, 400k) → (1, 1M): a voucher passes under one pair whole, so the held
+    /// per-call cap never combines with the new window. Two 400k vouchers need exactly that.
+    function test_f3_aDelegatePairIsCheckedWholeAcrossALowerAndARaise() public {
+        vm.startPrank(buyer);
+        escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_CALL, _now() + 30 days);
+        vm.warp(_now() + DELAY + 1);
+        escrow.authorizeDelegate(delegate, 1, D_PER_WINDOW, _now() + 30 days);
+        vm.stopPrank();
+        Voucher memory a = _v(D_PER_CALL, 1);
+        _redeem(a, _byDelegate(a)); // fits the held pair (400k, 400k)
+        Voucher memory b = _v(D_PER_CALL, 2);
+        _expect(b, _byDelegate(b), DelegateWindowLimitExceeded.selector);
+        Voucher memory c = _v(1, 3); // fits the current pair (1, 1M)
+        _redeem(c, _byDelegate(c));
+    }
+
+    /// Review F2, ACCEPTED (risk register §14a): during the grace a revoked key can still sign
+    /// a FRESH voucher, and only the held caps bound it — per call, and the held window less the
+    /// spend carried in it. The backend refuses admission on `revoked`; the chain cannot.
+    function test_f2_accepted_aRevokedKeySignsWithinTheHeldWindowForTheGrace() public {
+        vm.prank(buyer);
+        escrow.revokeDelegate(delegate);
+        vm.warp(_now() + DELAY - 10);
+        for (uint64 i = 1; i <= 2; i++) {
+            Voucher memory v = _v(D_PER_CALL, i); // signed after the revocation
+            _redeem(v, _byDelegate(v));
+        }
+        assertEq(escrow.escrowOf(buyer).balance, DEPOSIT - 2 * D_PER_CALL);
+        // The held window (1M, decayed carry ~ 4% returned over the hour) is the bound.
+        Voucher memory over = _v(D_PER_CALL, 3);
+        _expect(over, _byDelegate(over), DelegateWindowLimitExceeded.selector);
+    }
+
+    /// Review F6. Every hold write emits `CapsHeld` with the held pair and its end; a raise and a
+    /// lowering that holds nothing emit none. The topic is pinned for the backend ABI.
+    function test_f6_everyHoldEmitsCapsHeld() public {
+        assertEq(
+            X402Escrow.CapsHeld.selector,
+            keccak256("CapsHeld(address,address,uint64,uint64,uint64)"),
+            "CapsHeld topic"
+        );
+        uint64 t = _now();
+        vm.expectEmit(address(escrow));
+        emit X402Escrow.CapsHeld(buyer, address(0), ESCROW_PER_CALL, ESCROW_PER_WINDOW, t + DELAY);
+        vm.prank(buyer);
+        escrow.setLimits(1, 1);
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        escrow.setLimits(2, 2); // a raise
+        assertEq(_capsHeldLogs(), 0, "a raise holds nothing");
+
+        vm.warp(t + 10);
+        vm.expectEmit(address(escrow));
+        emit X402Escrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, t + 10 + DELAY);
+        vm.prank(buyer);
+        escrow.revokeDelegate(delegate);
+    }
+
+    function _capsHeldLogs() internal returns (uint256 n) {
+        bytes32 topic = X402Escrow.CapsHeld.selector;
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == topic) n++;
+        }
     }
 
     // --- withdrawal: the money the vouchers need stays in until they are redeemed -----------

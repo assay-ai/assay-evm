@@ -330,6 +330,57 @@ needs before it is redeemed.
 - Vouchers signed after a withdrawal request (§13) and pause, blocklist or outage beyond a
   voucher's deadline are unchanged.
 
+## 14a. A revoked (or stolen) delegate key can sign NEW vouchers for up to an hour — ACCEPTED, owner decision pending
+
+**Who it affects:** the payer. Review 2026-10-16 step 5, F2 (Medium, design trade-off).
+
+During the grace the chain cannot tell a voucher signed before the revocation from one signed
+after it: `issuedAt` is chosen by the signer. So a key the payer revokes because it was stolen
+can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 3,600 s after the
+revocation, never past `validUntil`). Before D-21 `revokeDelegate` and `setLimits(0, 0)` were
+instant kill switches; now nothing the payer can do stops on-chain spending for that hour —
+lowering the escrow caps is held too, and `requestWithdraw` does not block redeems.
+
+**The bound (quantified):** the extra spend after the revocation is at most
+`min(heldDelegateMaxPerWindow - carried, heldEscrowWindow - carriedEscrow, balance)`, where
+`carried` is the delegate's window spend decayed to the redemption instant; the decay over the
+hour returns at most 3,600 / 86,400 ≈ 4.2% of the window, so the bound is about one held delegate
+window. Each voucher is also at most the held `maxVoucherAmount`. The money goes to an ACTIVE
+provider, not to the thief, so the thief must also control or collude with a registered provider,
+and the vouchers must be submitted by the REDEEMER — which happens only under a backend compromise
+or a backend bug (`Constants.sol` already assumes the backend may be compromised).
+
+**Why accepted:** it is the price of "signed means collectable" (§14) and of "the platform never
+owes providers". Gating the held caps on `issuedAt <= revokedAt + skew` does not change the
+amount bound (a thief backdates `issuedAt`); it only shortens the usable time to about 2,100 s.
+The alternative — a payer `freeze` with no grace, where the platform carries the debt of the
+vouchers it strands — is more contract surface and is the owner's decision (pending).
+
+**Backend rule (required):** refuse every NEW voucher from a revoked delegate, using
+`delegationOf(payer, delegate).revoked` and the CURRENT caps (`escrowOf`, `delegationOf`), never
+`effectiveCapsOf` or the held caps. Those are for prevalidating vouchers already admitted
+(`docs/gas.md`). Test: `test_f2_accepted_aRevokedKeySignsWithinTheHeldWindowForTheGrace`.
+
+## 14b. Smaller residuals of the hold (review 2026-10-16 step 5) — documented
+
+- **F3, a merged hold.** A voucher is checked against the current pair or the held pair, each
+  WHOLE, so a single lower-one-raise-the-other change never combines (old per-call, new window).
+  One slot holds one pair, though: a SECOND lowering while a hold still runs merges the two pairs
+  field by field (and restarts the hour from the second lowering), because a voucher valid at
+  that instant may rely on either. Only then can a held pair be one the payer never set as a
+  whole, and only payer calls inside one hour create it. The total stays within caps the payer
+  authorised field by field, inside that hour. A second slot or a per-pair `until` would remove
+  it; not worth the storage.
+- **F7, more signing keys than the list limit.** A revoked delegate in its grace is unlisted but
+  can still sign, so revoke-and-grant churn can give a payer more than `MAX_DELEGATES_PER_PAYER`
+  signing keys for up to an hour. Only the payer can cause it, and lookups go through a mapping,
+  so it costs no gas and blocks nothing.
+- **F8, a relayed grant signed close to the minimum.** `authorizeDelegateBySig` needs
+  `validUntil >= now + 3,600` at the block that lands it. A grant SIGNED with
+  `validUntil ≈ signTime + 3,600` reverts with `DelegateValidUntilInvalid` if it is relayed later.
+  Liveness only: the front end signs with a margin of at least the relay deadline
+  (`validUntil >= now + 3,600 + deadline window`).
+
 ## 15. The redeemer can censor or delay a provider's payment — no fallback yet
 
 **Who it affects:** providers.
