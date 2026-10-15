@@ -361,7 +361,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         if (a.penalty == 0) revert ZeroAmount();
         // The stake proxy itself would keep the share as an untracked balance. (Stake holds no
         // reference to the escrow; the backend never names it.)
-        if (a.beneficiary == address(0) || a.beneficiary == address(this)) revert MissingBeneficiary();
+        if (a.beneficiary == address(0) || a.beneficiary == address(this)) {
+            revert MissingBeneficiary();
+        }
         // The response-class rule: only DataFail touches stake. The class is a SIGNED byte, so
         // the platform cannot relabel a judgement to move it between rows.
         if (a.status != uint8(ResponseClass.DataFail)) revert StatusDoesNotSlash();

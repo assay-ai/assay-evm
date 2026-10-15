@@ -178,7 +178,9 @@ contract UpgradeDisputeTest is Fixture {
         // Only the name moves: same version, chain and proxy.
         bytes32 renamed = keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
                 keccak256("Assay Settlement"),
                 keccak256("2"),
                 block.chainid,
