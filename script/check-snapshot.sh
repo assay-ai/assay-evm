@@ -16,10 +16,19 @@ export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 
+# Forge REPLAYS every fuzz failure it has persisted (`cache/fuzz/failures`, git-ignored) before it
+# generates new cases, and counts the replay as a run: a checkout where a fuzz test once failed
+# reports `runs: 513` where CI's fresh checkout reports `runs: 512`, with different gas means too.
+# The snapshot must be a property of the tree, so it is taken with an empty persistence directory.
+# `forge test` still replays the saved failures; only the snapshot run skips them.
+PERSIST="$(mktemp -d)"; trap 'rm -rf "$PERSIST"' EXIT
+export FOUNDRY_FUZZ_FAILURE_PERSIST_DIR="$PERSIST/fuzz"
+export FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR="$PERSIST/invariant"
+
 PATH_DEPENDENT='(testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor|test_boundary_theDeadlineAdmitsItsOwnInstant|test_everyBytes32ConstantInTypesSolIsNamedATypehash|test_everyRegisteredTypehashMatchesItsCompiledStruct|test_everyTypehashDeclaredInTypesSolIsRegistered|test_paramSetCarriesItsDeclaredWidthsAndOrder|test_probeArtifactsAreEmittedBecauseTheProbesAreReferenced|test_recoveryHappensAtExactlyOneCallSiteInSrc|test_theAbiDerivationReproducesTheFullTypeString|test_theBatchDelegatesToTheOneRedeemPathInTheSource|test_theConfigFunctionSurfaceIsPinnedByName|test_theDeployScriptUsesTheAtomicForm|test_theDeploymentScriptsCarryTheFunctionSurfaceGate|test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor|test_theSignatureComparisonIsUnconditionalInTheSource|test_theStakeFunctionSurfaceIsPinnedByName|test_theWeakVerifierCannotSeeAnUnrecordedUpgrade|test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest|test_wrongState_oneNonceServesBothDoors|test_noProviderAddressIsExemptFromTheSignatureGuard|test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes|test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment|test_theCapSitsBesideTheMonotonicCheckInTheSource|test_theDeployScriptLeavesTheDeployerNoRole|invariant_)'
 
 case "${1:-}" in
-  --write) exec forge snapshot --no-match-path "test/fork/*" --no-match-test "$PATH_DEPENDENT" ;;
-  "")      exec forge snapshot --check --no-match-path "test/fork/*" --no-match-test "$PATH_DEPENDENT" ;;
+  --write) forge snapshot --no-match-path "test/fork/*" --no-match-test "$PATH_DEPENDENT" ;;
+  "")      forge snapshot --check --no-match-path "test/fork/*" --no-match-test "$PATH_DEPENDENT" ;;
   *)       echo "usage: $0 [--write]" >&2; exit 2 ;;
 esac

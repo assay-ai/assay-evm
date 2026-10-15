@@ -324,6 +324,13 @@ excluded tests are: `testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor`,
 `./script/check-snapshot.sh --write`. The sections below were written before this exclusion, and
 quote the plain `forge snapshot --check`.
 
+**The snapshot is also independent of the local fuzz cache** (measured 2026-10-16). Forge replays
+every persisted fuzz failure (`cache/fuzz/failures`, git-ignored) before new cases and counts it as
+a run, so a checkout where `testFuzz_penaltyAboveTheStake` had once failed wrote `runs: 513` (and
+other gas means) where CI's fresh checkout produces `runs: 512`. The script therefore points
+`FOUNDRY_FUZZ_FAILURE_PERSIST_DIR` and `FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR` at an empty
+temporary directory. `forge test` still replays the saved failures.
+
 **This section previously asserted the gate was green. It was not, and had not been for three
 commits.** A review ran it and got exit 1, and so did a re-run. What follows is measured on
 2026-09-09 rather than remembered, and the section is kept in the shape it had because its
