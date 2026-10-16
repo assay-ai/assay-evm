@@ -188,7 +188,9 @@ contract BoundariesTest is Fixture {
     function test_B7_thePerCallLimitAdmitsItsOwnValue() public {
         vm.prank(buyer);
         escrow.setLimits(1_000, type(uint64).max);
-        uint64 t = uint64(block.timestamp);
+        // The lowered cap binds once the tighten delay has passed (D-21).
+        uint64 t = uint64(vm.getBlockTimestamp()) + Constants.TIGHTEN_DELAY_SECONDS + 1;
+        vm.warp(t);
 
         Voucher memory under = _v(1, t, t + 60);
         under.amount = 999;
@@ -209,7 +211,9 @@ contract BoundariesTest is Fixture {
     function test_B8_theWindowLimitAdmitsItsOwnValueAgainstACarriedCounter() public {
         vm.prank(buyer);
         escrow.setLimits(type(uint64).max, 1_000);
-        uint64 t = uint64(block.timestamp);
+        // The lowered cap binds once the tighten delay has passed (D-21).
+        uint64 t = uint64(vm.getBlockTimestamp()) + Constants.TIGHTEN_DELAY_SECONDS + 1;
+        vm.warp(t);
 
         Voucher memory first = _v(1, t, t + 60);
         first.amount = 600;

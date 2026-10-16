@@ -588,8 +588,9 @@ contract X402EscrowWithdrawTest is Fixture {
         assertEq(_count(src, "function withdrawBySig"), 0, "a relayed withdraw exists in src/");
 
         // Agent delegation added six, none of which moves money out of an escrow except through
-        // a voucher: two views, and authorise/revoke in direct and relayed form.
-        string[28] memory expected = [
+        // a voucher: two views, and authorise/revoke in direct and relayed form. The tighten delay
+        // added one more view, `effectiveCapsOf`.
+        string[29] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
@@ -602,6 +603,7 @@ contract X402EscrowWithdrawTest is Fixture {
             "delegationOf(address,address)",
             "deposit(uint64)",
             "depositFor(address,uint64)",
+            "effectiveCapsOf(address,address)",
             "eip712Domain()",
             "escrowOf(address)",
             "initialize(address,address,address,address)",
@@ -617,13 +619,13 @@ contract X402EscrowWithdrawTest is Fixture {
             "totalEscrowed()",
             "upgradeToAndCall(address,bytes)",
             "withdraw()",
-            "" // the 28th slot is deliberately empty: a 28th function makes this test red
+            "" // the 29th slot is deliberately empty: a 29th function makes this test red
         ];
 
         string memory artifact =
             vm.readFile(string.concat(vm.projectRoot(), "/out/X402Escrow.sol/X402Escrow.json"));
         string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 27, "X402Escrow's external surface changed size");
+        assertEq(keys.length, 28, "X402Escrow's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;

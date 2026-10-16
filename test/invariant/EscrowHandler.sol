@@ -12,6 +12,7 @@ import {IX402StakeView} from "../../src/interfaces/IX402StakeView.sol";
 import {Voucher, ParamSet} from "../../src/Types.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {VoucherSigner} from "../helpers/VoucherSigner.sol";
+import {StepCounter} from "./StepCounter.sol";
 
 /// The escrow's bounded actor set for the stateful invariant run.
 ///
@@ -25,7 +26,7 @@ import {VoucherSigner} from "../helpers/VoucherSigner.sol";
 /// `foundry.toml`, so without that check a run in which **every** call reverted would report six
 /// green invariants over an empty state — which is the failure mode `tests/fuzz.rs` guards with
 /// "assert every op landed >= 1", and it ports.
-contract EscrowHandler is Test {
+contract EscrowHandler is Test, StepCounter {
     MockUSDG public usdg;
     X402Config public config;
     X402Escrow public escrow;
@@ -133,7 +134,7 @@ contract EscrowHandler is Test {
 
     // --- the actions -------------------------------------------------------------------------
 
-    function deposit(uint256 actorSeed, uint64 amount) external {
+    function deposit(uint256 actorSeed, uint64 amount) external step {
         uint256 i = _actor(actorSeed);
         amount = uint64(bound(amount, 1, 1_000_000_000));
         address a = actors[i];
@@ -148,7 +149,7 @@ contract EscrowHandler is Test {
 
     /// Anyone may fund anyone — so the identity has to survive a third party crediting an actor
     /// who never called anything.
-    function depositFor(uint256 funderSeed, uint256 beneficiarySeed, uint64 amount) external {
+    function depositFor(uint256 funderSeed, uint256 beneficiarySeed, uint64 amount) external step {
         uint256 f = _actor(funderSeed);
         uint256 b = _actor(beneficiarySeed);
         amount = uint64(bound(amount, 1, 1_000_000_000));
@@ -161,7 +162,7 @@ contract EscrowHandler is Test {
         _recordSeq(b);
     }
 
-    function setLimits(uint256 actorSeed, uint64 maxVoucher, uint64 maxWindow) external {
+    function setLimits(uint256 actorSeed, uint64 maxVoucher, uint64 maxWindow) external step {
         uint256 i = _actor(actorSeed);
         maxVoucher = uint64(bound(maxVoucher, 0, 2_000_000_000));
         maxWindow = uint64(bound(maxWindow, 0, 4_000_000_000));
@@ -175,7 +176,7 @@ contract EscrowHandler is Test {
     /// `seqHigh` on essentially every draw, so the fuzzer would never exercise the refusal and —
     /// worse — a redeem that could not land would make the two escrow invariants vacuous.
     /// (Uniform fuzzing essentially never finds structured small values, so the handler steers.)
-    function redeem(uint256 actorSeed, uint64 seqDelta, uint64 amount) external {
+    function redeem(uint256 actorSeed, uint64 seqDelta, uint64 amount) external step {
         uint256 i = _actor(actorSeed);
         address a = actors[i];
         X402Escrow.Escrow memory e = escrow.escrowOf(a);
@@ -207,7 +208,7 @@ contract EscrowHandler is Test {
         _recordSeq(i);
     }
 
-    function requestWithdraw(uint256 actorSeed, uint64 amount) external {
+    function requestWithdraw(uint256 actorSeed, uint64 amount) external step {
         uint256 i = _actor(actorSeed);
         amount = uint64(bound(amount, 0, 2_000_000_000));
         vm.prank(actors[i]);
@@ -215,7 +216,7 @@ contract EscrowHandler is Test {
         landed["requestWithdraw"] += 1;
     }
 
-    function withdraw(uint256 actorSeed) external {
+    function withdraw(uint256 actorSeed) external step {
         uint256 i = _actor(actorSeed);
         vm.prank(actors[i]);
         escrow.withdraw();
@@ -225,7 +226,7 @@ contract EscrowHandler is Test {
     /// Time is an actor too: the rolling window, the withdraw delay and the voucher clock all
     /// depend on it, and a run that never warped would leave `Window.decay` at `elapsed == 0`
     /// for the whole run.
-    function warp(uint32 seconds_) external {
+    function warp(uint32 seconds_) external step {
         vm.warp(block.timestamp + bound(seconds_, 1, 3 * 3600));
         landed["warp"] += 1;
     }
@@ -234,7 +235,7 @@ contract EscrowHandler is Test {
     /// `invariant_theContractHoldsAtLeastWhatItOwes` is asserted against a state where the
     /// inequality is STRICT — without it the token balance and `totalEscrowed` are always equal
     /// and the `assertGe` would be an `assertEq` in disguise.
-    function donate(uint64 amount) external {
+    function donate(uint64 amount) external step {
         amount = uint64(bound(amount, 1, 1_000_000));
         usdg.mint(address(escrow), amount);
         landed["donate"] += 1;

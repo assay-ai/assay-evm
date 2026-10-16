@@ -143,9 +143,19 @@ contract InvariantsTest is Test {
     ///
     /// Neither half alone is enough: the floor cannot prove the slash lifecycle is reachable at
     /// all, and the checklist proves nothing about the random walk.
+    ///
+    /// **The floor binds full-length runs only.** Forge's shrinker treats a candidate sequence as
+    /// still failing when `afterInvariant` fails, so with an unconditional floor any real
+    /// violation shrinks to a two-call sequence that fails "landed almost nothing", and that
+    /// sequence is persisted and replayed in place of the true cause. `steps` counts every
+    /// fuzzed call, refused ones included (`StepCounter`), so a campaign run of depth 64 reads 64,
+    /// an all-reverts run included, while a shrunk or replayed sequence reads its own length.
     function afterInvariant() public view {
+        uint256 st = escrowHandler.steps() + stakeHandler.steps();
+        if (st < 50) return;
         uint256 total = _escrowLanded() + _stakeLanded();
         assertGe(total, 8, "the run landed almost nothing: the identities held over an empty state");
+        assertGe(total * 10, st, "the run landed under 10% of its calls");
         assertGt(_escrowLanded(), 0, "no escrow call landed in this run");
         assertGt(_stakeLanded(), 0, "no stake call landed in this run");
     }
@@ -155,6 +165,9 @@ contract InvariantsTest is Test {
     /// reach a state where an identity could break.
     function test_theHandlerCanReachEveryAction() public {
         EscrowHandler h = escrowHandler;
+        // Run every action in place, so a refusal fails this test instead of being counted.
+        h.runDirectly();
+        stakeHandler.runDirectly();
 
         h.deposit(0, 500_000_000);
         h.depositFor(1, 2, 300_000_000);

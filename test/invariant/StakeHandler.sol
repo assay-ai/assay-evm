@@ -11,6 +11,7 @@ import {SlashAttestation, ResponseClass, SlashStatus, ParamSet} from "../../src/
 import {Constants} from "../../src/Constants.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {VoucherSigner} from "../helpers/VoucherSigner.sol";
+import {StepCounter} from "./StepCounter.sol";
 
 /// The stake vault's bounded actor set: four providers, one enrolled verifier, one arbiter, and
 /// the nine state transitions a `SlashRecord` can take part in (the dispute upgrade added
@@ -23,7 +24,7 @@ import {VoucherSigner} from "../helpers/VoucherSigner.sol";
 /// `proposeSlash` and removing on a landed `executeSlash`, `cancelSlash` or `expireSlash`.
 /// Two independent bookkeepings, compared. Reading both from the contract would compare
 /// `pendingSlash` with itself.
-contract StakeHandler is Test {
+contract StakeHandler is Test, StepCounter {
     MockUSDG public usdg;
     X402Config public config;
     X402Stake public stake;
@@ -158,7 +159,7 @@ contract StakeHandler is Test {
 
     // --- the actions -------------------------------------------------------------------------
 
-    function depositStake(uint256 providerSeed, uint64 amount) external {
+    function depositStake(uint256 providerSeed, uint64 amount) external step {
         uint256 i = _provider(providerSeed);
         amount = uint64(bound(amount, 1, 1_000_000_000));
         usdg.mint(providers[i], amount);
@@ -169,7 +170,7 @@ contract StakeHandler is Test {
         landed["depositStake"] += 1;
     }
 
-    function requestUnstake(uint256 providerSeed, uint64 amount) external {
+    function requestUnstake(uint256 providerSeed, uint64 amount) external step {
         uint256 i = _provider(providerSeed);
         uint128 bonded = stake.stakeOf(providers[i]).bonded;
         if (bonded == 0) return;
@@ -179,7 +180,7 @@ contract StakeHandler is Test {
         landed["requestUnstake"] += 1;
     }
 
-    function withdrawStake(uint256 providerSeed, uint64 amount) external {
+    function withdrawStake(uint256 providerSeed, uint64 amount) external step {
         uint256 i = _provider(providerSeed);
         uint64 free = stake.withdrawableOf(providers[i]);
         if (free == 0) return;
@@ -189,7 +190,7 @@ contract StakeHandler is Test {
         landed["withdrawStake"] += 1;
     }
 
-    function proposeSlash(uint256 providerSeed, uint64 penalty) external {
+    function proposeSlash(uint256 providerSeed, uint64 penalty) external step {
         uint256 i = _provider(providerSeed);
         // `PenaltyExceedsMaximum` is checked against `params().penaltyAmount`, which is
         // 1,000,000 here. Bounding above it made every proposal in the campaign revert and left
@@ -220,7 +221,7 @@ contract StakeHandler is Test {
         landed["proposeSlash"] += 1;
     }
 
-    function executeSlash(uint256 idSeed) external {
+    function executeSlash(uint256 idSeed) external step {
         bytes32 id = _pendingId(idSeed);
         if (id == bytes32(0)) return;
         stake.executeSlash(id);
@@ -228,7 +229,7 @@ contract StakeHandler is Test {
         landed["executeSlash"] += 1;
     }
 
-    function cancelSlash(uint256 idSeed) external {
+    function cancelSlash(uint256 idSeed) external step {
         bytes32 id = _pendingId(idSeed);
         if (id == bytes32(0)) return;
         vm.prank(ADMIN);
@@ -237,7 +238,7 @@ contract StakeHandler is Test {
         landed["cancelSlash"] += 1;
     }
 
-    function expireSlash(uint256 idSeed) external {
+    function expireSlash(uint256 idSeed) external step {
         bytes32 id = _pendingId(idSeed);
         if (id == bytes32(0)) return;
         stake.expireSlash(id);
@@ -246,7 +247,7 @@ contract StakeHandler is Test {
     }
 
     /// The provider of a still-`Pending` record disputes it (refused after `executableAt`).
-    function disputeSlash(uint256 idSeed) external {
+    function disputeSlash(uint256 idSeed) external step {
         bytes32 id = _idIn(idSeed, SlashStatus.Pending);
         if (id == bytes32(0)) return;
         vm.prank(stake.slashRecordOf(id).provider);
@@ -255,7 +256,7 @@ contract StakeHandler is Test {
     }
 
     /// The arbiter upholds a `Disputed` record; it stays open (believed pending).
-    function upholdSlash(uint256 idSeed) external {
+    function upholdSlash(uint256 idSeed) external step {
         bytes32 id = _idIn(idSeed, SlashStatus.Disputed);
         if (id == bytes32(0)) return;
         vm.prank(ARBITER);
@@ -278,7 +279,7 @@ contract StakeHandler is Test {
     /// 64-call run. A window that could never be crossed would leave `executeSlash` and
     /// `expireSlash` at zero landed calls and both slash invariants vacuous — which is exactly
     /// the degenerate `test_theHandlerActuallyReachedEveryAction` refuses.
-    function warp(uint32 seconds_) external {
+    function warp(uint32 seconds_) external step {
         vm.warp(block.timestamp + bound(seconds_, 1, 4 * 86_400));
         landed["warp"] += 1;
     }

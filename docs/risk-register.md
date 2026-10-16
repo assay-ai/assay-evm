@@ -300,40 +300,96 @@ that neither chain holds.
 **What the contract does not do:** nothing at all. The mitigation is entirely off chain and it is a
 named **backend requirement** — see `docs/gas.md` § "The operational rule", which now carries it beside
 the batch pre-validation rule. Cost if it is skipped: one voucher's `amount` per affected call,
-absorbed by the platform or the provider, exactly as a `VoucherTooOld` is (entry 1).
+absorbed by the platform or the provider, exactly as a `VoucherTooOld` is (entry 1). Vouchers
+signed BEFORE the request also survive a revocation or a lowered limit landed with it (D-21, §14).
 
 ---
 
-## 14. A payer can make in-flight vouchers unredeemable at once — revoking a delegate, or lowering a limit
+## 14. A payer could make in-flight vouchers unredeemable at once — closed by D-21
 
-**Who it affects:** the platform (and, through it, the provider), never the payer.
+**Before D-21:** a delegate-signed voucher was judged at the REDEMPTION block, so a payer whose
+agent had just been served could revoke the delegate, shorten its horizon, or lower the delegate's
+or the escrow's caps (`setLimits(1, 1)`), and every voucher not yet redeemed became unredeemable
+after the provider served it. Repeatable at no cost (business finding 7, review H1). Five testnet
+rows were absorbed this way (`DelegateIsRevoked`).
 
-A delegate-signed voucher is judged at the REDEMPTION block: `_voucherAuthority` refuses a revoked
-delegate (`DelegateIsRevoked`) or a lapsed one (`DelegateIsExpired`) whenever the voucher was signed.
-So a payer whose agent has just been served calls can revoke the delegate — relayed, so at no gas
-cost — and every voucher of that agent not yet redeemed becomes unredeemable after the provider
-served it. The same is true of lowering the delegate's caps, and it is ALREADY true of the escrow's
-own `setLimits`, which takes effect immediately and has done since the first deployment. The
-amount is bounded by what was served and not yet redeemed (the redemption job runs every minute),
-but it can be repeated.
+**Since D-21:** every such tightening binds an already-valid voucher only after
+`TIGHTEN_DELAY_SECONDS` (3,600 s), longer than any voucher lives (2,220 s): the caps in force before
+a lowering, and a revoked grant's authority, are held for that long, and a grant's `validUntil`
+can no longer be set less than 3,600 s ahead. Raising applies at once. The exit delay already had
+the same shape (§13), so a payer can no longer strand a signed voucher or withdraw the money it
+needs before it is redeemed.
 
-**Unlike §13 there is no delay sized to make it safe.** The withdrawal clock exists for exactly this;
-revocation deliberately has none, because a payer revoking a key they believe is compromised must
-stop it now, and the `/agents` screen promises that ("it can no longer sign payments").
+**What remains, and who carries it:**
+- A revocation or a lowered cap stops NEW vouchers only off chain: the backend must refuse
+  admission on `revoked` and on the current (lowered) caps, as it does today. On chain the old
+  authority lasts one more hour.
+- A stolen delegate key together with a stolen REDEEMER key can spend for up to that hour after
+  the payer revokes, within the old caps. Either key alone gains nothing: only the redeemer can
+  redeem, and the platform admits nothing from a revoked delegate.
+- Vouchers signed after a withdrawal request (§13) and pause, blocklist or outage beyond a
+  voucher's deadline are unchanged.
 
-**The alternative considered and not taken (2026-10-12):** record `revokedAt` (and a lowered-cap
-instant) and keep honouring vouchers with `issuedAt < revokedAt`. It closes this exposure only by
-trusting the redeemer — pinned to the platform — for the ~35 minutes a voucher stays redeemable,
-and `issuedAt` is chosen by the very key being revoked; a compromised delegate key together with a
-compromised platform could then spend for that window after the payer said stop. That trade
-belongs to a product decision, not to this upgrade.
+## 14a. A revoked (or stolen) delegate key can sign NEW vouchers for up to an hour — ACCEPTED, owner decision pending
 
-**What the contract does not do:** honour anything signed before a revocation or a lowered limit.
-**What the backend does:** it reads the delegation fresh for every call (no cache), requires the
-delegation to outlive the voucher's whole redeemable life (`validUntil >= expiresAt + 1800`), and
-treats `DelegateIsRevoked` / `DelegateIsExpired` as terminal so they are never re-broadcast. The
-residual is the platform's, like §13, and it is visible: every unredeemable voucher raises the
-`voucher_unredeemable` alert.
+**Who it affects:** the payer. Review 2026-10-16 step 5, F2 (Medium, design trade-off).
+
+During the grace the chain cannot tell a voucher signed before the revocation from one signed
+after it: `issuedAt` is chosen by the signer. So a key the payer revokes because it was stolen
+can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 3,600 s after the
+revocation, never past `validUntil`). Before D-21 `revokeDelegate` and `setLimits(0, 0)` were
+instant kill switches; now nothing the payer can do stops on-chain spending for that hour —
+lowering the escrow caps is held too, and `requestWithdraw` does not block redeems.
+
+**The bound (quantified):** the extra spend after the revocation is at most
+`min(heldDelegateMaxPerWindow - carried, heldEscrowWindow - carriedEscrow, balance)`, where
+`carried` is the delegate's window spend decayed to the redemption instant; the decay over the
+hour returns at most 3,600 / 86,400 ≈ 4.2% of the window, so the bound is about one held delegate
+window. Each voucher is also at most the held `maxVoucherAmount`. The money goes to an ACTIVE
+provider, not to the thief, so the thief must also control or collude with a registered provider,
+and the vouchers must be submitted by the REDEEMER — which happens only under a backend compromise
+or a backend bug (`Constants.sol` already assumes the backend may be compromised).
+
+**Why accepted:** it is the price of "signed means collectable" (§14) and of "the platform never
+owes providers". Gating the held caps on `issuedAt <= revokedAt + skew` does not change the
+amount bound (a thief backdates `issuedAt`); it only shortens the usable time to about 2,100 s.
+The alternative — a payer `freeze` with no grace, where the platform carries the debt of the
+vouchers it strands — is more contract surface and is the owner's decision (pending).
+
+**Backend rule (required):** refuse every NEW voucher from a revoked delegate, using
+`delegationOf(payer, delegate).revoked` and the CURRENT caps (`escrowOf`, `delegationOf`), never
+`effectiveCapsOf` or the held caps. Those are for prevalidating vouchers already admitted
+(`docs/gas.md`). Test: `test_f2_accepted_aRevokedKeySignsWithinTheHeldWindowForTheGrace`.
+
+## 14b. Smaller residuals of the hold (review 2026-10-16 step 5) — documented
+
+- **F3, a merged hold.** A voucher is checked against the current pair or the held pair, each
+  WHOLE, so a single lower-one-raise-the-other change never combines (old per-call, new window).
+  One slot holds one pair, though: a SECOND lowering while a hold still runs merges the two pairs
+  field by field (and restarts the hour from the second lowering), because a voucher valid at
+  that instant may rely on either. Only then can a held pair be one the payer never set as a
+  whole, and only payer calls create it. The merge carries forward: a payer who lowers again
+  within each hour keeps the first and loosest pair in force for as long as that pattern goes
+  on. For the escrow's own caps there is no end; for a delegate the bound is `validUntil`,
+  which a re-grant can extend. So the total stays within the field-wise max of every pair in
+  force since the last gap of more than 3,600 s between lowerings, all of them caps the payer
+  set. Only the payer can cause it (a delegate, the redeemer or a relayer cannot write or extend
+  a hold), and only by tightening repeatedly; it matters most when a payer lowers several times
+  after a key leak (F2). A second slot or a per-pair `until` would remove it; not worth the
+  storage. A cheaper fix exists for the escrow's caps only: drop the running hold from the
+  merge once every voucher that relied on it has expired (written more than 2,220 s ago, i.e.
+  `until + 2,220 < now + TIGHTEN_DELAY`). A delegate hold's `until` may already be cut to
+  `validUntil`, so its age cannot be read back from it without a new field. Not built, to keep
+  the two hold paths one rule; revisit if repeated lowering becomes a real pattern.
+- **F7, more signing keys than the list limit.** A revoked delegate in its grace is unlisted but
+  can still sign, so revoke-and-grant churn can give a payer more than `MAX_DELEGATES_PER_PAYER`
+  signing keys for up to an hour. Only the payer can cause it, and lookups go through a mapping,
+  so it costs no gas and blocks nothing.
+- **F8, a relayed grant signed close to the minimum.** `authorizeDelegateBySig` needs
+  `validUntil >= now + 3,600` at the block that lands it. A grant SIGNED with
+  `validUntil ≈ signTime + 3,600` reverts with `DelegateValidUntilInvalid` if it is relayed later.
+  Liveness only: the front end signs with a margin of at least the relay deadline
+  (`validUntil >= now + 3,600 + deadline window`).
 
 ## 15. The redeemer can censor or delay a provider's payment — no fallback yet
 

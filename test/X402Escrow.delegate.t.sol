@@ -175,6 +175,14 @@ contract X402EscrowDelegateTest is Fixture {
 
         vm.expectRevert(DelegateValidUntilInvalid.selector);
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, uint64(block.timestamp));
+        // A grant must outlive the tighten delay: one second short is refused.
+        vm.expectRevert(DelegateValidUntilInvalid.selector);
+        escrow.authorizeDelegate(
+            delegate,
+            D_PER_CALL,
+            D_PER_WINDOW,
+            uint64(block.timestamp) + Constants.TIGHTEN_DELAY_SECONDS - 1
+        );
         vm.expectRevert(DelegateValidUntilInvalid.selector);
         escrow.authorizeDelegate(
             delegate,
@@ -336,11 +344,14 @@ contract X402EscrowDelegateTest is Fixture {
 
     // --- revocation ----------------------------------------------------------------------------
 
-    function test_revoke_directRevocationEndsTheAuthorityImmediately() public {
+    /// The revocation unlists the delegate and marks it at once, and ends its authority after
+    /// the tighten delay: a voucher it signed before stays collectable until then.
+    function test_revoke_directRevocationEndsTheAuthorityAfterTheTightenDelay() public {
         _authorize(buyer, delegate);
         Voucher memory v = _v(buyer, 100_000, 1);
         bytes memory sig = _signed(DELEGATE_KEY, v);
         uint64 n = _nonce(buyer);
+        uint64 revokedAt = uint64(block.timestamp);
 
         vm.expectEmit(true, true, false, true, address(escrow));
         emit DelegateRevoked(buyer, delegate);
@@ -349,8 +360,16 @@ contract X402EscrowDelegateTest is Fixture {
 
         assertEq(_nonce(buyer), n + 1);
         assertEq(escrow.delegatesOf(buyer).length, 0);
-        _expect(v, sig, DelegateIsRevoked.selector);
-        assertEq(escrow.escrowOf(buyer).balance, 10_000_000);
+        assertTrue(escrow.delegationOf(buyer, delegate).revoked);
+        (,, uint64 dCapV,) = escrow.effectiveCapsOf(buyer, delegate);
+        assertEq(dCapV, D_PER_CALL, "the revoked grant still signs during its grace");
+
+        _redeem(v, sig);
+        assertEq(escrow.escrowOf(buyer).balance, 10_000_000 - 100_000);
+
+        vm.warp(revokedAt + Constants.TIGHTEN_DELAY_SECONDS + 1);
+        Voucher memory late = _v(buyer, 100_000, 2);
+        _expect(late, _signed(DELEGATE_KEY, late), DelegateIsRevoked.selector);
     }
 
     function test_revoke_theRelayedRevocationWorksAndIsBoundToThePayersKey() public {
@@ -516,6 +535,8 @@ contract X402EscrowDelegateTest is Fixture {
         _authorize(buyer, delegate);
         vm.prank(buyer);
         escrow.setLimits(100_000, 150_000);
+        // The lowering binds once the tighten delay has passed (test/X402Escrow.tighten.t.sol).
+        vm.warp(block.timestamp + Constants.TIGHTEN_DELAY_SECONDS + 1);
 
         Voucher memory v = _v(buyer, 200_000, 1);
         _expect(v, _signed(DELEGATE_KEY, v), VoucherExceedsPerCallLimit.selector);
@@ -734,6 +755,7 @@ contract X402EscrowDelegateTest is Fixture {
         assertEq(escrow.delegationOf(address(w), delegate).spentInWindow, 1_000);
 
         w.exec(address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (delegate)));
+        vm.warp(block.timestamp + Constants.TIGHTEN_DELAY_SECONDS + 1);
         Voucher memory x = _v(address(w), 1_000, 2);
         _expect(x, _signed(DELEGATE_KEY, x), DelegateIsRevoked.selector);
     }
@@ -782,7 +804,9 @@ contract X402EscrowDelegateTest is Fixture {
     function testFuzz_aDelegateIsAcceptedExactlyWhileItsHorizonHolds(uint64 life, uint64 later)
         public
     {
-        life = uint64(bound(life, 1, Constants.MAX_DELEGATION_LIFETIME_SECONDS));
+        life = uint64(
+            bound(life, Constants.TIGHTEN_DELAY_SECONDS, Constants.MAX_DELEGATION_LIFETIME_SECONDS)
+        );
         later = uint64(bound(later, 0, uint64(Constants.MAX_DELEGATION_LIFETIME_SECONDS) * 2));
         uint64 until = uint64(block.timestamp) + life;
         vm.prank(buyer);

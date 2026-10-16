@@ -748,11 +748,17 @@ contract X402EscrowRedeemTest is Fixture {
         // 8. the per-call ceiling BEFORE the window cap — over both at once.
         _expect(_v(6_000_000, 8), VoucherExceedsPerCallLimit.selector);
 
-        // 9. the window cap BEFORE the stake floor — over the window, provider unstaked.
+        // 9. the window cap BEFORE the stake floor — over the window, provider unstaked. The
+        //    lowered window binds once the tighten delay has passed (D-21).
         vm.prank(buyer);
         escrow.setLimits(1_000_000, 500);
+        uint64 later = uint64(vm.getBlockTimestamp()) + Constants.TIGHTEN_DELAY_SECONDS + 1;
+        vm.warp(later);
         _setBonded(provider, 0);
-        _expect(_v(600, 8), EscrowWindowLimitExceeded.selector);
+        Voucher memory w = _v(600, 8);
+        w.issuedAt = later;
+        w.expiresAt = later + 300;
+        _expect(w, EscrowWindowLimitExceeded.selector);
     }
 
     /// **Deliberate divergence 1 (the design's check order over `redeem_voucher.rs:144`).** The

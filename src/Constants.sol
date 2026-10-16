@@ -58,6 +58,13 @@ library Constants {
     /// below [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`], not chosen.
     uint64 internal constant WITHDRAW_DELAY_SECONDS = 3600;
 
+    /// EVM only. How long a payer's TIGHTENING (revoking a delegate, shortening its horizon,
+    /// lowering a delegate's or the escrow's caps) waits before it binds a voucher that was
+    /// already valid: until then the previous authority and caps still redeem it. It is the exit
+    /// delay, for the exit delay's reason — it outlives every voucher (3,600 > 2,220), so no payer
+    /// call can make an already-admitted voucher unredeemable before its deadline.
+    uint64 internal constant TIGHTEN_DELAY_SECONDS = WITHDRAW_DELAY_SECONDS;
+
     /// constants.rs:215 — `REDEEM_GRACE_SECONDS: i64 = 30 * 60`.
     uint64 internal constant REDEEM_GRACE_SECONDS = 30 * 60;
 

@@ -178,6 +178,7 @@ contract SystemHandler is Test {
             escrow.deposit(500_000_000);
             escrow.setLimits(100_000_000, 300_000_000);
             vm.stopPrank();
+            _ghostSet(buyers[i], address(0), 100_000_000, 300_000_000, type(uint64).max);
         }
     }
 
@@ -221,7 +222,13 @@ contract SystemHandler is Test {
         return actionNames.length;
     }
 
+    /// Handler calls in this run that did not revert, early returns included. Every action
+    /// reaches its target through `_call`, so in practice this is every fuzzed call. Read by
+    /// `SystemInvariantsTest.afterInvariant` to tell a full run from a shrunk sequence.
+    uint256 public steps;
+
     modifier step(bytes32 name) {
+        steps += 1;
         currentAction = name;
         _pre();
         _;
@@ -432,6 +439,7 @@ contract SystemHandler is Test {
         bool paused = config.paused();
         bool blk = config.blocked(buyer);
         bool s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.setLimits, (a, b)));
+        if (s) _ghostSet(buyer, address(0), a, b, type(uint64).max);
         if (s && paused) _violate("pause", "setLimits while paused");
         if (s && blk) _violate("block", "setLimits by a blocked buyer");
     }
@@ -467,6 +475,7 @@ contract SystemHandler is Test {
             address(escrow),
             abi.encodeCall(X402Escrow.setLimitsBySig, (buyer, a, b, nonce, deadline, sig))
         );
+        if (s) _ghostSet(buyer, address(0), a, b, type(uint64).max);
         if (s && paused) _violate("pause", "setLimitsBySig while paused");
         if (s && blk) _violate("block", "setLimitsBySig for a blocked buyer");
     }
@@ -564,6 +573,7 @@ contract SystemHandler is Test {
                 abi.encodeCall(X402Escrow.authorizeDelegate, (del, a, b, validUntil))
             );
         }
+        if (s) _ghostSet(buyer, del, a, b, validUntil);
         if (s && paused) _violate("pause", "authorizeDelegate while paused");
         if (s && blk) _violate("block", "authorizeDelegate with a blocked party");
     }
@@ -593,6 +603,7 @@ contract SystemHandler is Test {
         } else {
             s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (del)));
         }
+        if (s) _ghostRevoke(buyer, del);
         if (listed && !s) _violate("revokeLiveness", "revokeDelegate refused a listed delegate");
         if (!listed && s) {
             _violate("revokeLiveness", "revokeDelegate accepted an unlisted delegate");
@@ -668,7 +679,7 @@ contract SystemHandler is Test {
         if (caller != REDEEMER) _violate("role", "redeem by a non-redeemer");
         if (paused) _violate("pause", "redeem while paused");
         if (blk) _violate("block", "redeem paid/charged a blocked party");
-        _checkRedeemCaps(v, del);
+        _checkRedeemCaps(v, del, 0, 0);
         (uint64 fee, uint64 net) = Fee.splitFee(v.amount, take);
         if (usdg.balanceOf(v.provider) - provBefore != net) _violate("payout", "provider net");
         if (usdg.balanceOf(TREASURY) - treasBefore != fee) _violate("payout", "treasury fee");
@@ -677,17 +688,101 @@ contract SystemHandler is Test {
         }
     }
 
-    function _checkRedeemCaps(Voucher memory v, address del) internal {
-        X402Escrow.Escrow memory e = escrow.escrowOf(v.payer);
-        if (v.amount > e.maxVoucherAmount) _violate("caps", "voucher above per-call limit");
-        if (e.spentInWindow > e.maxPerWindow) _violate("caps", "escrow window above cap");
+    // --- the payer's authorisation, modelled here (review 2026-10-16 F5) -----------------------
+    //
+    // The caps checks below compare a redemption with what THIS HANDLER saw the payer authorise,
+    // not with the contract's own `effectiveCapsOf`. The rules are D-21's, written out from the
+    // spec rather than read back: a lowering (or a revocation) holds the pair in force before it
+    // until `now + TIGHTEN_DELAY` — for a delegate never past the grant's `validUntil` before the
+    // change — only if the grant could still sign; a pair is checked WHOLE (current, or held
+    // while the hold runs); a running hold merges field by field into a new one (one slot).
+
+    struct GhostGrant {
+        uint64 v;
+        uint64 w;
+        uint64 validUntil; // type(uint64).max for the escrow's own caps (key address(0))
+        bool revoked;
+    }
+
+    struct GhostHold {
+        uint64 v;
+        uint64 w;
+        uint64 until;
+    }
+
+    mapping(address => mapping(address => GhostGrant)) internal ghostGrant;
+    mapping(address => mapping(address => GhostHold)) internal ghostHold;
+
+    function _ghostCanSign(address payer, address del) internal view returns (bool) {
+        GhostGrant memory g = ghostGrant[payer][del];
+        if (g.validUntil == 0 || block.timestamp > g.validUntil) return false;
+        return !g.revoked || block.timestamp <= ghostHold[payer][del].until;
+    }
+
+    function _ghostWriteHold(address payer, address del) internal {
+        GhostGrant memory g = ghostGrant[payer][del];
+        GhostHold storage h = ghostHold[payer][del];
+        uint64 v = g.v;
+        uint64 w = g.w;
+        if (block.timestamp <= h.until) {
+            if (h.v > v) v = h.v;
+            if (h.w > w) w = h.w;
+        }
+        uint256 end = block.timestamp + Constants.TIGHTEN_DELAY_SECONDS;
+        if (g.validUntil < end) end = g.validUntil;
+        h.v = v;
+        h.w = w;
+        h.until = uint64(end);
+    }
+
+    function _ghostSet(address payer, address del, uint64 a, uint64 b, uint64 validUntil)
+        internal
+    {
+        GhostGrant storage g = ghostGrant[payer][del];
+        if ((a < g.v || b < g.w) && (del == address(0) || _ghostCanSign(payer, del))) {
+            _ghostWriteHold(payer, del);
+        }
+        g.v = a;
+        g.w = b;
+        g.validUntil = validUntil;
+        g.revoked = false;
+    }
+
+    function _ghostRevoke(address payer, address del) internal {
+        if (block.timestamp <= ghostGrant[payer][del].validUntil) _ghostWriteHold(payer, del);
+        ghostGrant[payer][del].revoked = true;
+    }
+
+    /// Whether (`amount`, window total `spent`) fits the current pair or the held pair whole.
+    function _ghostFits(address payer, address del, uint256 amount, uint256 spent)
+        internal
+        view
+        returns (bool)
+    {
+        GhostGrant memory g = ghostGrant[payer][del];
+        if (amount <= g.v && spent <= g.w) return true;
+        GhostHold memory h = ghostHold[payer][del];
+        return block.timestamp <= h.until && amount <= h.v && spent <= h.w;
+    }
+
+    /// `laterE` / `laterD`: what the same payer (and the same delegate) spent AFTER this voucher
+    /// in the same batch, at the same instant, so `spentInWindow - later` is this voucher's own
+    /// window total.
+    function _checkRedeemCaps(Voucher memory v, address del, uint256 laterE, uint256 laterD)
+        internal
+    {
+        uint256 spentE = escrow.escrowOf(v.payer).spentInWindow - laterE;
+        if (!_ghostFits(v.payer, address(0), v.amount, spentE)) {
+            _violate("caps", "voucher outside every escrow pair the payer authorised");
+        }
         if (del != address(0)) {
-            X402Escrow.Delegation memory d = escrow.delegationOf(v.payer, del);
-            if (d.revoked || block.timestamp > d.validUntil) {
-                _violate("delegate", "revoked/expired delegate paid");
+            if (!_ghostCanSign(v.payer, del)) {
+                _violate("delegate", "a delegate paid past its horizon or its grace");
             }
-            if (v.amount > d.maxVoucherAmount) _violate("caps", "voucher above delegate per-call");
-            if (d.spentInWindow > d.maxPerWindow) _violate("caps", "delegate window above cap");
+            uint256 spentD = escrow.delegationOf(v.payer, del).spentInWindow - laterD;
+            if (!_ghostFits(v.payer, del, v.amount, spentD)) {
+                _violate("caps", "voucher outside every delegate pair the payer authorised");
+            }
         }
     }
 
@@ -724,7 +819,14 @@ contract SystemHandler is Test {
         if (paused) _violate("pause", "redeemBatch while paused");
         if (blk) _violate("block", "redeemBatch touched a blocked party");
         for (uint256 k = 0; k < n; k++) {
-            _checkRedeemCaps(vs[k], dels[k]);
+            uint256 laterE;
+            uint256 laterD;
+            for (uint256 j = k + 1; j < n; j++) {
+                if (vs[j].payer != vs[k].payer) continue;
+                laterE += vs[j].amount;
+                if (dels[k] != address(0) && dels[j] == dels[k]) laterD += vs[j].amount;
+            }
+            _checkRedeemCaps(vs[k], dels[k], laterE, laterD);
         }
     }
 

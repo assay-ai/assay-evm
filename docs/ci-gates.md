@@ -289,6 +289,17 @@ reports every identity green over an untouched state. `Invariants.t.sol`'s `afte
 and `test_theHandlerCanReachEveryAction` are the two halves that refuse it, and the degenerate is
 measured in `test/MUTATION-LOG.md` — **7 green invariants over 16,384 calls that all did nothing.**
 
+**The floor binds full-length runs only** (re-review 2026-10-16, N2). Forge's shrinker keeps a
+candidate sequence while `afterInvariant` still fails, so an unconditional floor shrank every real
+violation to a two-call sequence reported as "the run landed almost nothing", persisted it, and
+replayed that message instead of the true cause. Each handler now counts its fuzzed calls
+(`steps`) and the floor applies only when `steps >= 50`; a campaign run reads its full depth. In
+`Invariants.t.sol` the count must include refused calls, so `StepCounter` counts in the outer frame
+and runs the action in a self-call: a refused action is discarded whole as before, and forge's
+`reverts:` column for that suite now reads 0 (the refusals are `refusedSteps`). That suite also
+asserts `landed * 10 >= steps`. `SystemInvariantsTest` keeps only the floor of 3: with pause and the
+blocklist closing most doors a full run there can land under 10 % of its calls (measured).
+
 ## 8. `forge snapshot --check`
 
 **The snapshot check is path-independent by construction.** Twenty tests read the repository's
@@ -323,6 +334,13 @@ excluded tests are: `testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor`,
 `test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`, plus every `invariant_*` run. Regenerate with
 `./script/check-snapshot.sh --write`. The sections below were written before this exclusion, and
 quote the plain `forge snapshot --check`.
+
+**The snapshot is also independent of the local fuzz cache** (measured 2026-10-16). Forge replays
+every persisted fuzz failure (`cache/fuzz/failures`, git-ignored) before new cases and counts it as
+a run, so a checkout where `testFuzz_penaltyAboveTheStake` had once failed wrote `runs: 513` (and
+other gas means) where CI's fresh checkout produces `runs: 512`. The script therefore points
+`FOUNDRY_FUZZ_FAILURE_PERSIST_DIR` and `FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR` at an empty
+temporary directory. `forge test` still replays the saved failures.
 
 **This section previously asserted the gate was green. It was not, and had not been for three
 commits.** A review ran it and got exit 1, and so did a re-run. What follows is measured on

@@ -319,7 +319,15 @@ contract SystemInvariantsTest is Test {
                 line, _s(a), "=", vm.toString(h.ok(a)), "/", vm.toString(h.tried(a)), " "
             );
         }
-        assertGe(landed, 3, "the run landed almost nothing");
+        // The floor binds full-length runs only (depth 100). Forge's shrinker keeps a candidate
+        // that still fails `afterInvariant`, so an unconditional floor shrinks any real
+        // violation to a two-call sequence reported as "landed almost nothing", and replays
+        // that instead of the true cause. A shrunk or replayed sequence is shorter than 50.
+        // No proportional floor here: with pause and the blocklist closing most doors, a full
+        // run lands about 5 to 10% of its calls (measured), so "landed * 10 >= steps" would
+        // fail real runs.
+        uint256 st = h.steps();
+        if (st >= 50) assertGe(landed, 3, "the run landed almost nothing");
         string memory path = vm.envOr("AUDIT_D_COVERAGE", string(""));
         if (bytes(path).length != 0) vm.writeLine(path, line);
     }
