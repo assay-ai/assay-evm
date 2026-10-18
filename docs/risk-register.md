@@ -496,3 +496,35 @@ and `executableAt` are frozen.
 released. The backend needs a key-expiry monitor (alert well before `expiresAt − (delay + 30 d +
 7 d)`) as well as the rotation rule in runbook §6.6.
 
+
+## 19. Redeem into hold: the redeemer can refund, and the hold can be shortened
+
+**A redemption pays nobody until it is collected.** The amount moves from the buyer's balance into
+`held[payer][seq]`; `collectHeld` pays the provider and the treasury, `refundHeld` returns it to
+the buyer's balance. No door can aim the money anywhere else: the provider is the signed voucher's
+and the treasury is Config's at collect time.
+
+**The redeemer can refund any held payment, with no arbiter, until `collectableAt + 7 d`.** This
+is the power it already had by not redeeming (§15), now usable after settlement; a refund only
+credits the buyer's balance and moves no token. A stolen redeemer key can therefore void
+providers' earnings for up to 7 days after each hold, and can delay collection for the same 7
+days by not collecting. **After the timeout anybody may collect**, in the provider's favour, so
+redeemer silence cannot hold a provider's money for ever. Alert on `HeldRefunded` volume.
+
+**A stolen admin key can shorten the hold to 60 s** (`setCollectHold`, bounds [60 s, 1 d]). That
+narrows the window in which a dispute is refunded for certain; it moves no money and leaves the
+refund open until the timeout. Records already held keep their `collectableAt`. Alert on
+`CollectHoldSet`.
+
+**The pause and the blocklist freeze collection** (payer and provider). A record frozen past its
+timeout cannot be refunded any more, so it waits, `Held`, until the gate lifts and then anybody
+collects it. A provider blocked for good therefore holds its records in the escrow for good: no
+role can redirect them.
+
+**A refund does not restore the buyer's `spentInWindow`** (owner's decision): a refund must not
+hand a buyer or a delegate fresh capacity inside the window it was spent in. It does lower
+`totalRedeemed`, so the per-escrow identity `totalFunded == balance + totalRedeemed +
+totalWithdrawn` keeps holding.
+
+**Solvency** is `balanceOf(escrow) >= totalEscrowed + totalHeld` (asserted by the invariant
+suites, never by the contract). `withdraw` reads `balance` only, so it cannot reach held money.

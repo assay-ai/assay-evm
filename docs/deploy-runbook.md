@@ -698,6 +698,31 @@ Escrow door until Config lands.
 6. **Tell the backend and frontend** before step 3: the exits now revert `ProgramPaused` while
    paused, and every guarded door reverts `AddressBlocked` for a blocked party.
 
+### 7.6 The redeem-into-hold upgrade — prepared, not run
+
+Config and Escrow change; Stake does not. **No layout field moves**: `check-layout.sh` classifies
+Config as APPEND-ONLY (`_collectHoldSeconds`, one slot out of `__gap`, 47 → 46) and Escrow as
+APPEND-ONLY (`heldPayments` and `totalHeld`, two slots out of `__gap`, 46 → 44). No initializer
+runs (`CALL_*` empty): `collectHoldSeconds()` reads 3,600 until set and `totalHeld` starts at 0.
+Config must land FIRST: the new Escrow calls `CONFIG.collectHoldSeconds()` on every redemption,
+so behind the old Config every redeem reverts. `UpgradeByOwner.s.sol` refuses an Escrow upgrade
+behind a Config that does not answer `collectHoldSeconds()` (`ConfigMustBeUpgradedFirst`). On a
+Safe, send the two `safeCalldata()` lines as ONE MultiSend transaction, Config first.
+
+1. Layout gate against the deployed commit: `./script/check-layout-branch.sh <deployed commit>`.
+2. `deploy()` with `UPGRADE_CONFIG=true UPGRADE_ESCROW=true`; take each `EXPECTED_CODEHASH_*` from
+   the implementation `check-bytecode.sh` matched.
+3. Rehearse on an anvil fork with the owner impersonated, then `run()` (or the Safe batch).
+4. Post-check on chain: `script/postcheck-upgrade.sh` with `IMPL_CONFIG` and `IMPL_ESCROW`, then
+   `EXPECTED_COLLECT_HOLD=3600` and `EXPECTED_TOTAL_HELD=0`. Record `abiKeccak` / `abiFunctions`
+   for Config (+2: `collectHoldSeconds`, `setCollectHold`) and Escrow (+6: `held`, `totalHeld`,
+   `collectHeld`, `collectHeldBatch`, `refundHeld`, `refundHeldBatch`).
+5. **The backend must be on the hold build before step 3.** From the upgrade on, a redemption
+   pays nobody: providers are credited on `HeldCollected`, not on `VoucherRedeemed`, and nothing
+   reaches a provider until the collection job calls `collectHeld(Batch)`. A backend still on the
+   old build would book provider earnings that were never paid out.
+6. For a testnet run, `setCollectHold(600)` (admin) shortens the hold to 10 minutes.
+
 ### The one thing an upgrade must never do: change the EIP-712 `name` or `version`
 
 They are ShortString immutables baked into each implementation. Change either and the proxy's

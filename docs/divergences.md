@@ -137,3 +137,20 @@ history that a reader of the EVM contract does not need, so they live here.
 - **The "exactly TWO relayed doors" comments** predate agent delegation. There are four
   (`setLimitsBySig`, `requestWithdrawBySig`, `authorizeDelegateBySig`, `revokeDelegateBySig`),
   all through `_consumeAuth`, and since D-18 the four direct twins consume the same `authNonce`.
+
+## 4. Redeem into hold (EVM only) — Solana parity item
+
+A redemption on EVM no longer pays the provider. `_redeem` keeps every check and every effect of
+`redeem_voucher.rs`, but the two payouts move to `collectHeld`: the amount leaves the buyer's
+balance into `held[payer][seq]`, with the take rate and `collectableAt` (now +
+`collectHoldSeconds`, default 3,600 s) frozen in the record. The redeemer collects from
+`collectableAt` or refunds to the buyer's balance until `collectableAt + HELD_TIMEOUT_SECONDS`
+(7 d); after the timeout anybody may collect, in the provider's favour. A refund does not restore
+`spentInWindow`, and it lowers `totalRedeemed` so `totalFunded == balance + totalRedeemed +
+totalWithdrawn` still holds per escrow.
+
+**The Anchor program has no hold.** `redeem_voucher.rs` still pays the provider and the treasury
+in the redemption itself, so a buyer dispute upheld after settlement cannot be refunded on chain
+there. **Rail B (buyer escrow, voucher redemption) stays OFF on Solana until the program has the
+same hold** — the same record, the same three exits, the same frozen fields and the same timeout.
+Track it as a parity item; until it lands, the two chains' redemption tests diverge at the payout.
