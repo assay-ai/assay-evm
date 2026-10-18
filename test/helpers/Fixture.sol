@@ -103,11 +103,11 @@ abstract contract Fixture is Test {
         stakeImpl = new X402Stake();
         stake = _deployStake(address(usdg));
 
-        // `_deployEscrow` reads this, and so do the Permit2 deposit tests.
+        // `_deployEscrow` reads this.
         stakeView = IX402StakeView(address(stake));
 
         escrowImpl = new X402Escrow();
-        escrow = _deployEscrow(address(0));
+        escrow = _deployEscrow(address(usdg));
 
         // Every escrow test needs a provider that clears the minimum. It arrives through the
         // real deposit path now, so nothing in the suite is proved against a stub any more.
@@ -151,24 +151,19 @@ abstract contract Fixture is Test {
         }
     }
 
-    /// A second escrow behind its OWN proxy — which is what a redeploy is (D-7). Every test
-    /// variant goes through this, so nothing in the suite ever calls an implementation
-    /// directly and accidentally proves something about a contract nobody deploys.
-    function _deployEscrow(address permit2_) internal returns (X402Escrow) {
-        return _deployEscrow(address(usdg), permit2_);
-    }
-
-    /// The same, with the settlement asset named. Two tests need an asset that is not `usdg` —
-    /// the re-entrancy prover and the decimals check — and neither may reach for a bare
-    /// implementation to get one.
-    function _deployEscrow(address asset_, address permit2_) internal returns (X402Escrow) {
+    /// A second escrow behind its OWN proxy — which is what a redeploy is (D-7), with the
+    /// settlement asset named. Every test variant goes through this, so nothing in the suite ever
+    /// calls an implementation directly and accidentally proves something about a contract nobody
+    /// deploys; the tests that need an asset that is not `usdg` (the re-entrancy prover, the
+    /// decimals check) do not reach for a bare implementation to get one.
+    function _deployEscrow(address asset_) internal returns (X402Escrow) {
         return X402Escrow(
             address(
                 new ERC1967Proxy(
                     address(escrowImpl),
                     abi.encodeCall(
                         X402Escrow.initialize,
-                        (IX402Config(address(config)), stakeView, IERC20(asset_), permit2_)
+                        (IX402Config(address(config)), stakeView, IERC20(asset_))
                     )
                 )
             )

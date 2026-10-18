@@ -121,7 +121,6 @@ cat > "$OUT" <<JSON
   "solc": "$(jq -r .solc <<< "$CFG")",
   "settings": $(jq -c '{viaIr: .via_ir, optimizerRuns: .optimizer_runs, evmVersion: .evm_version, bytecodeHash: .bytecode_hash}' <<< "$CFG"),
   "asset": { "address": "$ASSET", "symbol": "$SYM", "decimals": 6 },
-  "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
   "owner": "0x0000000000000000000000000000000000000000",
   "admin": "0x0000000000000000000000000000000000000000",
   "deployer": "0x0000000000000000000000000000000000000000",

@@ -510,7 +510,7 @@ contract X402EscrowWithdrawTest is Fixture {
     /// substitute for the other.
     function test_wrongState_aReentrantAssetCannotRecurseIntoWithdraw() public {
         WithdrawReentrantUSDG evil = new WithdrawReentrantUSDG();
-        X402Escrow e2 = _deployEscrow(address(evil), address(0));
+        X402Escrow e2 = _deployEscrow(address(evil));
 
         evil.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -538,7 +538,7 @@ contract X402EscrowWithdrawTest is Fixture {
     /// the outer call succeeds, and its storage survives to be asserted.
     function test_everyEffectIsWrittenBeforeTheWithdrawalTransfer() public {
         WithdrawObserverUSDG obs = new WithdrawObserverUSDG();
-        X402Escrow e2 = _deployEscrow(address(obs), address(0));
+        X402Escrow e2 = _deployEscrow(address(obs));
 
         obs.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -593,11 +593,10 @@ contract X402EscrowWithdrawTest is Fixture {
         // `totalHeld`) and collect/refund in single and batch form — both pay out only a record a
         // signed voucher created, to that voucher's provider and the treasury, or back to the
         // buyer's own balance.
-        string[35] memory expected = [
+        string[34] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
-            "PERMIT2()",
             "STAKE()",
             "UPGRADE_INTERFACE_VERSION()",
             "authorizeDelegate(address,uint64,uint64,uint64)",
@@ -612,7 +611,7 @@ contract X402EscrowWithdrawTest is Fixture {
             "eip712Domain()",
             "escrowOf(address)",
             "held(address,uint64)",
-            "initialize(address,address,address,address)",
+            "initialize(address,address,address)",
             "proxiableUUID()",
             "redeemVoucher((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64),bytes)",
             "redeemVoucherBatch((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64)[],bytes[])",
@@ -628,13 +627,13 @@ contract X402EscrowWithdrawTest is Fixture {
             "totalHeld()",
             "upgradeToAndCall(address,bytes)",
             "withdraw()",
-            "" // the 35th slot is deliberately empty: a 35th function makes this test red
+            "" // the 34th slot is deliberately empty: a 34th function makes this test red
         ];
 
         string memory artifact =
             vm.readFile(string.concat(vm.projectRoot(), "/out/X402Escrow.sol/X402Escrow.json"));
         string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 34, "X402Escrow's external surface changed size");
+        assertEq(keys.length, 33, "X402Escrow's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;

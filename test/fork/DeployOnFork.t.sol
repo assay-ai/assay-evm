@@ -91,8 +91,7 @@ contract DeployOnForkTest is ForkFixture {
                         (
                             IX402Config(address(config)),
                             IX402StakeView(address(stake)),
-                            IERC20(RH_TESTNET_USDG),
-                            CANONICAL_PERMIT2
+                            IERC20(RH_TESTNET_USDG)
                         )
                     )
                 )
@@ -107,7 +106,6 @@ contract DeployOnForkTest is ForkFixture {
         assertEq(address(escrow.STAKE()), address(stake), "escrow.STAKE");
         assertEq(address(escrow.ASSET()), RH_TESTNET_USDG, "escrow.ASSET");
         assertEq(address(stake.ASSET()), RH_TESTNET_USDG, "stake.ASSET");
-        assertEq(escrow.PERMIT2(), CANONICAL_PERMIT2, "escrow.PERMIT2");
         assertEq(config.admin(), ADMIN, "config.admin");
         assertFalse(config.paused(), "a fresh deployment must not be paused");
     }

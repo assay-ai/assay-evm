@@ -824,7 +824,7 @@ contract X402EscrowRedeemTest is Fixture {
     /// what refuses it.
     function test_wrongState_aReentrantAssetCannotRecurseIntoCollectHeld() public {
         RedeemReentrantUSDG evil = new RedeemReentrantUSDG();
-        X402Escrow e2 = _deployEscrow(address(evil), address(0));
+        X402Escrow e2 = _deployEscrow(address(evil));
 
         evil.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -864,7 +864,7 @@ contract X402EscrowRedeemTest is Fixture {
     /// `totalHeld` lowered) are all in place when the provider payout runs.
     function test_everyEffectIsWrittenBeforeTheFirstTransfer() public {
         RedeemObserverUSDG obs = new RedeemObserverUSDG();
-        X402Escrow e2 = _deployEscrow(address(obs), address(0));
+        X402Escrow e2 = _deployEscrow(address(obs));
 
         obs.mint(buyer, 10_000_000);
         vm.startPrank(buyer);

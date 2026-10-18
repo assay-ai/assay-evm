@@ -71,7 +71,6 @@ contract Deploy is Script {
 
     function run() external {
         address asset = vm.envAddress("USDG_ADDRESS");
-        address permit2 = vm.envAddress("PERMIT2_ADDRESS");
         address admin = vm.envAddress("ADMIN_ADDRESS");
         // D-17: the owner is the upgrade authority and appoints the admin. Cold, and NOT the key
         // that broadcasts this script — after the deploy the deployer holds no role at all.
@@ -127,12 +126,7 @@ contract Deploy is Script {
                     escrowImpl,
                     abi.encodeCall(
                         X402Escrow.initialize,
-                        (
-                            IX402Config(address(config)),
-                            IX402StakeView(address(stake)),
-                            IERC20(asset),
-                            permit2
-                        )
+                        (IX402Config(address(config)), IX402StakeView(address(stake)), IERC20(asset))
                     )
                 )
             )
@@ -174,7 +168,6 @@ contract Deploy is Script {
         console2.log("owner                 ", owner);
         console2.log("admin                 ", admin);
         console2.log("asset                 ", asset);
-        console2.log("permit2               ", permit2);
         console2.log("escrow domainSep (proxy)");
         console2.logBytes32(escrow.DOMAIN_SEPARATOR());
         console2.log("stake domainSep  (proxy)");

@@ -32,7 +32,7 @@ import {Voucher} from "../../src/Types.sol";
 /// The fixture's own `usdg` is the real 46630 token here, so the stake floor every redeem checks
 /// (`STAKE.bondedOf(provider) >= minimumStake`) is satisfied through a real deposit of the real
 /// token. The blocked leg is a second escrow in front of `BlockingUSDG`, which is how this suite
-/// already reaches a hostile asset (`_deployEscrow(address asset_, address permit2_)`).
+/// already reaches a hostile asset (`_deployEscrow(address asset_)`).
 contract BlocklistAccountingForkTest is Fixture {
     BlockingUSDG internal token;
     X402Escrow internal blocking;
@@ -57,7 +57,7 @@ contract BlocklistAccountingForkTest is Fixture {
         if (address(config) == address(0)) return;
 
         token = new BlockingUSDG(provider); // the PROVIDER is the blocked party
-        blocking = _deployEscrow(address(token), address(0));
+        blocking = _deployEscrow(address(token));
         ds = blocking.DOMAIN_SEPARATOR();
 
         _setBonded(okProvider, MINIMUM_STAKE);

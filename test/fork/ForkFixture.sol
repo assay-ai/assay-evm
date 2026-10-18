@@ -33,14 +33,7 @@ import {Test} from "forge-std/Test.sol";
 /// between two runs.
 abstract contract ForkFixture is Test {
     address internal constant RH_TESTNET_USDG = 0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec;
-    address internal constant CANONICAL_PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     uint256 internal constant RH_TESTNET_CHAIN_ID = 46630;
-
-    /// The Permit2 domain separator measured on 46630 on 2026-09-09, re-measured 2026-09-10. It
-    /// is a CONSTANT of the deployment, so a fork test can assert it and a change is a real
-    /// event, not churn.
-    bytes32 internal constant PERMIT2_DOMAIN_SEPARATOR_46630 =
-        0x385ef69ffea4b42e91eff23e95ef22db58d3ad382de54eedf9bf9ff2ed24173f;
 
     /// keccak256 of the 5,652-byte runtime code at `RH_TESTNET_USDG`, measured 2026-09-10.
     /// The token is NOT behind a proxy (EIP-1967 slot is zero), so this cannot change without

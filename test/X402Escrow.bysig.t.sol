@@ -468,7 +468,7 @@ contract X402EscrowBySigTest is Fixture {
     /// do not, and the way that silently stops being true is somebody adding a read of the asset.
     function test_theFourDoorsMakeNoExternalCallAtAll() public {
         InertAsset inert = new InertAsset();
-        X402Escrow e2 = _deployEscrow(address(inert), address(0));
+        X402Escrow e2 = _deployEscrow(address(inert));
 
         vm.prank(buyer);
         e2.setLimits(1_000_000, 5_000_000);

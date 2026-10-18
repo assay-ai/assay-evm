@@ -123,18 +123,12 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         bool revoked; //                ↑
     }
 
-    /// These four were `immutable` in the pre-proxy draft of this design. Under D-1 they are
-    /// ordinary storage, written once in `initialize` and never again — the standard,
-    /// upgrade-safe shape. The UPPER_SNAKE_CASE names and the public getters are kept
-    /// deliberately so Fixture, Deploy.s.sol and verify-deployment.sh do not change.
+    /// Ordinary storage, written once in `initialize` and never again — the standard,
+    /// upgrade-safe shape (D-1). The UPPER_SNAKE_CASE names are kept from the pre-proxy draft,
+    /// where these were immutables.
     IX402Config public CONFIG;
     IX402StakeView public STAKE;
     IERC20 public ASSET;
-    /// **Read by nothing since D-18**, which removed the Permit2 deposit door. The slot stays,
-    /// under the same label, because the layout is append-only and this proxy has written it; the
-    /// getter stays so the upgrade scripts can assert it did not move. A fresh deployment may
-    /// pass `address(0)`.
-    address public PERMIT2;
 
     /// `internal` rather than `public` because the generated getter for a struct-valued mapping
     /// returns a flattened tuple, which reorders silently when a field is appended. [`escrowOf`]
@@ -268,7 +262,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// Was a constructor before design decision D-1. Everything it
     /// asserted, it still asserts — a constructor simply does not write the proxy's storage.
-    function initialize(IX402Config config, IX402StakeView stake, IERC20 asset, address permit2)
+    function initialize(IX402Config config, IX402StakeView stake, IERC20 asset)
         external
         initializer
     {
@@ -290,7 +284,6 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         CONFIG = config;
         STAKE = stake;
         ASSET = asset;
-        PERMIT2 = permit2;
     }
 
     /// The upgrade door (D-1, D-17). The authority is `CONFIG.owner()`, READ FROM CONFIG on every
@@ -1538,6 +1531,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// The append budget the D-7 upgrade-safety gate spends. A new field is added ABOVE this
     /// line and the array shrinks by exactly the slots it consumes — the script refuses
-    /// anything else. **46 → 44 for the redeem-into-hold change** (`heldPayments`, `totalHeld`).
-    uint256[44] private __gap;
+    /// anything else. 45 at the fresh deployment (D-22): the contract's own fields end at slot
+    /// 13, so the footprint ends at slot 58.
+    uint256[45] private __gap;
 }

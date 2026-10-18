@@ -551,7 +551,7 @@ contract X402EscrowDomainTest is Fixture {
     /// CROSS-CONTRACT REPLAY. Two deployments, one chain. A second PROXY — which is what a
     /// redeploy is (D-7); an upgrade would reuse this one and is proved in `Upgrade.t.sol`.
     function test_aVoucherSignedForOneDeploymentDoesNotVerifyOnAnother() public {
-        X402Escrow other = _deployEscrow(address(0));
+        X402Escrow other = _deployEscrow(address(usdg));
         assertTrue(other.DOMAIN_SEPARATOR() != escrow.DOMAIN_SEPARATOR());
 
         Voucher memory v = _voucher();

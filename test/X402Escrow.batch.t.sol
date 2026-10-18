@@ -722,7 +722,7 @@ contract X402EscrowBatchTest is Fixture {
     /// Without this test, moving `CONFIG.params()` inside the loop survives every other test here.
     function test_theParameterSetIsReadOnceForTheWholeBatch() public {
         ConfigShiftingUSDG tok = new ConfigShiftingUSDG();
-        X402Escrow e2 = _deployEscrow(address(tok), address(0));
+        X402Escrow e2 = _deployEscrow(address(tok));
         address b = _arm(e2, IMintableToken(address(tok)), payerKeys[0], FUND);
 
         // The token becomes the admin — the compromise this property is defending against.
@@ -809,7 +809,7 @@ contract X402EscrowBatchTest is Fixture {
     /// as well and the only thing left refusing it is the guard.
     function test_wrongState_aReentrantAssetCannotRecurseIntoTheBatch() public {
         RedeemReentrantUSDG evil = new RedeemReentrantUSDG();
-        X402Escrow e2 = _deployEscrow(address(evil), address(0));
+        X402Escrow e2 = _deployEscrow(address(evil));
         address b = _arm(e2, IMintableToken(address(evil)), payerKeys[0], FUND);
 
         ParamSet memory p = config.params();
@@ -870,7 +870,7 @@ contract X402EscrowBatchTest is Fixture {
     /// transfer `2n` is item `n`'s first.
     function test_everyItemsEffectsAreWrittenBeforeThatItemsOwnTransfers() public {
         BatchObserverUSDG obs = new BatchObserverUSDG();
-        X402Escrow e2 = _deployEscrow(address(obs), address(0));
+        X402Escrow e2 = _deployEscrow(address(obs));
 
         address[] memory bs = new address[](4);
         uint64[4] memory amounts = [uint64(250_000), 310_000, 70_007, 1_234_567];

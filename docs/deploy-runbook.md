@@ -105,7 +105,6 @@ on both chains, from `ArbGasInfo.getGasAccountingParams()`. The worst measured 6
 | variable | 46630 | 4663 |
 |---|---|---|
 | `USDG_ADDRESS` | **operator-supplied**: the 6-decimal settlement token, e.g. a mock USD you deployed | **operator-supplied. Not derivable. Not the testnet address.** |
-| `PERMIT2_ADDRESS` | recorded in a storage slot nothing reads since D-18 (the Permit2 door was removed); `0x000000000022D473030F116dDEE9F6B43aC78BA3` or `address(0)` | same |
 | `OWNER_ADDRESS` | **the cold owner** (Ledger or Safe), never the deploying key | **a Safe or a Ledger**, never the deploying key |
 | `ADMIN_ADDRESS` | **a Ledger address**, never the deploying key | **a Ledger address**, never the deploying key |
 | `TREASURY_ADDRESS` | a Ledger EOA | a **single-signer Ledger EOA** (multisig planned) |
@@ -817,8 +816,7 @@ conservative" as an argument needs re-reading.
 
 The 4663 figure is still unmeasured and unobtainable: it needs the mainnet token, which is §0.1.
 
-Permit2 is no longer a deposit path at all: D-18 removed `depositWithPermit2`, and with it
-`test/fork/Permit2.fork.t.sol`.
+There is no Permit2 deposit path: a buyer funds with `approve` + `depositFor` (D-11, D-18).
 
 ## 10. The relayer float
 

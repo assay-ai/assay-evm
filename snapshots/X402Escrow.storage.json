@@ -49,19 +49,11 @@
       "type": "t_contract(IERC20)947"
     },
     {
-      "astId": 7246,
-      "contract": "src/X402Escrow.sol:X402Escrow",
-      "label": "PERMIT2",
-      "offset": 0,
-      "slot": "6",
-      "type": "t_address"
-    },
-    {
       "astId": 7252,
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "escrows",
       "offset": 0,
-      "slot": "7",
+      "slot": "6",
       "type": "t_mapping(t_address,t_struct(Escrow)7217_storage)"
     },
     {
@@ -69,7 +61,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "totalEscrowed",
       "offset": 0,
-      "slot": "8",
+      "slot": "7",
       "type": "t_uint128"
     },
     {
@@ -77,7 +69,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "delegations",
       "offset": 0,
-      "slot": "9",
+      "slot": "8",
       "type": "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)7233_storage))"
     },
     {
@@ -85,7 +77,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "delegateList",
       "offset": 0,
-      "slot": "10",
+      "slot": "9",
       "type": "t_mapping(t_address,t_array(t_address)dyn_storage)"
     },
     {
@@ -93,7 +85,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "priorEscrowCaps",
       "offset": 0,
-      "slot": "11",
+      "slot": "10",
       "type": "t_mapping(t_address,t_struct(PriorCaps)7277_storage)"
     },
     {
@@ -101,7 +93,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "priorDelegateCaps",
       "offset": 0,
-      "slot": "12",
+      "slot": "11",
       "type": "t_mapping(t_address,t_mapping(t_address,t_struct(PriorCaps)7277_storage))"
     },
     {
@@ -109,7 +101,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "heldPayments",
       "offset": 0,
-      "slot": "13",
+      "slot": "12",
       "type": "t_mapping(t_address,t_mapping(t_uint64,t_struct(HeldPayment)7310_storage))"
     },
     {
@@ -117,7 +109,7 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "totalHeld",
       "offset": 0,
-      "slot": "14",
+      "slot": "13",
       "type": "t_uint128"
     },
     {
@@ -125,8 +117,8 @@
       "contract": "src/X402Escrow.sol:X402Escrow",
       "label": "__gap",
       "offset": 0,
-      "slot": "15",
-      "type": "t_array(t_uint256)44_storage"
+      "slot": "14",
+      "type": "t_array(t_uint256)45_storage"
     }
   ],
   "types": {
@@ -140,12 +132,6 @@
       "label": "address[]",
       "numberOfBytes": "32",
       "base": "t_address"
-    },
-    "t_array(t_uint256)44_storage": {
-      "encoding": "inplace",
-      "label": "uint256[44]",
-      "numberOfBytes": "1408",
-      "base": "t_uint256"
     },
     "t_bool": {
       "encoding": "inplace",
@@ -501,6 +487,20 @@
       "encoding": "inplace",
       "label": "uint64",
       "numberOfBytes": "8"
+    },
+    "t_array(t_uint256)45_storage": {
+      "encoding": "inplace",
+      "label": "uint256[45]",
+      "numberOfBytes": "1440",
+      "base": "t_uint256"
     }
+  },
+  "_redeploy": {
+    "reason": "Fresh deployment (D-22): the testnet proxies are abandoned, so no live layout exists. PERMIT2 (slot 6) is removed, every later field moves up one slot, and __gap grows 44 -> 45 so the footprint still ends at slot 58.",
+    "at": "2026-10-19T00:00:00Z",
+    "refusedBecause": [
+      "PERMIT2 was removed; escrows..totalHeld moved from slots 7..14 to 6..13; __gap changed type uint256[44] -> uint256[45]"
+    ],
+    "note": "This layout was NOT an append. Every proxy already deployed against the previous snapshot must be REDEPLOYED; upgrading one to this layout corrupts its storage."
   }
 }

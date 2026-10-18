@@ -154,8 +154,7 @@ contract SystemHandler is Test {
                         (
                             IX402Config(address(config)),
                             IX402StakeView(address(stake)),
-                            IERC20(address(usdg)),
-                            address(0)
+                            IERC20(address(usdg))
                         )
                     )
                 )

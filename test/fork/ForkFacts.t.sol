@@ -99,14 +99,6 @@ contract ForkFactsTest is ForkFixture {
         assertEq(abi.decode(ret, (uint8)), 6);
     }
 
-    function test_permit2IsTheCanonicalSingletonWithItsRealDomain() public view {
-        assertEq(CANONICAL_PERMIT2.code.length, 9152);
-        (bool ok, bytes memory ret) =
-            CANONICAL_PERMIT2.staticcall(abi.encodeWithSignature("DOMAIN_SEPARATOR()"));
-        assertTrue(ok);
-        assertEq(abi.decode(ret, (bytes32)), PERMIT2_DOMAIN_SEPARATOR_46630);
-    }
-
     /// The number every "real USDG is more expensive" sentence in this repo assumed the sign of.
     /// It is recorded, not asserted against a threshold: a fork run has no pinned block, so a
     /// hard bound here would be a gate that goes red for a reason that is not a defect.
