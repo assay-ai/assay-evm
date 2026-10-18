@@ -205,31 +205,15 @@ the unreachability, so this page goes red the day the pin moves.
 
 **Open risk.** Because mainnet USDG could not be probed, we do not know that it is the
 same implementation as testnet's. If the mainnet token *does* answer `DOMAIN_SEPARATOR()`
-or `nonces()`, the Permit2 decision (D-11) still stands — Permit2 ships either way — but
+or `nonces()`, nothing in the contracts changes — no permit path ships either way — but
 the risk register gains a row: the two networks run different token code, and anything
 inferred from testnet about the token must be re-checked.
 
 ---
 
-## 2. Permit2 — present on both networks, byte-identical size
+## 2. Permit2 — not used
 
-The canonical Uniswap Permit2 singleton, `0x000000000022D473030F116dDEE9F6B43aC78BA3`:
-
-```
-$ cast code 0x000000000022D473030F116dDEE9F6B43aC78BA3 \
-    --rpc-url https://rpc.mainnet.chain.robinhood.com | tr -d '\n' | wc -c
-18306
-$ cast code 0x000000000022D473030F116dDEE9F6B43aC78BA3 \
-    --rpc-url https://rpc.testnet.chain.robinhood.com | tr -d '\n' | wc -c
-18306
-```
-
-18,306 characters = `0x` + 18,304 hex digits = **9,152 bytes**, the expected figure and the
-same on both chains. (Counted with the trailing newline stripped; a bare `| wc -c` reports
-18307 because `cast` prints one.)
-
-This is the measurement D-11 rests on: the token offers neither EIP-2612 nor EIP-3009, and
-Permit2 is deployed, so Permit2 is the pull-payment path.
+The contracts have no Permit2 path (D-11, D-18): a buyer funds with `approve` + `depositFor`.
 
 ---
 

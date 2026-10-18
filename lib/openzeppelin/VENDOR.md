@@ -14,7 +14,7 @@ in OZ 5.x, so the UUPS decision (D-1) adds files here, not a second dependency.
 
 ## Files
 
-The 25 files the contracts import directly, plus 6 more that the first 25 `import` and that were
+The 23 files the contracts import directly, plus 6 more that the first 23 `import` and that were
 therefore required to close the graph — without them nothing compiles:
 
     interfaces/IERC1363.sol          <- token/ERC20/utils/SafeERC20.sol
@@ -26,8 +26,8 @@ therefore required to close the graph — without them nothing compiles:
 
 They are from the same tag and the same commit as the rest; adding them widens the copied
 file set, not the dependency. The vendored set is *exactly* the transitive import closure of
-the 25 seeds at v5.1.0 — nothing spare, nothing missing — and that closure is a property of
-the pinned tag, not of the library: on OZ `master` it is 35 files. `MANIFEST` lists all 31;
+the 23 seeds at v5.1.0 — nothing spare, nothing missing — and that closure is a property of
+the pinned tag, not of the library: on OZ `master` it is 35 files. `MANIFEST` lists all 29;
 the gate reads it.
 
 ## Drift gate

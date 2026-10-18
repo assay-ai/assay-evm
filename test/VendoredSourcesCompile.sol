@@ -29,7 +29,6 @@ pragma solidity 0.8.24;
 //   awk '{gsub(/\.sol$/,"",$0); a=$0; gsub(/[^A-Za-z0-9]/,"_",a); \
 //         print "import \"@openzeppelin/contracts/" $0 ".sol\" as " a ";"}' lib/openzeppelin/MANIFEST
 
-import "@openzeppelin/contracts/interfaces/IERC1271.sol" as interfaces_IERC1271;
 import "@openzeppelin/contracts/interfaces/IERC1363.sol" as interfaces_IERC1363;
 import "@openzeppelin/contracts/interfaces/IERC165.sol" as interfaces_IERC165;
 import "@openzeppelin/contracts/interfaces/IERC1967.sol" as interfaces_IERC1967;
@@ -44,8 +43,6 @@ import "@openzeppelin/contracts/proxy/beacon/IBeacon.sol" as proxy_beacon_IBeaco
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol" as proxy_utils_Initializable;
 import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol" as proxy_utils_UUPSUpgradeable;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol" as token_ERC20_IERC20;
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol" as
-    token_ERC20_extensions_IERC20Permit;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol" as token_ERC20_utils_SafeERC20;
 import "@openzeppelin/contracts/utils/Address.sol" as utils_Address;
 import "@openzeppelin/contracts/utils/Errors.sol" as utils_Errors;

@@ -37,11 +37,6 @@ pragma solidity 0.8.24;
 ///   Execution is all or wait, so a full key window is the same condition as a full provider
 ///   window: retry later.
 ///
-/// Five errors with no producer were removed in D-18 rather than kept for name parity
-/// (`AmountExceedsUint64`, `NotBuyer`, `SignerIsNotVerifier`, `EscrowLimitsRequireBuyer`,
-/// `DestinationIsVault`), with `WalletCheckUnderfunded` (EIP-1271) and `Permit2NotConfigured`
-/// (the Permit2 deposit), whose doors went. `docs/divergences.md` carries the history.
-///
 /// The 48 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
 /// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
 /// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of

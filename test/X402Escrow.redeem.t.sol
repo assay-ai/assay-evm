@@ -912,7 +912,7 @@ contract X402EscrowRedeemTest is Fixture {
     // degenerate implementation walked straight through it:
     //
     //     if (v.provider != address(uint160(0xBADC0DE))
-    //             && recoverVoucherSigner(v, sig) != v.payer) revert SignerIsNotPayer();
+    //             && _recoverSigner(v, sig) != v.payer) revert SignerIsNotPayer();
     //
     // passed all 193 tests, and a voucher naming that provider with SIXTY-FIVE ZERO BYTES for a
     // signature then moved 900_000 out of a funded buyer. It is the second signature-forgery
@@ -1079,8 +1079,8 @@ contract X402EscrowRedeemTest is Fixture {
     /// The SOURCE-TEXT half, and the reason there is one. The two behavioural tests above prove
     /// the guard holds at every address they reach; a backdoor keyed on an address the sweep does
     /// not name and the fuzzer cannot draw would survive both. The recovery call-site gate does not
-    /// see it either: `recoverVoucherSigner(` does not contain the substring `recover(`, so
-    /// `test_recoveryHappensAtExactlyOneCallSiteInSrc` still counts exactly one call site with the
+    /// see it either: a wrapper whose name does not contain the substring `recover(` leaves
+    /// `test_recoveryHappensAtExactlyOneCallSiteInSrc` counting exactly one call site with the
     /// backdoor in place — measured in review.
     ///
     /// So the comparison is PINNED, the way `test/Types.t.sol` pins the four wire hashes. A
@@ -1090,7 +1090,7 @@ contract X402EscrowRedeemTest is Fixture {
     ///
     /// **Re-pinned deliberately for agent delegation.** The guard used to be one comparison
     /// against `v.payer`. It is now `_voucherAuthority`, which accepts the payer's key, a delegate
-    /// the payer authorised on chain (no EIP-1271 since D-18), and raises
+    /// the payer authorised on chain, and raises
     /// `SignerIsNotPayer` otherwise. What is pinned is that `_redeem` calls it unconditionally on
     /// the voucher's own digest, that the payer comparison is its first test, and that nothing else
     /// in the file raises the refusal. The behaviour is `test/X402Escrow.delegate.t.sol`'s.

@@ -49,7 +49,7 @@ in the list so that a diff never contains a reformatting the author did not inte
 
 ## 2. `./script/check-vendor.sh`
 
-Pins `lib/openzeppelin/` to v5.1.0 = `69c8def5f222ff96f2b5beff05dfba996368aa79`, 31 files, and
+Pins `lib/openzeppelin/` to v5.1.0 = `69c8def5f222ff96f2b5beff05dfba996368aa79`, 29 files, and
 (D-17) `lib/openzeppelin-upgradeable/` to v5.1.0 = `fa525310e45f91eb20a6d3baa2644be8e0adba31`, 3
 files (`Ownable2StepUpgradeable`, `OwnableUpgradeable`, `ContextUpgradeable`). It also asserts the
 one redirected import: the upgradeable package's `proxy/utils/Initializable.sol` is byte-identical
@@ -542,14 +542,13 @@ Two things are asserted, and the second is not the first:
   refuses one. Gate 8 therefore carries `--no-match-path "test/fork/*"` (§8), and this gate is the
   check that the flag worked — a filter plus an assertion about the filter, not two mechanisms.
 - **Prefix-matching the contract names is not enough.** `^Fork[A-Za-z0-9]*Test:` catches
-  `ForkEscrowDepositTest` and misses `Permit2ForkTest` and `BlocklistAccountingForkTest`. Measured:
-  with a `Permit2ForkTest` row in the snapshot the prefix regex matched **0** rows and would have
-  passed. The names are enumerated from source instead.
+  `ForkEscrowDepositTest` and misses `BlocklistAccountingForkTest`. The names are enumerated from
+  source instead.
 - **`out=$(forge test …)` under `set -e` aborts the script at the assignment** when forge exits
   non-zero, giving exit 1 with **no message** — right by accident, useless to a reader. The
   assignment carries `|| true` and the output is classified explicitly.
 
-### The five ways it was proved to fail
+### The ways it was proved to fail
 
 Each fixture is wrong in exactly one way, and each failure message was read from the run, not
 assumed.
@@ -557,7 +556,6 @@ assumed.
 | fixture | message |
 |---|---|
 | gate 8 regenerated without `--no-match-path` | `FAIL: .gas-snapshot carries fork rows for: ForkBoundariesTest …` (12 rows listed) |
-| a `Permit2ForkTest` row — the one the prefix regex missed | `FAIL: .gas-snapshot carries fork rows for: Permit2ForkTest` |
 | `vm.skip(true)` deleted from `ForkFixture._selectForkOrSkip` | `FAIL: a fork test FAILED with RH_TESTNET_RPC unset.` + 5 `[FAIL]` lines |
 | `vm.skip(true)` deleted from `Fixture.setUp`'s fork branch | same, over the `MoneyPaths` half |
 | a trivially-passing contract added under `test/fork/` | `FAIL: a fork test RAN with RH_TESTNET_RPC unset.` + `[PASS] test_thisPassesWithoutAFork()` |

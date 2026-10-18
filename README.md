@@ -97,7 +97,7 @@ produces):
 | optimizer | on, **200** runs, `via_ir = true` |
 | metadata | `bytecode_hash = "ipfs"`, `cbor_metadata = true`: solc appends a CBOR metadata hash, so any source change, comments included, changes the bytecode. Verify with **standard-JSON input** (below) or metadata matching |
 | remappings | `auto_detect_remappings = false` plus an explicit `remappings.txt`, so one dependency cannot compile under two spellings |
-| OpenZeppelin | copy-vendored under `lib/openzeppelin/`, pinned to v5.1.0 (`69c8def5f222ff96f2b5beff05dfba996368aa79`), 31 files, checked by `./script/check-vendor.sh` |
+| OpenZeppelin | copy-vendored under `lib/openzeppelin/`, pinned to v5.1.0 (`69c8def5f222ff96f2b5beff05dfba996368aa79`), 29 files, checked by `./script/check-vendor.sh` |
 | forge-std | copy-vendored under `lib/forge-std/`, see `lib/forge-std/VENDOR.md` |
 | `[fmt]` | `line_length = 100` |
 

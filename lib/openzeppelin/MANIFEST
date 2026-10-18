@@ -1,4 +1,3 @@
-interfaces/IERC1271.sol
 interfaces/IERC1363.sol
 interfaces/IERC165.sol
 interfaces/IERC1967.sol
@@ -13,7 +12,6 @@ proxy/beacon/IBeacon.sol
 proxy/utils/Initializable.sol
 proxy/utils/UUPSUpgradeable.sol
 token/ERC20/IERC20.sol
-token/ERC20/extensions/IERC20Permit.sol
 token/ERC20/utils/SafeERC20.sol
 utils/Address.sol
 utils/Errors.sol

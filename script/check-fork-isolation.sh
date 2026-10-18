@@ -11,8 +11,7 @@
 #
 # **The fork contract names are ENUMERATED FROM THE SOURCE, not matched by prefix.** The original
 # design grepped `^Fork[A-Za-z0-9]*Test:`. That catches `ForkEscrowDepositTest` and misses
-# `BlocklistAccountingForkTest` and `Permit2ForkTest` — two of the fork contracts this repo
-# actually has. A gate that silently covers a subset of what its name claims is a known
+# `BlocklistAccountingForkTest`, one of the fork contracts this repo actually has. A gate that silently covers a subset of what its name claims is a known
 # failure mode: green while answering a narrower question than its name claims. Reading the
 # names out of
 # `test/fork/*.sol` covers every contract that exists and every one added later, and it cannot

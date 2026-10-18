@@ -174,10 +174,8 @@ library VoucherSigner {
     /// Recover the address whose key produced `sig` over `v` under `domainSeparator`.
     ///
     /// `Upgrade.t.sol` needs this: the negative upgrade test asks whether a voucher signed under
-    /// the OLD domain still recovers to the buyer under the NEW one, and at that point in the test
-    /// the proxy no longer carries `recoverVoucherSigner` — the implementation behind it has been
-    /// replaced by one that has no such function. Asking the contract is not an option, so the
-    /// question is asked here.
+    /// the OLD domain still recovers to the buyer under the NEW one. The contract exports no
+    /// recovery view, so the question is asked here.
     ///
     /// It uses OZ's `ECDSA.recover` rather than a bare `ecrecover`, so `script/check-ecrecover.sh`
     /// keeps meaning what it says: `ecrecover` is spelled in exactly one place in this repo.

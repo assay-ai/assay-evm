@@ -16,32 +16,25 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {Voucher, ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
 
-/// Design decision D-1, executed. The contracts are upgradeable by design decision D-1
-/// — for parity with the Solana program's `BPFLoaderUpgradeable` authority — and the
-/// parity claim is only true if three things hold: only the admin upgrades, `initialize` runs
-/// exactly once and never on an implementation, and **an upgrade preserves both the storage and
-/// the EIP-712 domain separator**, so a voucher signed before it redeems after it.
+/// Design decision D-1, executed. The contracts are upgradeable UUPS proxies, and that is only
+/// safe if three things hold: only the owner upgrades (D-17), `initialize` runs exactly once and
+/// never on an implementation, and **an upgrade preserves both the storage and the EIP-712 domain
+/// separator**, so a voucher signed before it redeems after it.
 ///
 /// # What this file does NOT re-prove, and where those proofs live
 ///
-/// The standing no-untested-guard rule pulled two of the three rows that belong here forward
-/// into the changes that shipped the guards, so they are already measured:
-///
-/// - `X402Config._authorizeUpgrade`'s `onlyAdmin` — `X402Config.admin.t.sol`
-///   `test_wrongSigner_onlyTheAdminUpgradesConfig`, mutation row **C6**.
+/// - `X402Config._authorizeUpgrade`'s `onlyOwner` — `X402Config.admin.t.sol`
+///   `test_wrongSigner_onlyTheOwnerUpgradesConfig`, mutation row **C6**.
 /// - `X402Config`'s `_disableInitializers()` — same file,
 ///   `test_wrongState_theImplementationCannotBeInitialised`, row **C7**.
 /// - `X402Escrow._authorizeUpgrade` and its `_disableInitializers()` —
-///   `X402Escrow.deposit.t.sol`, rows **E7**, **E8**, and **E19** for the live `CONFIG.admin()`
+///   `X402Escrow.deposit.t.sol`, rows **E7**, **E8**, and **E19** for the live `CONFIG.owner()`
 ///   read.
 ///
 /// `test_theEarlierAuthorityProofsStillHold` re-asserts those four in one place so that a reader
 /// of this file can see they hold without taking it on trust, and so deleting one of the earlier
-/// tests cannot silently remove the property.
-///
-/// **`X402Stake` had neither proof.** It has no upgrade test and no initializer test anywhere in
-/// the suite before this file, so its three guards are genuinely this task's, and rows S1–S3 in
-/// `MUTATION-LOG.md` are new coverage rather than a second copy.
+/// tests cannot silently remove the property. `X402Stake`'s three guards are proved here (rows
+/// S1–S3 in `MUTATION-LOG.md`).
 contract UpgradeTest is Fixture {
     address internal attacker = address(0xBAD1);
 
@@ -53,7 +46,7 @@ contract UpgradeTest is Fixture {
         return address(uint160(uint256(vm.load(proxy, IMPL_SLOT))));
     }
 
-    // --- (a) only the admin upgrades --------------------------------------------------------
+    // --- (a) only the owner upgrades --------------------------------------------------------
 
     /// **X402Stake's upgrade door, proved for the first time.** The other two are proved in
     /// `X402Config.admin.t.sol` and the escrow suite; this one had no test at all, which is why the

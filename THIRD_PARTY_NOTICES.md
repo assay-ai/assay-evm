@@ -24,7 +24,7 @@ in this repository:
 
 - Upstream: https://github.com/OpenZeppelin/openzeppelin-contracts
 - Version: v5.1.0 (commit `69c8def5f222ff96f2b5beff05dfba996368aa79`)
-- Location: `lib/openzeppelin/` (31 files, listed in `lib/openzeppelin/MANIFEST`)
+- Location: `lib/openzeppelin/` (29 files, listed in `lib/openzeppelin/MANIFEST`)
 - Licence: MIT. Each vendored file carries its `SPDX-License-Identifier: MIT` header.
 
 The full licence text, including OpenZeppelin's copyright notice, copied verbatim from the
