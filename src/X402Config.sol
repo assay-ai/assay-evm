@@ -44,7 +44,8 @@ import "./Errors.sol";
 /// - **`admin`** — operational and used often: `updateConfig`, `setPaused`, the verifier registry,
 ///   and `cancelSlash` on X402Stake. Every value it sets is bounded by `_validate`.
 ///   It can neither upgrade anything nor appoint its successor. It appoints the arbiter
-///   (`setArbiter`), sets the slash delay (`setSlashDelay`) and blocks or unblocks addresses.
+///   (`setArbiter`), sets the slash delay (`setSlashDelay`) and the escrow's collect hold
+///   (`setCollectHold`), and blocks or unblocks addresses.
 /// - **`arbiter`** — a person's wallet (or a Safe), never the backend. It rules on a disputed
 ///   slash (`X402Stake.upholdSlash`), cancels a pending or disputed one (`cancelSlash`, beside
 ///   the admin) and may BLOCK an address — never unblock it. It reads `address(0)` only before
@@ -613,6 +614,39 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         if (_blocked[a] || _blocked[b] || _blocked[c]) revert AddressBlocked();
     }
 
+    // -------------------------------------------------------------------------------------
+    // redeem into hold — the collect hold (EVM only)
+    // -------------------------------------------------------------------------------------
+
+    /// The admin-set collect hold; `0` means never set, which reads back as the default.
+    /// Appended storage, paid for out of `__gap`.
+    uint64 internal _collectHoldSeconds;
+
+    event CollectHoldSet(uint64 previous, uint64 next);
+
+    /// How long `X402Escrow` keeps a NEW redemption in `held` before the redeemer may collect it
+    /// to the provider, and so how long a buyer dispute can still be refunded for certain. A
+    /// record already held keeps the `collectableAt` frozen into it.
+    ///
+    /// Reads back as `Constants.DEFAULT_COLLECT_HOLD_SECONDS` until set, so an upgraded proxy
+    /// holds for an hour with no initializer call (the [`slashDelaySeconds`] pattern).
+    function collectHoldSeconds() public view override returns (uint64) {
+        uint64 h = _collectHoldSeconds;
+        return h == 0 ? Constants.DEFAULT_COLLECT_HOLD_SECONDS : h;
+    }
+
+    /// Fixed bounds, `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]` (1 min to 1 day). A
+    /// stolen admin key can shorten the hold to a minute, never to zero, and it moves no money:
+    /// the refund stays open until `collectableAt + HELD_TIMEOUT_SECONDS` whatever the hold.
+    function setCollectHold(uint64 newHold) external onlyAdmin {
+        if (
+            newHold < Constants.MIN_COLLECT_HOLD_SECONDS
+                || newHold > Constants.MAX_COLLECT_HOLD_SECONDS
+        ) revert InvalidCollectHold();
+        emit CollectHoldSet(collectHoldSeconds(), newHold);
+        _collectHoldSeconds = newHold;
+    }
+
     /// The append budget the D-7 upgrade-safety gate spends. Every contract here ends with
     /// one, and adding a field means shrinking it by exactly the slots the field consumes.
     ///
@@ -626,5 +660,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     ///
     /// **49 → 47 for the dispute upgrade**: `arbiter` + `_slashDelaySeconds` share one slot and
     /// `_blocked` is one mapping slot.
-    uint256[47] private __gap;
+    ///
+    /// **47 → 46 for the redeem-into-hold change**: `_collectHoldSeconds` takes one slot (the
+    /// `arbiter` slot has 4 bytes left, too few for a `uint64`).
+    uint256[46] private __gap;
 }

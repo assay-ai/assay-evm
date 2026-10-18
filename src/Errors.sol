@@ -16,7 +16,7 @@ pragma solidity 0.8.24;
 /// # The accounting against `error.rs`, in full
 ///
 /// `error.rs` declares **55** `ErrorCode` variants. **46** of them appear below under the same
-/// name, and **45** errors below have no Anchor counterpart at all. The remaining **9** are
+/// name, and **49** errors below have no Anchor counterpart at all. The remaining **9** are
 /// absent, and named here so that "the port is complete" is a claim a reader can check. (The
 /// counts are the output of a set difference over the two files, as `script/check-errors.sh`
 /// computes it; if you change either file, redo it rather than adjusting these by one.)
@@ -42,11 +42,12 @@ pragma solidity 0.8.24;
 /// `DestinationIsVault`), with `WalletCheckUnderfunded` (EIP-1271) and `Permit2NotConfigured`
 /// (the Permit2 deposit), whose doors went. `docs/divergences.md` carries the history.
 ///
-/// The 45 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+/// The 49 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
 /// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
 /// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
-/// voucher delegation, the four of the owner/admin split and the seq jump cap, and the eleven of
-/// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay).
+/// voucher delegation, the four of the owner/admin split and the seq jump cap, the eleven of
+/// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), and the four of the
+/// redeem-into-hold change (held status, collect and refund timing, settable collect hold).
 ///
 /// The six PDA seed constants in `constants.rs:5-60` have no counterpart in `Constants.sol` for
 /// the same kind of reason; that omission is recorded there, not here.
@@ -252,3 +253,15 @@ error ArbiterCannotUnblock();
 /// `setArbiter(address(0))`, or any role writer that would make the arbiter the admin, the
 /// redeemer or a live verifier (`X402Config._assertRolesDistinct`).
 error InvalidArbiter();
+
+// --- redeem into hold (EVM only) -------------------------------------------------
+/// `collectHeld` or `refundHeld` on a record that is not `Held`: never redeemed, or already
+/// collected or refunded. A record leaves `Held` exactly once.
+error HeldPaymentNotHeld();
+/// `collectHeld` too early for its caller: before `collectableAt` for the redeemer, before
+/// `collectableAt + HELD_TIMEOUT_SECONDS` for anybody else.
+error HeldNotYetCollectable();
+/// `refundHeld` at or after `collectableAt + HELD_TIMEOUT_SECONDS`: only a collect remains.
+error HeldRefundWindowClosed();
+/// `setCollectHold` outside `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]`.
+error InvalidCollectHold();

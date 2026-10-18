@@ -65,6 +65,28 @@ library Constants {
     /// call can make an already-admitted voucher unredeemable before its deadline.
     uint64 internal constant TIGHTEN_DELAY_SECONDS = WITHDRAW_DELAY_SECONDS;
 
+    /// EVM only. The shortest settable collect hold (`X402Config.setCollectHold`): how long a
+    /// redeemed payment waits in `X402Escrow.held` before the redeemer may collect it to the
+    /// provider. One minute, so a testnet run can collect inside a test.
+    uint64 internal constant MIN_COLLECT_HOLD_SECONDS = 60;
+
+    /// EVM only. The longest settable collect hold: one day. A buyer dispute that cannot be
+    /// decided inside a day is still refundable until the timeout below, so a longer hold would
+    /// only delay every undisputed provider payment.
+    uint64 internal constant MAX_COLLECT_HOLD_SECONDS = 86_400;
+
+    /// EVM only. The collect hold `X402Config.collectHoldSeconds()` reads back until the admin
+    /// first sets one, so an upgraded proxy holds every payment for an hour with no initializer
+    /// call — the same shape as [`SLASH_DELAY_SECONDS`].
+    uint64 internal constant DEFAULT_COLLECT_HOLD_SECONDS = 3_600;
+
+    /// EVM only. How long after `collectableAt` a held payment waits for the redeemer. Until then
+    /// only the redeemer may collect or refund it; from then on ANYBODY may collect it, in the
+    /// provider's favour, and the refund door is closed. A hold nobody acts on must not become a
+    /// hold for ever — the same rule as [`DISPUTE_TIMEOUT_SECONDS`], with the silence favouring
+    /// the provider as it does in the slash design.
+    uint64 internal constant HELD_TIMEOUT_SECONDS = 7 * 86_400;
+
     /// constants.rs:215 — `REDEEM_GRACE_SECONDS: i64 = 30 * 60`.
     uint64 internal constant REDEEM_GRACE_SECONDS = 30 * 60;
 

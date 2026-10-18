@@ -436,8 +436,9 @@ contract UpgradeTest is Fixture {
         // renounceOwnership — which always reverts — setAdmin and initializeV2); D-18 removed
         // verifierExpiry. The dispute upgrade added the arbiter, the blocklist and the slash delay
         // (arbiter, setArbiter, blocked, setBlocked, assertActive, slashDelaySeconds,
-        // setSlashDelay); audit F R7 removed slashProviderBps.
-        string[29] memory expected = [
+        // setSlashDelay); audit F R7 removed slashProviderBps. Redeem into hold added
+        // collectHoldSeconds and setCollectHold.
+        string[31] memory expected = [
             "UPGRADE_INTERFACE_VERSION()",
             "acceptOwnership()",
             "admin()",
@@ -446,6 +447,7 @@ contract UpgradeTest is Fixture {
             "assertCanSign(address)",
             "blocked(address)",
             "canSign(address)",
+            "collectHoldSeconds()",
             "initialize((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address,address)",
             "initializeV2()",
             "owner()",
@@ -459,6 +461,7 @@ contract UpgradeTest is Fixture {
             "setAdmin(address)",
             "setArbiter(address)",
             "setBlocked(address,bool)",
+            "setCollectHold(uint64)",
             "setPaused(bool)",
             "setSlashDelay(uint64)",
             "slashDelaySeconds()",
@@ -466,13 +469,13 @@ contract UpgradeTest is Fixture {
             "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)",
             "upgradeToAndCall(address,bytes)",
             "verifierKey(address)",
-            "" // the 29th slot is deliberately empty: a 29th function makes this test red
+            "" // the 31st slot is deliberately empty: a 31st function makes this test red
         ];
-        string[] memory dyn = new string[](29);
-        for (uint256 i = 0; i < 29; i++) {
+        string[] memory dyn = new string[](31);
+        for (uint256 i = 0; i < 31; i++) {
             dyn[i] = expected[i];
         }
-        _assertSurface("X402Config", 28, dyn);
+        _assertSurface("X402Config", 30, dyn);
     }
 
     function test_theStakeFunctionSurfaceIsPinnedByName() public view {

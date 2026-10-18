@@ -44,6 +44,10 @@ interface IX402Config {
     /// provider's dispute window. `Constants.SLASH_DELAY_SECONDS` until the admin sets it.
     function slashDelaySeconds() external view returns (uint64);
 
+    /// How long `X402Escrow` holds a new redemption before the redeemer may collect it, frozen
+    /// into each record's `collectableAt`. `Constants.DEFAULT_COLLECT_HOLD_SECONDS` until set.
+    function collectHoldSeconds() external view returns (uint64);
+
     /// Whether the blocklist names `account`.
     function blocked(address account) external view returns (bool);
 
