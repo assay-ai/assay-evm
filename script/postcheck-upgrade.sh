@@ -16,6 +16,9 @@
 #   EXPECTED_SLASH_DELAY              (optional) config.slashDelaySeconds(); 259200 right after
 #                                     the dispute upgrade (runbook §7.5)
 #   EXPECTED_ARBITER                  (optional) config.arbiter(); 0x0…0 for "none"
+#   EXPECTED_COLLECT_HOLD             (optional) config.collectHoldSeconds(); 3600 right after the
+#                                     redeem-into-hold upgrade (runbook §7.6)
+#   EXPECTED_TOTAL_HELD               (optional) escrow.totalHeld(); 0 right after that upgrade
 #
 # Exit 0 when every check given holds; non-zero naming the first that does not.
 set -euo pipefail
@@ -60,5 +63,15 @@ if [ -n "${EXPECTED_ARBITER:-}" ]; then
   got=$(cast call --rpc-url "$RPC" "$PROXY_CONFIG" 'arbiter()(address)') || fail "config has no arbiter()"
   [ "$(lc "$got")" = "$(lc "$EXPECTED_ARBITER")" ] || fail "config.arbiter() is $got, want $EXPECTED_ARBITER"
   pass "config.arbiter() = $got"
+fi
+if [ -n "${EXPECTED_COLLECT_HOLD:-}" ]; then
+  got=$(cast call --rpc-url "$RPC" "$PROXY_CONFIG" 'collectHoldSeconds()(uint64)') || fail "config has no collectHoldSeconds() — the hold upgrade of Config did not land"
+  [ "${got%% *}" = "$EXPECTED_COLLECT_HOLD" ] || fail "config.collectHoldSeconds() is $got, want $EXPECTED_COLLECT_HOLD"
+  pass "config.collectHoldSeconds() = $got"
+fi
+if [ -n "${EXPECTED_TOTAL_HELD:-}" ]; then
+  got=$(cast call --rpc-url "$RPC" "$PROXY_ESCROW" 'totalHeld()(uint128)') || fail "escrow has no totalHeld() — the hold upgrade of Escrow did not land"
+  [ "${got%% *}" = "$EXPECTED_TOTAL_HELD" ] || fail "escrow.totalHeld() is $got, want $EXPECTED_TOTAL_HELD"
+  pass "escrow.totalHeld() = $got"
 fi
 echo "  on-chain post-check passed"
