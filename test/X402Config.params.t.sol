@@ -22,11 +22,8 @@ import "../src/Errors.sol";
 ///      literal — killed by the same test, because no literal satisfies two disjoint sets;
 ///   3. a suite made entirely of refusals, which cannot see a precondition the port **invented** —
 ///      an invented rule only ever refuses sets no test sends. `test_updateAddsNoPreconditionThe`
-///      `ReferenceLacks` and `test_handingTheAdminRoleToItselfIsLegalAndANoOp` are the negative
-///      space, on the parameters and on the admin respectively;
-///   4. a guard tested on one of this door's two paths. `newAdmin` splits every call into an
-///      ordinary parameter update (`address(0)`) and a handover, and `onlyAdmin` has to be pinned
-///      on both — see `test_wrongSigner_onlyAdminUpdates`.
+///      `ReferenceLacks` is the negative space;
+///   4. a door with no caller check — killed by `test_wrongSigner_onlyAdminUpdates`.
 ///
 /// Every refusal here also re-asserts the full pre-state. **That is bookkeeping, not a contract
 /// property**: a revert on the EVM rolls everything back whatever the implementation did first, so
@@ -146,7 +143,7 @@ contract X402ConfigParamsTest is Test {
 
         vm.prank(adminBefore);
         vm.expectRevert(selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         _assertParamsEq(config.params(), before, string.concat(tag, " moved a parameter"));
         assertEq(config.admin(), adminBefore, string.concat(tag, " moved the admin"));
@@ -165,7 +162,7 @@ contract X402ConfigParamsTest is Test {
         p.takeRateBps = 2_000;
 
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         assertEq(config.params().takeRateBps, 2_000, "the one field that changed");
         _assertParamsEq(config.params(), p, "the other nine are exactly as sent");
@@ -180,11 +177,11 @@ contract X402ConfigParamsTest is Test {
     /// `updateConfig` that ignores `p` entirely dies on the first assertion of the first update.
     function test_updateWritesTheWholeSetItWasGivenTwiceOver() public {
         vm.prank(admin);
-        config.updateConfig(_other(), address(0));
+        config.updateConfig(_other());
         _assertParamsEq(config.params(), _other(), "first update");
 
         vm.prank(admin);
-        config.updateConfig(_third(), address(0));
+        config.updateConfig(_third());
         _assertParamsEq(config.params(), _third(), "second update");
 
         // and the two sets really are disjoint, so the pair could not both be a literal.
@@ -207,7 +204,7 @@ contract X402ConfigParamsTest is Test {
     function test_handingTheCurrentSetBackUnchangedIsLegalAndChangesNothing() public {
         ParamSet memory current = config.params();
         vm.prank(admin);
-        config.updateConfig(current, address(0));
+        config.updateConfig(current);
         _assertParamsEq(config.params(), _valid(), "a re-send of the current set");
         assertEq(config.admin(), admin, "and it moves no admin");
     }
@@ -216,29 +213,13 @@ contract X402ConfigParamsTest is Test {
     // who may call
     // ---------------------------------------------------------------------------------------
 
-    /// **Both paths through this door, because they are two different calls.** `newAdmin` splits
-    /// `updateConfig` in two: the ordinary parameter update sends `address(0)` and the handover
-    /// sends an address, and a guard can cover one and miss the other.
-    ///
-    /// The first leg is the one that matters and the one an earlier version of this test did not
-    /// have. A guard degraded to `newAdmin != address(0) && msg.sender != admin` lets **any**
-    /// caller rewrite all ten parameters on every ordinary update, and a wrong-signer test that
-    /// only ever hands over cannot see it (mutation log C43).
+    /// A stranger may not rewrite the parameter set, and the refusal moves nothing.
     function test_wrongSigner_onlyAdminUpdates() public {
-        // the ordinary parameter update — no handover, so `newAdmin` is the sentinel.
         vm.prank(stranger);
         vm.expectRevert(NotAdmin.selector);
-        config.updateConfig(_other(), address(0));
+        config.updateConfig(_other());
 
         _assertParamsEq(config.params(), _valid(), "a stranger moved no parameter");
-        assertEq(config.admin(), admin, "and no admin");
-
-        // the handover path.
-        vm.prank(stranger);
-        vm.expectRevert(NotAdmin.selector);
-        config.updateConfig(_other(), next);
-
-        _assertParamsEq(config.params(), _valid(), "the refused handover moved no parameter");
         assertEq(config.admin(), admin, "and no admin");
     }
 
@@ -254,7 +235,7 @@ contract X402ConfigParamsTest is Test {
         swap.slashAgentBps = 3_000;
         swap.slashPlatformBps = 7_000;
         vm.prank(admin);
-        config.updateConfig(swap, address(0)); // must not revert
+        config.updateConfig(swap); // must not revert
         assertEq(config.params().slashPlatformBps, 7_000, "the platform share moved up");
         assertEq(config.params().slashAgentBps, 3_000, "and the agent share moved down");
 
@@ -262,7 +243,7 @@ contract X402ConfigParamsTest is Test {
         bad.slashPlatformBps = 4_001; // 6000 + 4001 > 10000
         vm.prank(admin);
         vm.expectRevert(InvalidSplitBps.selector);
-        config.updateConfig(bad, address(0));
+        config.updateConfig(bad);
     }
 
     /// **Every** bound `state.rs::Config::validate` states is reached through *this* door too, by
@@ -332,7 +313,7 @@ contract X402ConfigParamsTest is Test {
         p.penaltyAmount = uint64(uint256(p.minimumStake) * p.slashCapBps / 10_000 / 2);
         if (p.verifierDailyCap < 2 * p.penaltyAmount) p.verifierDailyCap = 2 * p.penaltyAmount;
         vm.prank(config.admin());
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         assertEq(config.params().penaltyAmount, p.penaltyAmount);
     }
 
@@ -350,7 +331,7 @@ contract X402ConfigParamsTest is Test {
         bad.takeRateBps = 3_001;
         vm.prank(admin);
         vm.expectRevert(InvalidTakeRateBps.selector);
-        config.updateConfig(bad, address(0));
+        config.updateConfig(bad);
 
         assertEq(config.admin(), admin, "the admin did not move");
         assertEq(config.params().takeRateBps, 1_000, "and the take rate never landed");
@@ -360,19 +341,6 @@ contract X402ConfigParamsTest is Test {
     // ---------------------------------------------------------------------------------------
     // the admin handover — moved to the OWNER (D-17)
     // ---------------------------------------------------------------------------------------
-
-    /// `updateConfig` keeps its `newAdmin` argument for ABI stability, and every non-zero value is
-    /// refused — the current admin included — and moves nothing.
-    function test_wrongSigner_updateConfigCannotHandTheAdminOver() public {
-        address[2] memory targets = [next, admin];
-        for (uint256 i = 0; i < targets.length; i++) {
-            vm.prank(admin);
-            vm.expectRevert(AdminChangeRequiresOwner.selector);
-            config.updateConfig(_other(), targets[i]);
-            assertEq(config.admin(), admin, "the admin did not move");
-            _assertParamsEq(config.params(), _valid(), "and no parameter landed");
-        }
-    }
 
     /// The owner appoints the admin in one step; the old key is out at once, the new one in.
     function test_happyPath_theOwnerAppointsTheAdminInOneStep() public {
@@ -384,10 +352,10 @@ contract X402ConfigParamsTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(NotAdmin.selector);
-        config.updateConfig(_valid(), address(0));
+        config.updateConfig(_valid());
 
         vm.prank(next);
-        config.updateConfig(_other(), address(0)); // the new admin administers
+        config.updateConfig(_other()); // the new admin administers
         _assertParamsEq(config.params(), _other(), "and the new admin's set landed");
     }
 
@@ -481,7 +449,7 @@ contract X402ConfigParamsTest is Test {
     function _accepted(ParamSet memory p, string memory tag) internal {
         address adminBefore = config.admin();
         vm.prank(adminBefore);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         _assertParamsEq(config.params(), p, tag);
         assertEq(config.admin(), adminBefore, string.concat(tag, ": moved the admin"));
     }
@@ -499,7 +467,7 @@ contract X402ConfigParamsTest is Test {
         vm.expectEmit(true, false, false, true, address(config));
         emit X402Config.ConfigUpdated(admin, _other());
         vm.prank(admin);
-        config.updateConfig(_other(), address(0));
+        config.updateConfig(_other());
 
         // after the OWNER moved the admin, the indexed admin is the new one.
         vm.prank(OWNER);
@@ -507,7 +475,7 @@ contract X402ConfigParamsTest is Test {
         vm.expectEmit(true, false, false, true, address(config));
         emit X402Config.ConfigUpdated(next, _third());
         vm.prank(next);
-        config.updateConfig(_third(), address(0));
+        config.updateConfig(_third());
     }
 
     // ---------------------------------------------------------------------------------------
@@ -523,14 +491,14 @@ contract X402ConfigParamsTest is Test {
         vm.prank(admin);
         config.setPaused(true);
         vm.prank(admin);
-        config.updateConfig(_other(), address(0));
+        config.updateConfig(_other());
         assertTrue(config.paused(), "a paused config stays paused across an update");
         _assertParamsEq(config.params(), _other(), "and the update still landed while paused");
 
         vm.prank(admin);
         config.setPaused(false);
         vm.prank(admin);
-        config.updateConfig(_third(), address(0));
+        config.updateConfig(_third());
         assertFalse(config.paused(), "an unpaused config stays unpaused across an update");
     }
 }

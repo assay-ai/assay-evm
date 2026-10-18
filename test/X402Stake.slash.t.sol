@@ -230,7 +230,7 @@ contract X402StakeSlashTest is Fixture {
         ParamSet memory p = config.params();
         p.slashCapBps = 500;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         assertEq(stake.slashRecordOf(bytes32("r1")).capAllowance, 100_000_000);
         // and the NEXT proposal reads the new one.
         _propose(bytes32("r2"), 1_000_000);
@@ -267,7 +267,7 @@ contract X402StakeSlashTest is Fixture {
         ParamSet memory p = config.params();
         p.slashCapBps = Constants.MAX_SLASH_CAP_BPS; // 5,000 — half of atRisk
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         address thin = address(0x7417);
         _stakeFor(thin, 2_500_000);
@@ -440,7 +440,7 @@ contract X402StakeSlashTest is Fixture {
         p.slashAgentBps = 1_000; // 10%
         p.slashPlatformBps = 1_000; // 10% — the provider keeps 80%
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         _propose(bytes32("r1"), 1_000_000);
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
@@ -708,7 +708,7 @@ contract X402StakeSlashTest is Fixture {
         p.verifierDailyCap = 1_500_000; // room for one and a half judgements
         p.penaltyAmount = 750_000; // the ceiling for NEW records (G-1: cap >= 2 * penalty)
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
         stake.executeSlash(bytes32("r1")); // the key's window now holds 1_000_000
@@ -736,7 +736,7 @@ contract X402StakeSlashTest is Fixture {
         p.verifierDailyCap = 1_000_000; // room for exactly one
         p.penaltyAmount = 500_000; // the ceiling for NEW records (G-1: cap >= 2 * penalty)
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
         stake.executeSlash(bytes32("r1"));
@@ -771,7 +771,7 @@ contract X402StakeSlashTest is Fixture {
         p.verifierDailyCap = 1_000_000;
         p.penaltyAmount = 500_000; // G-1: cap >= 2 * penalty
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         // The provider is bonded 1,000 USDG, so `capAllowance` is 100 USDG and never binds
         // here: the key's cap is the only ceiling in play.
@@ -859,7 +859,7 @@ contract X402StakeSlashTest is Fixture {
         p.verifierDailyCap = 1_000_000;
         p.penaltyAmount = 500_000; // G-1: cap >= 2 * penalty
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         _propose(bytes32("r1"), 400_000);
         _propose(bytes32("r2"), 400_000);

@@ -182,10 +182,10 @@ contract X402ConfigArbiterTest is Fixture {
         p.unbondingPeriodSeconds = Constants.MIN_UNBONDING_PERIOD_SECONDS - 1;
         vm.prank(admin);
         vm.expectRevert(UnbondingPeriodTooShort.selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         p.unbondingPeriodSeconds = Constants.MIN_UNBONDING_PERIOD_SECONDS;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         assertEq(config.params().unbondingPeriodSeconds, Constants.MIN_UNBONDING_PERIOD_SECONDS);
     }
 

@@ -114,7 +114,7 @@ contract X402EscrowHoldTest is Fixture {
         ParamSet memory p = config.params();
         p.takeRateBps = bps;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
     }
 
     function _one(address a) internal pure returns (address[] memory r) {
@@ -468,7 +468,7 @@ contract X402EscrowHoldTest is Fixture {
         ParamSet memory p = config.params();
         p.treasury = newTreasury;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         vm.warp(h.collectableAt);
         _collectAs(redeemer, 1);
         assertEq(usdg.balanceOf(newTreasury), 25_000);

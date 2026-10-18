@@ -655,7 +655,7 @@ contract X402EscrowRedeemTest is Fixture {
         p.treasury = newTreasury;
         p.takeRateBps = 2_500;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         Voucher memory v = _v(400_000, 1);
         vm.expectEmit(true, true, true, true, address(escrow));
@@ -675,7 +675,7 @@ contract X402EscrowRedeemTest is Fixture {
         ParamSet memory p = config.params();
         p.takeRateBps = 0;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         _redeem(_v(400_000, 1));
         assertEq(usdg.balanceOf(provider), 400_000);
@@ -695,7 +695,7 @@ contract X402EscrowRedeemTest is Fixture {
         ParamSet memory p = config.params();
         p.takeRateBps = 0;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         usdg.setBlocked(treasury, true);
 
         _redeem(_v(400_000, 1));
@@ -836,7 +836,7 @@ contract X402EscrowRedeemTest is Fixture {
         ParamSet memory p = config.params();
         p.redeemer = address(evil);
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         Voucher memory v = _v(250_000, 1);
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, e2.DOMAIN_SEPARATOR(), v);

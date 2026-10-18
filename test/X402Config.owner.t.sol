@@ -44,7 +44,7 @@ contract X402ConfigOwnerTest is Fixture {
         for (uint256 i = 0; i < refused.length; i++) {
             vm.startPrank(refused[i]);
             vm.expectRevert(NotAdmin.selector);
-            config.updateConfig(p, address(0));
+            config.updateConfig(p);
             vm.expectRevert(NotAdmin.selector);
             config.setPaused(true);
             vm.expectRevert(NotAdmin.selector);
@@ -57,7 +57,7 @@ contract X402ConfigOwnerTest is Fixture {
         }
 
         vm.startPrank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         config.setPaused(true);
         config.setPaused(false);
         config.registerVerifier(address(0xF1), bytes32("k"), uint64(block.timestamp + 1));

@@ -1300,7 +1300,7 @@ contract SystemHandler is Test {
         // stay reachable alongside the ones it refuses.
         p.minimumStake = uint64(bound(callerSeed >> 8, 0, 2_000_000_000));
         bool s =
-            _call(caller, address(config), abi.encodeCall(X402Config.updateConfig, (p, address(0))));
+            _call(caller, address(config), abi.encodeCall(X402Config.updateConfig, (p)));
         if (s && caller != _admin()) _violate("role", "updateConfig by a non-admin");
     }
 

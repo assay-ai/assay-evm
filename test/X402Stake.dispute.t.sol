@@ -247,7 +247,7 @@ contract X402StakeDisputeTest is Fixture {
         p.penaltyAmount = 200_000; // G-1: cap >= 2 * penalty
         p.verifierDailyCap = 400_000;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         vm.expectRevert(SlashWindowNotDrained.selector);
         stake.executeSlash(ID);
@@ -703,7 +703,7 @@ contract X402StakeDisputeTest is Fixture {
         ParamSet memory p = config.params();
         p.penaltyAmount = 1_000; // 64 reservations must fit under the cap allowance
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         uint256 n = Constants.MAX_SLASH_BATCH;
         bytes32[] memory ids = new bytes32[](n);

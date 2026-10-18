@@ -82,7 +82,7 @@ contract AuditDFindingsTest is Fixture {
         p.redeemer = arb;
         vm.prank(admin);
         vm.expectRevert(InvalidArbiter.selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         address r = config.params().redeemer;
         vm.prank(admin);
@@ -98,7 +98,7 @@ contract AuditDFindingsTest is Fixture {
         ParamSet memory p = config.params();
         p.slashCapBps = 5_000;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         address whale = address(0x3A1E);
         for (uint256 i = 0; i < 3; i++) {
             _fund(address(this), type(uint64).max);

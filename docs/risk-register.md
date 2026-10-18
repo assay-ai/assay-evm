@@ -135,8 +135,8 @@ owner replaces the admin (`setAdmin`) and the fresh admin revokes the rogue key 
 
 **Now:** the roles are split.
 
-- A wrong ADMIN is recoverable: the owner calls `setAdmin` again. `updateConfig` can no longer
-  hand the admin over at all (`AdminChangeRequiresOwner`).
+- A wrong ADMIN is recoverable: the owner calls `setAdmin` again. `updateConfig` takes only
+  the parameter set and cannot hand the admin over at all.
 - A wrong OWNER proposal is recoverable: `transferOwnership` only proposes. The address takes
   nothing until it calls `acceptOwnership`, and an address nobody controls never does. A second
   proposal replaces the first, and `transferOwnership(address(0))` cancels it.

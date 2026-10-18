@@ -32,7 +32,7 @@ the Anchor program.
 | 10 | Hardening §5.4 | `cancelSlash` is **admin-signed**, not verifier-attested | **the shipped `cancel_slash.rs`.** A verifier-signed cancel would mean a leaked verifier key — the thing the whole two-phase design assumes — could void every honest judgement in flight |
 | 11 | §C.5 | `ASSET_SUPPORTS_3009` / `_2612` are **not built** | **measured on chain** (`chain-facts.md`): both are absent from USDG, so the flags would be dead code |
 | 12 | file naming | Solidity files are PascalCase (`X402Escrow.sol`), unlike the kebab-case file names used in the sibling TypeScript repositories | **the Solidity toolchain.** `forge inspect` and every verification path key on the contract name matching the file name |
-| 13 | §C.3, Anchor `Config` | **two roles, two-step owner (D-17).** The upgrade authority and the admin are split again, as on Solana (BPF-loader authority vs `Config.admin`): `owner()` is OpenZeppelin `Ownable2Step`, never renounceable, and it appoints the admin with `setAdmin`. `update_config`'s one-step admin handover is closed (`AdminChangeRequiresOwner`) | **code** (D-17) |
+| 13 | §C.3, Anchor `Config` | **two roles, two-step owner (D-17).** The upgrade authority and the admin are split again, as on Solana (BPF-loader authority vs `Config.admin`): `owner()` is OpenZeppelin `Ownable2Step`, never renounceable, and it appoints the admin with `setAdmin`. `update_config`'s one-step admin handover does not exist here: `updateConfig(ParamSet)` takes no admin | **code** (D-17) |
 | 14 | §C.2 | `SlashStatus` has no `Expired` member; expiry is `Cancelled` + `CancelReason` on the event | **code**, matching the Anchor enum |
 | 15 | §C.5 / measured | a plain ERC-20 `transfer` to the escrow contract credits nobody — every deposit goes through `deposit*` | **code** (`test_donationsDoNotBecomeAnybodysBalance`); the spec was corrected |
 | 16 | §C.1, an earlier draft decision | the three contracts are **upgradeable** — UUPS proxies, immediate, no timelock — for parity with the Solana program's upgrade authority. The upgrade authority is `Config.owner()` since D-17 (it was `Config.admin`) | **code** (D-1, D-17) |
@@ -59,7 +59,7 @@ the Anchor program.
 compare-and-swap argument.** Three lines:
 
 ```solidity
-function updateConfig(ParamSet calldata p, address newAdmin, bytes32 expectedParams)
+function updateConfig(ParamSet calldata p, bytes32 expectedParams)
     external
     onlyAdmin
 {

@@ -122,7 +122,7 @@ contract AuditDSlashEdgesTest is Fixture {
         uint256 floor_ = (2 * uint256(penaltyMax) * 10_000 + cap - 1) / cap;
         if (p.minimumStake < floor_) p.minimumStake = uint64(floor_);
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
     }
 
     /// The penalty larger than the stake, at any size, with any legal cap and split: the
@@ -246,7 +246,7 @@ contract AuditDEscrowEdgesTest is Fixture {
         ParamSet memory p = config.params();
         p.takeRateBps = Constants.MAX_TAKE_RATE_BPS;
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         uint64 M = type(uint64).max;
         for (uint256 i = 0; i < 2; i++) {
             _fund(buyer, M);

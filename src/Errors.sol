@@ -16,7 +16,7 @@ pragma solidity 0.8.24;
 /// # The accounting against `error.rs`, in full
 ///
 /// `error.rs` declares **55** `ErrorCode` variants. **46** of them appear below under the same
-/// name, and **49** errors below have no Anchor counterpart at all. The remaining **9** are
+/// name, and **48** errors below have no Anchor counterpart at all. The remaining **9** are
 /// absent, and named here so that "the port is complete" is a claim a reader can check. (The
 /// counts are the output of a set difference over the two files, as `script/check-errors.sh`
 /// computes it; if you change either file, redo it rather than adjusting these by one.)
@@ -42,10 +42,10 @@ pragma solidity 0.8.24;
 /// `DestinationIsVault`), with `WalletCheckUnderfunded` (EIP-1271) and `Permit2NotConfigured`
 /// (the Permit2 deposit), whose doors went. `docs/divergences.md` carries the history.
 ///
-/// The 49 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+/// The 48 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
 /// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
 /// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
-/// voucher delegation, the four of the owner/admin split and the seq jump cap, the eleven of
+/// voucher delegation, the three of the owner/admin split and the seq jump cap, the eleven of
 /// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), and the four of the
 /// redeem-into-hold change (held status, collect and refund timing, settable collect hold).
 ///
@@ -72,14 +72,9 @@ error ProgramPaused();
 
 // --- authority ---------------------------------------------------------------
 error NotAdmin();
-/// `error.rs:16`. Its Anchor site is `update_config` handing the admin role to the zero key.
-/// **Its EVM producer is `updateConfig`, not [`ParamSet`].** `updateConfig`'s signature
-/// is `updateConfig(ParamSet calldata p, address newAdmin)` — the admin is a separate argument
-/// by design (`newAdmin == address(0)` means "leave the admin alone", so the zero
-/// address doubles as the sentinel exactly as `Pubkey::default()` is refused on Solana). So
-/// `ParamSet` omitting `admin` is correct and only looks like a gap. Also raised by `setAdmin`
-/// for `address(0)`, and by any role writer that would make the admin a live verifier
-/// (`X402Config._assertRolesDistinct`, D-19).
+/// Raised by `initialize` and `setAdmin` for `address(0)`, and by any role writer that would make
+/// the admin a live verifier (`X402Config._assertRolesDistinct`, D-19). `ParamSet` carries no
+/// admin: only the owner's `setAdmin` moves it (D-17).
 error InvalidAdmin();
 error NotRedeemer();
 /// EVM only. The caller of an upgrade on `X402Stake` or `X402Escrow` is not `CONFIG.owner()`.
@@ -89,9 +84,6 @@ error NotOwner();
 /// EVM only. `renounceOwnership` is disabled: an owner of `address(0)` would leave all three
 /// contracts unupgradeable and the admin unreplaceable, for ever.
 error OwnershipCannotBeRenounced();
-/// EVM only. `updateConfig(p, newAdmin)` with a non-zero `newAdmin`. Appointing the admin is the
-/// OWNER's power (`setAdmin`); the admin cannot hand its own role on.
-error AdminChangeRequiresOwner();
 
 // --- parameters --------------------------------------------------------------
 error InvalidTakeRateBps();

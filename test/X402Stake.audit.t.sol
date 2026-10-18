@@ -64,7 +64,7 @@ contract X402StakeAuditTest is Fixture {
         uint256 floor_ = (2 * uint256(penalty) * 10_000 + capBps - 1) / capBps;
         if (p.minimumStake < floor_) p.minimumStake = uint64(floor_);
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
     }
 
     // === fix 1: the cap write-off (A M-1, B B1, C C2) ========================================
@@ -216,14 +216,14 @@ contract X402StakeAuditTest is Fixture {
         p.minimumStake = 9; // 9 * 1000 / 10000 = 0
         vm.prank(admin);
         vm.expectRevert(InvalidMinimumStake.selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         p.minimumStake = 19; // = 1: slashable, but one penalty fills the provider-day
         vm.prank(admin);
         vm.expectRevert(InvalidMinimumStake.selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         p.minimumStake = 20; // = 2: two penalties fit
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         assertEq(config.params().minimumStake, 20);
     }
 
@@ -233,14 +233,14 @@ contract X402StakeAuditTest is Fixture {
         p.verifierDailyCap = 2 * p.penaltyAmount - 1;
         vm.prank(admin);
         vm.expectRevert(InvalidVerifierDailyCap.selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         p.verifierDailyCap = p.penaltyAmount; // one penalty is no longer enough
         vm.prank(admin);
         vm.expectRevert(InvalidVerifierDailyCap.selector);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         p.verifierDailyCap = 2 * p.penaltyAmount; // exactly two is admitted
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
     }
 
     // === audit F R3: the delay is not coupled to the unbonding period ============================
@@ -252,7 +252,7 @@ contract X402StakeAuditTest is Fixture {
         ParamSet memory p = config.params();
         p.unbondingPeriodSeconds = Constants.MIN_UNBONDING_PERIOD_SECONDS;
         vm.startPrank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
         config.setSlashDelay(Constants.MAX_SLASH_DELAY_SECONDS);
         vm.stopPrank();
 

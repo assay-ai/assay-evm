@@ -169,12 +169,9 @@ this gate existed those four numbers were hand-maintained, nothing imported the
 file and no test counted its declarations, so the next error added would have made them quietly
 wrong.
 
-It also lists **errors declared with no `revert` producer in `src/`**. Today that list has five
-entries and every one of them is argued for in `docs/divergences.md`. It is deliberately a report
-and not a failure: `InvalidAdmin` has exactly one producer and the `address(0)` sentinel on the
-`updateConfig` path is the refusal, so a selector-table comparison against the deployed ABI will
-always show an intentional gap there. **A name appearing on that list for the first time is a
-review item** — either it needs a producer or it needs deleting.
+It also lists **errors declared with no `revert` producer in `src/`**. It is deliberately a report
+and not a failure. **A name appearing on that list for the first time is a review item** — either
+it needs a producer or it needs deleting.
 
 **Cannot see** an error produced through a path the line scanner misses (a `revert` assembled in
 assembly, or re-thrown from a `try/catch`). It is a source-text scan, like gate 7's `ecrecover`

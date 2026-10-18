@@ -9,11 +9,8 @@
 # claims, so the header is an assertion rather than a memory.
 #
 # It also reports **errors with no producer** — declared in `Errors.sol` but never reverted
-# anywhere in `src/`. That list is not automatically a failure: `InvalidAdmin` has exactly one
-# producer and the `address(0)` sentinel on the `updateConfig` path is the refusal, so a
-# selector-table comparison against the deployed ABI will show an intentional gap there. A NEW
-# name on the list is a name that either needs a producer or needs deleting; `docs/divergences.md`
-# is where each surviving entry is argued for.
+# anywhere in `src/`. That list is not automatically a failure, but a NEW name on it is a name
+# that either needs a producer or needs deleting.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"

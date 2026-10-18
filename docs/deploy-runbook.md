@@ -430,9 +430,8 @@ set `expiresAt` far enough out to cover that tail.
 cast send <configProxy> "setAdmin(address)" <newAdmin> --rpc-url <rpc> --ledger   # signed by the OWNER
 ```
 
-A wrong address here is recoverable: the owner sends `setAdmin` again. `updateConfig` can no
-longer move the admin (`AdminChangeRequiresOwner` for any non-zero `newAdmin`; always pass
-`address(0)`).
+A wrong address here is recoverable: the owner sends `setAdmin` again. `updateConfig(ParamSet)`
+never moves the admin.
 
 **The owner moves in two steps, and only the second one moves anything:**
 

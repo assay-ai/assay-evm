@@ -459,7 +459,7 @@ contract UpgradeTest is Fixture {
             "setSlashDelay(uint64)",
             "slashDelaySeconds()",
             "transferOwnership(address)",
-            "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address)",
+            "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16))",
             "upgradeToAndCall(address,bytes)",
             "verifierKey(address)",
             "" // the 30th slot is deliberately empty: a 30th function makes this test red

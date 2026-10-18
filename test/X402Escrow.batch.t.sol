@@ -181,7 +181,7 @@ contract ConfigShiftingUSDG {
         if (armed) {
             armed = false;
             shifted = true;
-            X402Config(cfg).updateConfig(next, address(0));
+            X402Config(cfg).updateConfig(next);
         }
         return true;
     }
@@ -815,7 +815,7 @@ contract X402EscrowBatchTest is Fixture {
         ParamSet memory p = config.params();
         p.redeemer = address(evil);
         vm.prank(admin);
-        config.updateConfig(p, address(0));
+        config.updateConfig(p);
 
         bytes32 ds2 = e2.DOMAIN_SEPARATOR();
         Voucher[] memory vs = new Voucher[](2);

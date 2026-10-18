@@ -95,9 +95,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// [`ConfigInitialized`] is: the Anchor event lists each parameter as its own field and
     /// `ParamSet` is exactly that list.
     ///
-    /// `admin` is the **post**-state — `update_config.rs:90` emits `config.admin` after the
-    /// handover has landed, so on a call that hands over, this is the incoming key rather than
-    /// the outgoing one that signed. `slash_provider_bps` is absent for the same reason it is
+    /// `admin` is the admin that signed. `slash_provider_bps` is absent for the same reason it is
     /// absent from [`ConfigInitialized`]: derived from the two shares the event carries.
     event ConfigUpdated(address indexed admin, ParamSet params);
 
@@ -218,14 +216,6 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// move depending on the order the fields arrive in — moving `(6000, 3000)` to
     /// `(3000, 7000)` transits `(6000, 7000)` if `platform` lands first.
     ///
-    /// The admin handover is one step and applied LAST (`update_config.rs:84-87`), so it cannot
-    /// invalidate the checks above it mid-instruction; `address(0)` means "leave it", because
-    /// the zero address is the one nobody can ever sign for. The Anchor original spends an
-    /// explicit `require!(value != Pubkey::default())` on that, because `Some(default)` and
-    /// `None` are distinguishable there; here they are the same value, so the sentinel *is* the
-    /// refusal and `InvalidAdmin` has no producer on this path. (`initialize` keeps it — there
-    /// the zero admin arrives as a plain argument with no sentinel meaning.)
-    ///
     /// No timelock, no pending slot, no two-step handover, by design decision D-1 —
     /// one logic on both chains. `update_config.rs:20-21`: "a 72-hour wait for the adverse
     /// direction was built and retired because it defends against an injected transaction, not
@@ -235,11 +225,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// X402Stake's maturity check will read it live, as `ProviderStake::unbonding_matured` does
     /// (`update_config.rs:23-26`). Decide which you are doing before you sign.
     ///
-    /// **Since D-17 the handover half is closed.** `newAdmin` stays in the signature so the ABI
-    /// and every caller that sends `address(0)` are unchanged, but a non-zero value reverts
-    /// [`AdminChangeRequiresOwner`]: appointing the admin is the owner's `setAdmin`.
-    function updateConfig(ParamSet calldata p, address newAdmin) external onlyAdmin {
-        if (newAdmin != address(0)) revert AdminChangeRequiresOwner();
+    /// It never moves the admin: appointing the admin is the owner's `setAdmin` (D-17).
+    function updateConfig(ParamSet calldata p) external onlyAdmin {
         ParamSet memory q = p; // `_validate` takes memory; one copy on a cold path
         _validate(q);
         _params = q;
