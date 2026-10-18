@@ -21,13 +21,23 @@ import {Voucher, ParamSet} from "./Types.sol";
 import "./Errors.sol";
 
 /// Buyer money. One contract holds every buyer's USDG in one pooled balance, with per-buyer
-/// accounting in storage. Money leaves through exactly two doors — `redeemVoucher` (and its
-/// batch), which needs an EIP-712 voucher over an exact amount for an exact request, signed by
-/// the payer's own key or by a delegate key the payer authorised on chain within caps, and
-/// `withdraw()`, which is msg.sender-only. **No role — not the owner, not the admin, not the
-/// redeemer — has a door that moves a token out of this contract**; the owner's only residual
-/// power over this money is the upgrade itself (D-17, `test/NoTokenDoors.t.sol`). There is no
-/// `closeEscrow`: closing would reset `seqHigh` and replay every in-window voucher.
+/// accounting in storage. Money leaves a buyer's balance through exactly two doors —
+/// `redeemVoucher` (and its batch), which needs an EIP-712 voucher over an exact amount for an
+/// exact request, signed by the payer's own key or by a delegate key the payer authorised on
+/// chain within caps, and `withdraw()`, which is msg.sender-only.
+///
+/// **A redemption pays nobody at once: it moves the amount into a HELD record** (`held`,
+/// "redeem into hold"). The record leaves `Held` exactly once — `collectHeld` pays the provider
+/// and the treasury the split frozen at redemption, `refundHeld` returns the whole amount to the
+/// buyer's balance. The redeemer may collect from `collectableAt` and refund until
+/// `collectableAt + HELD_TIMEOUT_SECONDS`; after that ANYBODY may collect, in the provider's
+/// favour. Neither door can aim the money: the provider is the signed voucher's and the treasury
+/// is Config's.
+///
+/// **No role — not the owner, not the admin, not the redeemer — has a door that moves a token to
+/// an address of its choosing**; the owner's only residual power over this money is the upgrade
+/// itself (D-17, `test/NoTokenDoors.t.sol`). There is no `closeEscrow`: closing would reset
+/// `seqHigh` and replay every in-window voucher.
 ///
 /// # What this is a port of
 ///
@@ -171,6 +181,62 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// revoked before this mapping existed reads `until == 0`, so it stays dead after the upgrade.
     mapping(address => mapping(address => PriorCaps)) internal priorDelegateCaps;
 
+    /// One redeemed payment waiting to be collected or refunded ("redeem into hold"). Two slots.
+    /// `None` is the zero value, so an unredeemed `(payer, seq)` reads as no record; `Held` moves
+    /// exactly once, to `Collected` or to `Refunded`, and neither has an edge back out. Appended
+    /// last-only like [`SlashStatus`]: reordering it would change what a stored record means.
+    enum HeldStatus {
+        None,
+        Held,
+        Collected,
+        Refunded
+    }
+
+    /// `takeRateBps` and `collectableAt` are FROZEN at redemption, so a later `updateConfig` or
+    /// `setCollectHold` changes neither the split nor the clock of a payment already held. The
+    /// treasury is not frozen: it is Config's at collect time, as it was at redemption before.
+    struct HeldPayment {
+        address provider; //          slot 0
+        uint64 amount; //              ↑
+        uint16 takeRateBps; //         ↑
+        HeldStatus status; //          ↑
+        uint64 collectableAt; //      slot 1
+    }
+
+    /// `payer → seq → held payment`. A seq is redeemed at most once per payer (`seqHigh`), so a
+    /// record is written at most once. Appended before `__gap`, which shrank by the two slots this
+    /// mapping and [`totalHeld`] take (D-7). `internal` for [`escrowOf`]'s reason: [`held`]
+    /// returns the struct.
+    mapping(address => mapping(uint64 => HeldPayment)) internal heldPayments;
+
+    /// The sum of every `Held` record's amount: money that has left the buyers' balances and is
+    /// not yet paid out. The solvency statement is `totalEscrowed + totalHeld` (still never
+    /// `balanceOf`, see [`totalEscrowed`]).
+    uint128 public totalHeld;
+
+    /// A redemption landed in hold: `amount` waits in `held[payer][seq]` until `collectableAt`.
+    event PaymentHeld(
+        address indexed payer,
+        uint64 indexed seq,
+        address indexed provider,
+        uint64 amount,
+        uint64 collectableAt
+    );
+
+    /// A held payment was paid out: `providerAmount` to the provider, `fee` to the treasury, by
+    /// the split frozen at redemption. Credit the provider on this event, not on
+    /// [`VoucherRedeemed`].
+    event HeldCollected(
+        address indexed payer,
+        uint64 indexed seq,
+        address indexed provider,
+        uint64 providerAmount,
+        uint64 fee
+    );
+
+    /// A held payment went back to the buyer's balance in full.
+    event HeldRefunded(address indexed payer, uint64 indexed seq, uint64 amount);
+
     /// A hold was written ([`_hold`]): until `until`, a voucher that fits (`maxVoucherAmount`,
     /// `maxPerWindow`) as a pair still redeems where the current caps refuse it. `delegate` is
     /// `address(0)` for the escrow's own caps. For a revoked delegate `until` is also the end of
@@ -238,6 +304,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         return escrows[buyer];
     }
 
+    function held(address payer, uint64 seq) external view returns (HeldPayment memory) {
+        return heldPayments[payer][seq];
+    }
+
     /// The proxy's separator, not the implementation's — see the contract note. The backend
     /// names this value when it asks a buyer's wallet to sign a voucher, so it is exported
     /// rather than left to a caller to recompute.
@@ -277,11 +347,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// delta assertion refuses that (see the `nonReentrant` rows in `test/MUTATION-LOG.md`, which
     /// record that the modifier and the delta check overlap on these two doors).
     ///
-    /// `redeemVoucher`, `redeemVoucherBatch` and `withdraw()` pay
-    /// money OUT. **They must not copy this ordering.** There every state change — `balance`,
-    /// `seqHigh`, `spentInWindow`, `withdrawRequested`, `totalEscrowed` — is written before the
-    /// transfer, with the transfer strictly last, and `nonReentrant` is load-bearing there in a
-    /// way it is not here.
+    /// `collectHeld`, its batch and `withdraw()` pay
+    /// money OUT. **They must not copy this ordering.** There every state change — the held
+    /// record's status, `totalHeld`, `balance`, `withdrawRequested`, `totalEscrowed` — is written
+    /// before the transfer, with the transfer strictly last, and `nonReentrant` is load-bearing
+    /// there in a way it is not here.
     function depositFor(address buyer, uint64 amount) public nonReentrant {
         CONFIG.assertActive(buyer, msg.sender, address(0));
         if (buyer == address(0)) revert ZeroAddress();
@@ -421,11 +491,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // `ProgramPaused` (audit F R7), so an empty or malformed batch is diagnosed first.
 
         uint256 n = vs.length;
-        if (n == 0) revert EmptyBatch();
-        if (n > Constants.MAX_REDEEM_BATCH) revert BatchTooLarge();
-        // Both directions, and it is checked BEFORE the loop rather than left to `sigs[i]`: a
-        // short array would otherwise answer `Panic(0x32)` where an operator needs a diagnosis.
-        if (sigs.length != n) revert BatchLengthMismatch();
+        _assertBatch(n, sigs.length);
 
         for (uint256 i = 0; i < n; ++i) {
             _redeem(vs[i], sigs[i], p);
@@ -783,11 +849,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// **Do not copy [`depositFor`]'s shape here.** That path is checks → interaction → effects,
     /// which is unavoidable for a *measured* `balanceOf` delta and is safe only because nothing is
-    /// paid out. This function pays out: every state change — `seqHigh`, `balance`,
-    /// `spentInWindow`, `windowStartedAt`, `totalRedeemed`, `totalEscrowed` — is written before
-    /// either transfer, and `nonReentrant` on the entry point is load-bearing here in a way it is
-    /// not on the funding doors, where the delta assertion overlaps it. USDG is an upgradeable
-    /// Paxos proxy, so "this token has no callbacks" is a statement about today only.
+    /// paid out. Since "redeem into hold" this function transfers no token at all — the payout is
+    /// [`collectHeld`]'s — but its only external calls are still the Config and Stake views
+    /// above, all made before any effect, and [`_collectHeld`] keeps the effects-first order
+    /// for the transfers it now owns. USDG is an upgradeable Paxos proxy, so "this token has no
+    /// callbacks" is a statement about today only.
     ///
     /// A refusal rolls all of it back, exactly as an Anchor `require!` does — so a redemption
     /// refused for `EscrowInsufficient` leaves `seqHigh` where it was
@@ -899,6 +965,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // refuses, but as `Panic(0x11)`, which is not what an operator needs to read.
         if (e.balance < v.amount) revert EscrowInsufficient();
 
+        // The collect hold in force now, frozen into the record below (a view, read before any
+        // effect like every other external read here).
+        uint64 collectableAt = nowTs + CONFIG.collectHoldSeconds();
+
         // --- effects -------------------------------------------------------------------------
         e.seqHigh = v.seq;
         e.balance -= v.amount;
@@ -923,14 +993,19 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
             d.windowStartedAt = nowTs > d.windowStartedAt ? nowTs : d.windowStartedAt;
         }
 
-        (uint64 fee, uint64 providerAmount) = Fee.splitFee(v.amount, p.takeRateBps);
+        // Redeem into hold: the two payouts of `redeem_voucher.rs:170`/`:186` move to
+        // [`collectHeld`], and this path transfers no token. The take rate and the clock are
+        // frozen here; `fee` is computed now only for the event, by the same split collect makes.
+        HeldPayment storage h = heldPayments[v.payer][v.seq];
+        h.provider = v.provider;
+        h.amount = v.amount;
+        h.takeRateBps = p.takeRateBps;
+        h.status = HeldStatus.Held;
+        h.collectableAt = collectableAt;
+        totalHeld += v.amount;
+        (uint64 fee,) = Fee.splitFee(v.amount, p.takeRateBps);
 
-        // --- interactions --------------------------------------------------------------------
-        // Guarded on zero exactly as `redeem_voucher.rs:170`/`:186` are, so a 0% take rate makes
-        // no call at all and a blocklisted treasury cannot refuse a payment of nothing.
-        if (providerAmount > 0) ASSET.safeTransfer(v.provider, providerAmount);
-        if (fee > 0) ASSET.safeTransfer(p.treasury, fee);
-
+        emit PaymentHeld(v.payer, v.seq, v.provider, v.amount, collectableAt);
         emit VoucherRedeemed(
             v.payer,
             v.provider,
@@ -945,6 +1020,117 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         if (delegate != address(0)) {
             emit DelegateVoucherRedeemed(v.payer, delegate, v.seq, v.amount, delegateSpentAfter);
         }
+    }
+
+    // --- redeem into hold ---------------------------------------------------------------
+
+    /// Pays a held payment out: the provider's share to the voucher's provider, the fee to
+    /// Config's treasury, by the take rate frozen at redemption — so the split is exactly the one
+    /// the redemption's [`VoucherRedeemed`] reported.
+    ///
+    /// **Who may call it, and when.** The redeemer from `collectableAt`; anybody from
+    /// `collectableAt + HELD_TIMEOUT_SECONDS`, so a redeemer that goes silent cannot keep a
+    /// provider's money held for ever. The backend does not collect while a buyer dispute is
+    /// open, and [`refundHeld`]s an upheld one.
+    ///
+    /// **Pause-gated and blocklist-gated** (payer and provider): it moves money, so the pause
+    /// and the blocklist freeze it exactly as they freeze redemption. Nothing is lost — the
+    /// record stays `Held`, and the timeout still opens it to anybody once the gate lifts.
+    ///
+    /// Effects strictly before interactions, under `nonReentrant`, as on [`_redeem`].
+    function collectHeld(address payer, uint64 seq) external nonReentrant {
+        _collectHeld(payer, seq, CONFIG.params());
+    }
+
+    /// [`collectHeld`] over many records, **atomically**, like [`redeemVoucherBatch`]: one bad
+    /// item — too early, already collected or refunded, a duplicate, paused, blocked — reverts the
+    /// whole batch. The collection job pre-filters with [`held`] and retries singly on failure.
+    function collectHeldBatch(address[] calldata payers, uint64[] calldata seqs)
+        external
+        nonReentrant
+    {
+        _assertBatch(payers.length, seqs.length);
+        ParamSet memory p = CONFIG.params();
+        for (uint256 i = 0; i < payers.length; ++i) {
+            _collectHeld(payers[i], seqs[i], p);
+        }
+    }
+
+    /// Returns a held payment to the buyer's balance, in full. **Redeemer only, no arbiter**:
+    /// the redeemer already holds the same power by not redeeming. Open from redemption until
+    /// `collectableAt + HELD_TIMEOUT_SECONDS`, then closed for ever (only a collect remains).
+    ///
+    /// **The buyer's `spentInWindow` is NOT restored** (owner's decision): a refund must not hand
+    /// a buyer, or a delegate, fresh capacity inside the window it was spent in. The lifetime
+    /// `totalRedeemed` IS lowered, so `totalFunded == balance + totalRedeemed + totalWithdrawn`
+    /// keeps holding per escrow.
+    ///
+    /// It transfers no token and is not pause-gated: it only moves held money back to a balance
+    /// that every exit door still guards.
+    function refundHeld(address payer, uint64 seq) external nonReentrant {
+        if (msg.sender != CONFIG.params().redeemer) revert NotRedeemer();
+        _refundHeld(payer, seq);
+    }
+
+    /// [`refundHeld`] over many records, atomically (see [`collectHeldBatch`]).
+    function refundHeldBatch(address[] calldata payers, uint64[] calldata seqs)
+        external
+        nonReentrant
+    {
+        _assertBatch(payers.length, seqs.length);
+        if (msg.sender != CONFIG.params().redeemer) revert NotRedeemer();
+        for (uint256 i = 0; i < payers.length; ++i) {
+            _refundHeld(payers[i], seqs[i]);
+        }
+    }
+
+    /// The shape of every batch here — `redeemVoucherBatch` and the two held batches: not empty,
+    /// at most `MAX_REDEEM_BATCH`, and the second array exactly as long as the first. The length
+    /// is checked in both directions BEFORE the loop rather than left to the indexing: a short
+    /// array would otherwise answer `Panic(0x32)` where an operator needs a diagnosis.
+    function _assertBatch(uint256 n, uint256 m) internal pure {
+        if (n == 0) revert EmptyBatch();
+        if (n > Constants.MAX_REDEEM_BATCH) revert BatchTooLarge();
+        if (m != n) revert BatchLengthMismatch();
+    }
+
+    function _collectHeld(address payer, uint64 seq, ParamSet memory p) internal {
+        HeldPayment storage h = heldPayments[payer][seq];
+        if (h.status != HeldStatus.Held) revert HeldPaymentNotHeld();
+        uint256 opensAt = uint256(h.collectableAt);
+        if (msg.sender != p.redeemer) opensAt += Constants.HELD_TIMEOUT_SECONDS;
+        if (block.timestamp < opensAt) revert HeldNotYetCollectable();
+        address provider = h.provider;
+        CONFIG.assertActive(payer, provider, address(0));
+
+        // --- effects -------------------------------------------------------------------------
+        uint64 amount = h.amount;
+        h.status = HeldStatus.Collected;
+        totalHeld -= amount;
+        (uint64 fee, uint64 providerAmount) = Fee.splitFee(amount, h.takeRateBps);
+
+        // --- interactions --------------------------------------------------------------------
+        // Guarded on zero exactly as `redeem_voucher.rs:170`/`:186` are, so a 0% take rate makes
+        // no call at all and a blocklisted treasury cannot refuse a payment of nothing.
+        if (providerAmount > 0) ASSET.safeTransfer(provider, providerAmount);
+        if (fee > 0) ASSET.safeTransfer(p.treasury, fee);
+        emit HeldCollected(payer, seq, provider, providerAmount, fee);
+    }
+
+    function _refundHeld(address payer, uint64 seq) internal {
+        HeldPayment storage h = heldPayments[payer][seq];
+        if (h.status != HeldStatus.Held) revert HeldPaymentNotHeld();
+        if (block.timestamp >= uint256(h.collectableAt) + Constants.HELD_TIMEOUT_SECONDS) {
+            revert HeldRefundWindowClosed();
+        }
+        uint64 amount = h.amount;
+        h.status = HeldStatus.Refunded;
+        totalHeld -= amount;
+        Escrow storage e = escrows[payer];
+        e.balance += amount;
+        e.totalRedeemed -= amount;
+        totalEscrowed += amount;
+        emit HeldRefunded(payer, seq, amount);
     }
 
     // --- voucher delegation ------------------------------------------------------------------
@@ -1053,23 +1239,23 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         (maxVoucherAmount, maxPerWindow) =
             _effectiveCaps(e.maxVoucherAmount, e.maxPerWindow, priorEscrowCaps[payer], nowTs);
         Delegation storage d = delegations[payer][delegate];
-        PriorCaps storage held = priorDelegateCaps[payer][delegate];
-        if (d.validUntil != 0 && _canSign(d, held, nowTs)) {
+        PriorCaps storage prior = priorDelegateCaps[payer][delegate];
+        if (d.validUntil != 0 && _canSign(d, prior, nowTs)) {
             (delegateMaxVoucherAmount, delegateMaxPerWindow) =
-                _effectiveCaps(d.maxVoucherAmount, d.maxPerWindow, held, nowTs);
+                _effectiveCaps(d.maxVoucherAmount, d.maxPerWindow, prior, nowTs);
         }
     }
 
     /// Whether a written grant can sign at `nowTs`: not past `validUntil`, and, if revoked, not
-    /// more than `TIGHTEN_DELAY` after the revocation (`held.until`, which [`_revokeDelegate`]
+    /// more than `TIGHTEN_DELAY` after the revocation (`prior.until`, which [`_revokeDelegate`]
     /// writes). The hold is read only for a revoked grant.
-    function _canSign(Delegation storage d, PriorCaps storage held, uint64 nowTs)
+    function _canSign(Delegation storage d, PriorCaps storage prior, uint64 nowTs)
         internal
         view
         returns (bool)
     {
         if (nowTs > d.validUntil) return false;
-        return !d.revoked || nowTs <= held.until;
+        return !d.revoked || nowTs <= prior.until;
     }
 
     /// The larger of each current cap and the held one, while the hold lasts (`nowTs <= until`;
@@ -1283,10 +1469,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // grace but not yet past `validUntil` cannot sign, yet its caps are still stored here;
         // without the check, a lowering re-grant would hold them until
         // `min(now + TIGHTEN_DELAY, validUntil)` and so revive a dead grant's caps.
-        PriorCaps storage held = priorDelegateCaps[payer][delegate];
-        if (d.validUntil != 0 && _canSign(d, held, nowTs)) {
+        PriorCaps storage prior = priorDelegateCaps[payer][delegate];
+        if (d.validUntil != 0 && _canSign(d, prior, nowTs)) {
             _holdIfLowered(
-                held,
+                prior,
                 payer,
                 delegate,
                 d.maxVoucherAmount,
@@ -1352,6 +1538,6 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// The append budget the D-7 upgrade-safety gate spends. A new field is added ABOVE this
     /// line and the array shrinks by exactly the slots it consumes — the script refuses
-    /// anything else.
-    uint256[46] private __gap;
+    /// anything else. **46 → 44 for the redeem-into-hold change** (`heldPayments`, `totalHeld`).
+    uint256[44] private __gap;
 }

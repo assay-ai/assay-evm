@@ -4,7 +4,8 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 /// **No role has a door that transfers a token to itself (D-17).** The only ways a token leaves
-/// `X402Escrow` or `X402Stake` are a signed voucher, the buyer's `withdraw()`, the provider's
+/// `X402Escrow` or `X402Stake` are a signed voucher's held payment (collected to its provider and
+/// the treasury), the buyer's `withdraw()`, the provider's
 /// `withdrawStake`, and the two-phase slash; there is no sweep, no rescue, no "excess" transfer,
 /// for any role and any token. The owner's power over that money is the upgrade.
 ///
@@ -46,16 +47,18 @@ contract NoTokenDoorsTest is Test {
     ];
 
     function _sites() internal pure returns (Site[8] memory s) {
-        // buyer money: the measured-delta pull, the buyer's own exit, the voucher's two payouts
+        // buyer money: the measured-delta pull, the buyer's own exit, a held voucher's two payouts
+        // (redeem into hold: `_redeem` itself moves no token)
         s[0] =
             Site("X402Escrow", "_pullExact", "ASSET.safeTransferFrom(from, address(this), amount);");
         s[1] = Site("X402Escrow", "withdraw", "ASSET.safeTransfer(msg.sender, amount);");
         s[2] = Site(
             "X402Escrow",
-            "_redeem",
-            "if (providerAmount > 0) ASSET.safeTransfer(v.provider, providerAmount);"
+            "_collectHeld",
+            "if (providerAmount > 0) ASSET.safeTransfer(provider, providerAmount);"
         );
-        s[3] = Site("X402Escrow", "_redeem", "if (fee > 0) ASSET.safeTransfer(p.treasury, fee);");
+        s[3] =
+            Site("X402Escrow", "_collectHeld", "if (fee > 0) ASSET.safeTransfer(p.treasury, fee);");
         // provider collateral: deposit, the provider's own exit, the executed slash's two payouts
         s[4] = Site(
             "X402Stake",

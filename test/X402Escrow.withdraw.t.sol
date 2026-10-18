@@ -589,8 +589,11 @@ contract X402EscrowWithdrawTest is Fixture {
 
         // Agent delegation added six, none of which moves money out of an escrow except through
         // a voucher: two views, and authorise/revoke in direct and relayed form. The tighten delay
-        // added one more view, `effectiveCapsOf`.
-        string[29] memory expected = [
+        // added one more view, `effectiveCapsOf`. Redeem into hold added six: two views (`held`,
+        // `totalHeld`) and collect/refund in single and batch form — both pay out only a record a
+        // signed voucher created, to that voucher's provider and the treasury, or back to the
+        // buyer's own balance.
+        string[35] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
@@ -599,6 +602,8 @@ contract X402EscrowWithdrawTest is Fixture {
             "UPGRADE_INTERFACE_VERSION()",
             "authorizeDelegate(address,uint64,uint64,uint64)",
             "authorizeDelegateBySig(address,address,uint64,uint64,uint64,uint64,uint64,bytes)",
+            "collectHeld(address,uint64)",
+            "collectHeldBatch(address[],uint64[])",
             "delegatesOf(address)",
             "delegationOf(address,address)",
             "deposit(uint64)",
@@ -606,10 +611,13 @@ contract X402EscrowWithdrawTest is Fixture {
             "effectiveCapsOf(address,address)",
             "eip712Domain()",
             "escrowOf(address)",
+            "held(address,uint64)",
             "initialize(address,address,address,address)",
             "proxiableUUID()",
             "redeemVoucher((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64),bytes)",
             "redeemVoucherBatch((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64)[],bytes[])",
+            "refundHeld(address,uint64)",
+            "refundHeldBatch(address[],uint64[])",
             "requestWithdraw(uint64)",
             "requestWithdrawBySig(address,uint64,uint64,uint64,bytes)",
             "revokeDelegate(address)",
@@ -617,15 +625,16 @@ contract X402EscrowWithdrawTest is Fixture {
             "setLimits(uint64,uint64)",
             "setLimitsBySig(address,uint64,uint64,uint64,uint64,bytes)",
             "totalEscrowed()",
+            "totalHeld()",
             "upgradeToAndCall(address,bytes)",
             "withdraw()",
-            "" // the 29th slot is deliberately empty: a 29th function makes this test red
+            "" // the 35th slot is deliberately empty: a 35th function makes this test red
         ];
 
         string memory artifact =
             vm.readFile(string.concat(vm.projectRoot(), "/out/X402Escrow.sol/X402Escrow.json"));
         string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 28, "X402Escrow's external surface changed size");
+        assertEq(keys.length, 34, "X402Escrow's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;

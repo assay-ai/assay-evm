@@ -174,6 +174,28 @@ abstract contract Fixture is Test {
             )
         );
     }
+    /// Redeem into hold: collect `escrow_`'s held `(payer, seq)` as the redeemer, warping to its
+    /// `collectableAt` for the call and back afterwards, so a test written against "the provider
+    /// is paid at redemption" keeps every other clock it reasons about.
+    ///
+    /// The clock is read with `vm.getBlockTimestamp()`, not `block.timestamp`: under `via_ir` the
+    /// optimiser may re-read TIMESTAMP after the `vm.warp`, and the warp back would then restore
+    /// the warped time.
+
+    function _collect(X402Escrow escrow_, address payer, uint64 seq) internal {
+        uint256 back = vm.getBlockTimestamp();
+        uint64 at = escrow_.held(payer, seq).collectableAt;
+        if (back < at) vm.warp(at);
+        vm.prank(redeemer);
+        escrow_.collectHeld(payer, seq);
+        vm.warp(back);
+    }
+
+    /// [`_collect`] on the fixture's own escrow.
+    function _collect(address payer, uint64 seq) internal {
+        _collect(escrow, payer, seq);
+    }
+
     /// Give `to` `amount` MORE of the settlement token.
     ///
     /// **Adds, never sets.** `deal`'s three-argument form SETS a balance, which silently erases
