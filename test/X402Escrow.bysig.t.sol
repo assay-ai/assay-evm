@@ -495,7 +495,7 @@ contract X402EscrowBySigTest is Fixture {
 
     // --- the debt these doors owe: the Rust const-assert has no Solidity equivalent ----------
 
-    /// `constants.rs:285` is `const _: () = assert!(WITHDRAW_DELAY_SECONDS >
+    /// `constants.rs` is `const _: () = assert!(WITHDRAW_DELAY_SECONDS >
     /// MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS)`, so on Solana lowering the delay fails the BUILD.
     /// Solidity has no constant assertion, so `initialize` re-states it as a runtime check that
     /// the optimiser folds to nothing — which means no input can reach it and no behavioural test

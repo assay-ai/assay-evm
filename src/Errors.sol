@@ -44,19 +44,19 @@ pragma solidity 0.8.24;
 /// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), and the four of the
 /// redeem-into-hold change (held status, collect and refund timing, settable collect hold).
 ///
-/// The six PDA seed constants in `constants.rs:5-60` have no counterpart in `Constants.sol` for
+/// The six PDA seed constants in `constants.rs` have no counterpart in `Constants.sol` for
 /// the same kind of reason; that omission is recorded there, not here.
 
 // --- generic -----------------------------------------------------------------
 error ZeroAmount();
 error ZeroAddress();
-/// `error.rs:10`. **This entry was previously listed as having no EVM condition, and that was
+/// **This entry was previously listed as having no EVM condition, and that was
 /// wrong.** The reasoning was that Solidity 0.8's checked arithmetic reverts with `Panic(0x11)`
 /// before any hand-written check could run, which is true of `+`, `-`, `*` and `/` — and false of
 /// the one operation the money path actually needs it for. An **explicit narrowing cast**,
 /// `uint64(someUint256)`, is not checked: it truncates silently, and a wrapped amount on the money
 /// path is exactly what `MathOverflow` exists to refuse. Its Anchor twin is
-/// `execute_slash.rs:310`'s `u64::try_from(scaled).map_err(|_| error!(ErrorCode::MathOverflow))`.
+/// `execute_slash.rs`'s `u64::try_from(scaled).map_err(|_| error!(ErrorCode::MathOverflow))`.
 ///
 /// Raised by [`Fee.bpsOf`] and [`Fee.splitFee`] when the widened `uint256` share does not fit back
 /// into the `uint64` every amount argument is. Reach for it at any other checked narrowing of a
@@ -104,11 +104,11 @@ error InvalidSignature();
 /// EIP-2: `s > secp256k1n/2`. Without this every signature has a second valid encoding.
 error MalleableSignature();
 error BadSignatureV();
-/// `error.rs:138`'s `MissingBuyerSignature` on the redeem path — the recovered signer over a
+/// `error.rs`'s `MissingBuyerSignature` on the redeem path — the recovered signer over a
 /// [`Voucher`] is not its `payer`. The EVM design's ordered check list names this error at this
 /// position.
 error SignerIsNotPayer();
-/// `error.rs:138`'s `MissingBuyerSignature` on the escrow-control paths — the recovered signer
+/// `error.rs`'s `MissingBuyerSignature` on the escrow-control paths — the recovered signer
 /// over a [`SetLimits`] or [`RequestWithdraw`] message is not the `buyer` it names.
 error SignerIsNotBuyer();
 error SignatureExpired();
@@ -127,7 +127,7 @@ error VoucherSeqGapTooLarge();
 error VoucherExpired();
 error VoucherNotYetValid();
 error InvalidVoucherWindow();
-/// **A SPLIT, not a rename.** `attestation.rs:477-481` raises `InvalidVoucherWindow` for BOTH of
+/// **A SPLIT, not a rename.** `attestation.rs` raises `InvalidVoucherWindow` for BOTH of
 /// its first two checks — `expires_at > issued_at` and `expires_at - issued_at <=
 /// VOUCHER_MAX_LIFETIME_SECONDS` — so one Anchor name covers two conditions. This port gives the
 /// width bound its own name, under this file's rule that one condition gets one name: a voucher
@@ -180,7 +180,7 @@ error DelegateWindowLimitExceeded();
 // --- escrow withdrawal -------------------------------------------------------
 error WithdrawNotYetAvailable();
 error NoWithdrawRequested();
-/// `constants.rs:285`'s build-time assertion, moved to `X402Escrow.initialize`. Rust states
+/// `constants.rs`'s build-time assertion, moved to `X402Escrow.initialize`. Rust states
 /// `WITHDRAW_DELAY_SECONDS > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE` as a `const _: ()
 /// = assert!(…)`, so lowering the delay fails the build. Solidity has no constant assertion —
 /// `assert` is a runtime opcode and a constant expression cannot invoke one — so the inequality

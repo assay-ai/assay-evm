@@ -31,7 +31,7 @@ error SignatureIsNotSixtyFiveBytes();
 ///
 /// It stands in for the *backend*, which is where the real second encoder lives:
 /// `ChainAdapter.buildVoucherMessage` on the Solana side, and its EIP-712 counterpart on this
-/// one. `attestation.rs:433` says the same thing about its own hand-written offsets — "these
+/// one. `attestation.rs` says the same thing about its own hand-written offsets — "these
 /// offsets are what an auditor diffs against `ChainAdapter.buildVoucherMessage`".
 library VoucherSigner {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));

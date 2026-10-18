@@ -17,7 +17,7 @@ import "../src/Errors.sol";
 /// advance and each has a test written specifically to kill it:
 ///
 /// - a `canSign` test that never checks a key at the **exact** expiry instant — Anchor's
-///   `state.rs:254` is `now <= self.expires_at`, so the shared instant belongs to the key, and a
+///   `state.rs` is `now <= self.expires_at`, so the shared instant belongs to the key, and a
 ///   `<` port would be invisible to any test that samples "well inside" and "well past". See
 ///   `test_boundary_aKeyIsUsableAtExactlyItsExpiry`.
 /// - a revocation test that proves `canSign` is false **once** without proving it can never be
@@ -241,7 +241,7 @@ contract X402ConfigVerifierTest is Test {
     // authority
     // ------------------------------------------------------------------------------------
 
-    /// `register_verifier.rs:28` / `revoke_verifier.rs:23` — `has_one = admin`. Both doors, and
+    /// `register_verifier.rs` / `revoke_verifier.rs` — `has_one = admin`. Both doors, and
     /// the register leg runs from an address that is not the admin *and* is not the zero address,
     /// so it cannot be satisfied by an unrelated zero check.
     function test_wrongSigner_onlyAdminRegistersAndRevokes() public {
@@ -382,7 +382,7 @@ contract X402ConfigVerifierTest is Test {
     ///
     /// **`canSign(v) == false` is not the property.** It is also true of an implementation that
     /// cleared `registered`, or that let the entry expire — and both of those admit a fresh
-    /// registration for the same address, which is `revoke_verifier.rs:35-45` refusing to close
+    /// registration for the same address, which is `revoke_verifier.rs` refusing to close
     /// the account. So this test sweeps the clock forward and back over the whole life of the key
     /// *and* then tries both doors again.
     function test_wrongState_revocationCanNeverBeUndone() public {
@@ -431,11 +431,11 @@ contract X402ConfigVerifierTest is Test {
         assertFalse(config.canSign(verifier), "and it is still expired");
     }
 
-    /// `revoke_verifier.rs:54-57` checks the **status** and says nothing about expiry, so an
+    /// `revoke_verifier.rs` checks the **status** and says nothing about expiry, so an
     /// expired key may still be revoked — which matters: `revokedAt` is when the key stopped being
     /// trusted, and an investigator needs it stamped even on a key that had already lapsed.
     ///
-    /// It also pins the **diagnosis order**. `state.rs:249-256` asks "revoked?" before "expired?",
+    /// It also pins the **diagnosis order**. `state.rs` asks "revoked?" before "expired?",
     /// so a key that is both reverts `VerifierRevoked`. Reversing the two checks is invisible to
     /// any test that never constructs a key in both states at once.
     function test_anExpiredKeyMayStillBeRevokedAndRevokedWinsTheDiagnosis() public {
@@ -462,7 +462,7 @@ contract X402ConfigVerifierTest is Test {
     // ------------------------------------------------------------------------------------
 
     /// Boundary B13 at -1 / exact / +1: a key is usable AT its expiry instant.
-    /// `state.rs:254` — `now <= self.expires_at`. The middle assertion is the whole test; the
+    /// `state.rs` — `now <= self.expires_at`. The middle assertion is the whole test; the
     /// other two would pass against `<` as well.
     function test_boundary_aKeyIsUsableAtExactlyItsExpiry() public {
         _register(1_000);
@@ -484,7 +484,7 @@ contract X402ConfigVerifierTest is Test {
 
     /// Boundary B16: registration refuses `now`, admits `now + 1`, admits
     /// `now + MAX_VERIFIER_KEY_LIFETIME_SECONDS`, refuses one second past it.
-    /// `register_verifier.rs:52-55` — `expires_at > now && expires_at <= now + MAX`.
+    /// `register_verifier.rs` — `expires_at > now && expires_at <= now + MAX`.
     ///
     /// Both ends are asserted at -1 / exact / +1, and each admitted call is followed by a
     /// `canSign` so that "admitted" means a key was actually written rather than a call that
@@ -527,7 +527,7 @@ contract X402ConfigVerifierTest is Test {
         assertEq(config.verifierKey(stranger).expiresAt, ceiling - 1, "one inside the ceiling");
     }
 
-    /// `register_verifier.rs:53` adds the lifetime with `saturating_add`, so a clock close enough
+    /// `register_verifier.rs` adds the lifetime with `saturating_add`, so a clock close enough
     /// to the end of the type does not make registration *fail* — it makes the ceiling stop
     /// binding, because the type is already the tighter bound. Solidity's checked `+` would panic
     /// there instead, with `Panic(0x11)` in place of a diagnosis, so the sum is widened to
@@ -551,7 +551,7 @@ contract X402ConfigVerifierTest is Test {
     // events
     // ------------------------------------------------------------------------------------
 
-    /// `events.rs:90-96`, field names kept. Asserts the **full** data payload, so an
+    /// `events.rs`, field names kept. Asserts the **full** data payload, so an
     /// implementation that emitted the label as `bytes32(0)` or the ceiling in place of the
     /// argument is caught here as well as in the storage tests.
     function test_registrationEmitsVerifierRegistered() public {
@@ -616,7 +616,7 @@ contract X402ConfigVerifierTest is Test {
         assertEq(abi.decode(logs[0].data, (uint64)), T + 4_321, "the instant it ran");
     }
 
-    /// `events.rs:98-103`. Emitted at the instant of the call, not at registration.
+    /// Emitted at the instant of the call, not at registration.
     function test_revocationEmitsVerifierRevokedEvent() public {
         _register(1_000);
         vm.warp(T + 400);
@@ -633,7 +633,7 @@ contract X402ConfigVerifierTest is Test {
 
     /// **Neither door is gated on the pause, and revocation especially must not be.** Anchor's
     /// `register_verifier.rs` and `revoke_verifier.rs` read `Config` without consulting
-    /// `config.paused` at all — `set_paused.rs:13-22` closes the doors that move money, and these
+    /// `config.paused` at all — `set_paused.rs` closes the doors that move money, and these
     /// move none. A pause gate on `revokeVerifier` would make the emergency stop for a stolen key
     /// unreachable in exactly the incident that stops the system: paused, with a compromised key
     /// still able to sign judgements.
@@ -650,7 +650,7 @@ contract X402ConfigVerifierTest is Test {
         assertFalse(config.canSign(verifier), "and so does revocation");
     }
 
-    /// A pure **acceptance** test: every row below is legal under `register_verifier.rs:44-75`,
+    /// A pure **acceptance** test: every row below is legal under `register_verifier.rs`,
     /// so it fails if anybody adds a precondition the reference lacks. It survives every mutation
     /// that changes what is *refused* and must never be cited as bounds coverage.
     function test_registrationAddsNoPreconditionTheReferenceLacks() public {

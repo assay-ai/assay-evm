@@ -204,8 +204,8 @@ contract X402StakeSlashTest is Fixture {
         a.expiresAt = a.issuedAt + 3600;
         _expect(a, verifierKeyPk, AttestationNotYetValid.selector);
 
-        // AT its expiry instant an attestation is still valid — `now <= expires_at`
-        // (`attestation.rs:175`), so the shared instant belongs to the attestation.
+        // AT its expiry instant an attestation is still valid — `now <= expires_at`,
+        // so the shared instant belongs to the attestation.
         SlashAttestation memory atExpiry = _att(bytes32("r4"), 1_000_000);
         bytes memory sigAtExpiry = _sign(atExpiry, verifierKeyPk);
         vm.warp(uint256(atExpiry.expiresAt));
@@ -900,7 +900,7 @@ contract X402StakeSlashTest is Fixture {
     }
 
     /// Unbonding pays first: a provider on their way out pays from the stake they were leaving
-    /// with (`execute_slash.rs:264`).
+    /// with.
     function test_theSlashIsTakenFromUnbondingFirst() public {
         vm.prank(provider);
         stake.requestUnstake(400_000);

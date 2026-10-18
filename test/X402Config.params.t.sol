@@ -153,7 +153,7 @@ contract X402ConfigParamsTest is Test {
     // the happy path
     // ---------------------------------------------------------------------------------------
 
-    /// Every change applies in the slot it arrives — `update_config.rs:18-19`, verbatim.
+    /// Every change applies in the slot it arrives — `update_config.rs`, verbatim.
     ///
     /// The nine untouched fields are read back too. Without them this test passes against an
     /// `updateConfig` that writes `takeRateBps` and zeroes everything beside it.
@@ -224,7 +224,7 @@ contract X402ConfigParamsTest is Test {
     }
 
     // ---------------------------------------------------------------------------------------
-    // the set is validated as a whole — update_config.rs:79-82
+    // the set is validated as a whole — update_config.rs
     // ---------------------------------------------------------------------------------------
 
     /// Validated AFTER every field lands, not per field. From (6000, 3000) to (3000, 7000) is
@@ -391,7 +391,7 @@ contract X402ConfigParamsTest is Test {
     /// `penaltyAmount <= minimumStake` rule (C46) — since review 2026-10-15 R-1 implied by the
     /// provider-day rule, and the one row below that the port refuses on purpose.
     ///
-    /// Each row below is legal under `state.rs:134-191` — read it against that function, not
+    /// Each row below is legal under `state.rs` — read it against that function, not
     /// against intuition — and each is a set some plausible extra rule would refuse. A set that
     /// *looks* wrong and is not is exactly the kind of thing an implementer adds a guard for.
     function test_updateAddsNoPreconditionTheReferenceLacks() public {
@@ -413,7 +413,7 @@ contract X402ConfigParamsTest is Test {
         p.treasury = address(config);
         _accepted(p, "the config's own address is a legal treasury");
 
-        // A penalty larger than the whole minimum stake WAS accepted here (`state.rs:68-75`
+        // A penalty larger than the whole minimum stake WAS accepted here (`state.rs`
         // bounds `penalty_amount` at neither end). Since review 2026-10-15 R-1 it is a deliberate
         // refusal: a provider at the minimum must fit two penalties in its capped day, so
         // `penaltyAmount <= minimumStake * slashCapBps / 20_000 <= minimumStake / 4`.
@@ -458,7 +458,7 @@ contract X402ConfigParamsTest is Test {
     // the event
     // ---------------------------------------------------------------------------------------
 
-    /// `emit!(ConfigUpdated { admin: config.admin, … })` — `update_config.rs:89-102`. The event
+    /// `emit!(ConfigUpdated { admin: config.admin, … })` — `update_config.rs`. The event
     /// carries the **post**-state, so on a handover the indexed admin is the incoming key, not
     /// the outgoing one that signed. That is the whole difference between `admin` and
     /// `msg.sender` here, and it is only visible on a call that hands over.

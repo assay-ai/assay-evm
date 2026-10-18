@@ -96,7 +96,7 @@ contract X402EscrowDepositTest is Fixture {
         );
     }
 
-    /// `initialize_config.rs:24-32` refuses a mint whose token program is not the one the
+    /// `initialize_config.rs` refuses a mint whose token program is not the one the
     /// program can account for; the EVM question about the settlement asset is its decimals.
     function test_wrongState_initializeRefusesAnAssetThatIsNotSixDecimals() public {
         EighteenDecimals wrong = new EighteenDecimals();
@@ -286,7 +286,7 @@ contract X402EscrowDepositTest is Fixture {
         assertEq(escrow.escrowOf(buyer).balance, 4_321_000);
     }
 
-    /// `deposit_stake.rs:75` — "Deposits accumulate: a second deposit adds to the first, it does
+    /// `deposit_stake.rs` — "Deposits accumulate: a second deposit adds to the first, it does
     /// not replace it." Three different amounts, so an implementation that assigns, or that
     /// doubles, or that keeps only the last, disagrees with all three totals.
     function test_happyPath_depositsAccumulate() public {
@@ -396,7 +396,7 @@ contract X402EscrowDepositTest is Fixture {
     }
 
     /// Every one of the twelve fields, so a later task cannot quietly change what "unopened"
-    /// means. `open_escrow.rs:99-111` writes exactly these zeroes by hand on Solana.
+    /// means. `open_escrow.rs` writes exactly these zeroes by hand on Solana.
     function test_happyPath_everyFieldOfAFreshEscrowIsZero() public view {
         X402Escrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
         assertEq(e.balance, 0);

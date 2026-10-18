@@ -29,7 +29,7 @@ import "./Errors.sol";
 /// that is already in flight.
 ///
 /// **Pause closes the deposit and exit half too, since the dispute upgrade** — a deliberate
-/// reversal, by the owner's decision, of the earlier rule (and of `withdraw_stake.rs:14-16`)
+/// reversal, by the owner's decision, of the earlier rule (and of `withdraw_stake.rs`)
 /// that owner exits are never paused. `depositStake(For)`, `requestUnstake` and `withdrawStake`
 /// call `CONFIG.assertActive`, which refuses while paused and refuses a blocked provider (or
 /// funder). What stays open while paused is what only releases or freezes a hold:
@@ -38,29 +38,29 @@ import "./Errors.sol";
 contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// `state.rs:370`'s `ProviderStake`, minus the two Solana-only fields (`provider`, which is
+    /// `state.rs`'s `ProviderStake`, minus the two Solana-only fields (`provider`, which is
     /// the mapping key here, and `bump`). Four slots, asserted by `script/check-layout.sh`.
     ///
     /// The widths follow `X402Escrow.Escrow`'s rule: cumulative counters are `uint128` (they are
     /// sums of many amounts and must not be able to wrap where an amount cannot), and everything
     /// an instruction takes as an argument or compares against a clock is `uint64`.
     struct ProviderStake {
-        uint128 bonded; //           slot 0  state.rs:373
-        uint64 unbonding; //          ↑      state.rs:376
-        uint64 unbondingStartedAt; // ↑      state.rs:378
-        uint64 slashedInWindow; //   slot 1  state.rs:385
-        uint64 slashWindowStartedAt; //  ↑   state.rs:388
-        uint64 pendingSlash; //          ↑   state.rs:400
+        uint128 bonded; //           slot 0  state.rs
+        uint64 unbonding; //          ↑      state.rs
+        uint64 unbondingStartedAt; // ↑      state.rs
+        uint64 slashedInWindow; //   slot 1  state.rs
+        uint64 slashWindowStartedAt; //  ↑   state.rs
+        uint64 pendingSlash; //          ↑   state.rs
         uint64 __gap; //                 ↑   struct padding, and nothing else
-        uint128 totalDeposited; //   slot 2  state.rs:392
-        uint128 totalWithdrawn; //       ↑   state.rs:393
-        uint128 totalSlashed; //     slot 3  state.rs:394
+        uint128 totalDeposited; //   slot 2  state.rs
+        uint128 totalWithdrawn; //       ↑   state.rs
+        uint128 totalSlashed; //     slot 3  state.rs
     }
 
     /// The verifier's rolling daily cap counter lives HERE, not in X402Config: it is a
     /// consequence of slashing, and X402Config must never be written by another contract
     /// (D-3). X402Config owns only the key's lifecycle. On Solana both halves sit on the
-    /// one `VerifierKey` account (`state.rs:236-239`) because there is only one program.
+    /// one `VerifierKey` account because there is only one program.
     struct VerifierWindow {
         uint64 slashedInWindow;
         uint64 windowStartedAt;
@@ -77,7 +77,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     mapping(address => ProviderStake) internal stakes;
     mapping(address => VerifierWindow) internal verifierWindows;
 
-    /// `state.rs:95-101` keeps these on Solana's `Config`. Here they live on the contract that
+    /// `state.rs` keeps these on Solana's `Config`. Here they live on the contract that
     /// holds the custody (D-3), exactly as `X402Escrow.totalEscrowed` does, because
     /// X402Config must never be written by another contract.
     ///
@@ -88,7 +88,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     uint128 public totalWithdrawn;
     uint128 public totalSlashed;
 
-    /// `events.rs::StakeDeposited` (`events.rs:61-69`). `funder` is indexed as well as
+    /// `events.rs::StakeDeposited`. `funder` is indexed as well as
     /// `provider` for `X402Escrow.Deposited`'s reason: "who funded this provider" and "what did
     /// this address fund" are both queries the reconciler makes.
     event StakeDeposited(
@@ -101,8 +101,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
     /// The name and version are ShortString immutables baked in here. An implementation built
     /// with other strings moves the attestation domain under the verifier's feet (D-1; asserted
-    /// in `test/Upgrade.t.sol`), so that only ever happens on purpose: the rename to
-    /// "Assay Settlement" (from "x402 Settlement") was one, shipped with the backend's domain.
+    /// in `test/Upgrade.t.sol`), so that only ever happens on purpose, together with the backend's domain.
     constructor() EIP712("Assay Settlement", "2") {
         _disableInitializers();
     }
@@ -138,13 +137,13 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         return _domainSeparatorV4();
     }
 
-    /// `state.rs:436`'s `at_risk`. Unbonding stake counts: it stays slashable until it is
+    /// `state.rs`'s `at_risk`. Unbonding stake counts: it stays slashable until it is
     /// actually withdrawn, which is the whole point of the period.
     function _atRisk(ProviderStake storage s) internal view returns (uint128) {
         return s.bonded + s.unbonding;
     }
 
-    /// `state.rs:492`'s `withdrawable` — `min(matured unbonding, atRisk - pendingSlash)`.
+    /// `state.rs`'s `withdrawable` — `min(matured unbonding, atRisk - pendingSlash)`.
     ///
     /// The `pendingSlash` term is measured against `atRisk` rather than against `unbonding`, so
     /// it bites only once it exceeds the bonded balance: the reserved portion has to sit
@@ -169,7 +168,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         depositStakeFor(msg.sender, amount);
     }
 
-    /// Anyone may fund anyone, matching `deposit_stake.rs:15-18`: "Not required to be the
+    /// Anyone may fund anyone, matching `deposit_stake.rs`: "Not required to be the
     /// provider: this is also how the treasury compensates an overturned executed judgement,
     /// and a deposit can only ever increase what the provider owns."
     ///
@@ -192,7 +191,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
 
         ProviderStake storage s = stakes[provider];
-        // Deposits accumulate: a second deposit adds to the first (deposit_stake.rs:69).
+        // Deposits accumulate: a second deposit adds to the first (deposit_stake.rs).
         s.bonded += amount;
         s.totalDeposited += amount;
         totalStaked += amount;
@@ -203,12 +202,12 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
     // --- collateral out -------------------------------------------------------------------
 
-    /// `request_unstake.rs`. Nothing is checked beyond the balance: unbonding stake is still
+    /// Nothing is checked beyond the balance: unbonding stake is still
     /// fully slashable, so asking to leave costs nobody anything, and what a pending judgement
     /// has reserved binds where money actually leaves, in [`withdrawStake`].
     ///
-    /// One clock for the whole unbonding balance, restarted on every request
-    /// (`request_unstake.rs:51-55`). Tracking a maturity per request would need an unbounded
+    /// One clock for the whole unbonding balance, restarted on every request.
+    /// Tracking a maturity per request would need an unbounded
     /// list; restarting is the conservative collapse of that — it can only ever delay a
     /// withdrawal, never let an amount out before its own period has elapsed.
     ///
@@ -235,7 +234,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         );
     }
 
-    /// `withdraw_stake.rs`. Three checks, one definition: the amount is inside `unbonding`, the
+    /// Three checks, one definition: the amount is inside `unbonding`, the
     /// unbonding period has elapsed, and the amount is inside [`withdrawableOf`], which
     /// subtracts what pending judgements have reserved.
     ///
@@ -253,7 +252,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// name — `test/MUTATION-LOG.md` row W12 measured exactly that on `X402Escrow.withdraw`.
     ///
     /// **Pause-gated and blocklist-gated since the dispute upgrade** — the owner's decision,
-    /// reversing `withdraw_stake.rs:14-16`. Neither gate moves the stake anywhere: it stays the
+    /// reversing `withdraw_stake.rs`. Neither gate moves the stake anywhere: it stays the
     /// provider's, and the door reopens when the pause lifts or the block is removed.
     function withdrawStake(uint64 amount) external nonReentrant {
         CONFIG.assertActive(msg.sender, address(0), address(0));
@@ -279,9 +278,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
     // --- the two-phase slash, phase one -----------------------------------------------------
 
-    /// `state.rs:292`'s `SlashRecord`, minus `request_id` (the mapping key here) and `bump`.
+    /// `state.rs`'s `SlashRecord`, minus `request_id` (the mapping key here) and `bump`.
     /// **Never `delete`d**: a reclaimable record is a reusable request id, which is
-    /// `constants.rs:44`'s reason for never closing the PDA — and here it is sharper still,
+    /// `constants.rs`'s reason for never closing the PDA — and here it is sharper still,
     /// because `delete` would make `status == None` true again and the captured attestation
     /// would resubmit.
     ///
@@ -335,7 +334,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         return slashRecords[requestId];
     }
 
-    /// `propose_slash.rs`. Phase one: prove the verifier's signature, reserve the stake, start
+    /// Phase one: prove the verifier's signature, reserve the stake, start
     /// the slash-delay clock (`CONFIG.slashDelaySeconds()`, 72 h by default). **Moves no money.**
     ///
     /// **Permissionless to SUBMIT: the authority is the signature, not the sender.** On Solana
@@ -350,7 +349,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     ///
     /// **`executableAt` is frozen here** so that nothing during the wait can pull the judgement
     /// forward, and so is `capAllowance` — "a figure re-derived at execution is a figure the
-    /// party being judged can move in between" (`propose_slash.rs:110-111`).
+    /// party being judged can move in between".
     ///
     /// Nothing external is called except `CONFIG`, which is this system's own contract and
     /// holds no tokens, so there is no point from which anything could re-enter.
@@ -370,7 +369,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         if (slashRecords[a.requestId].status != SlashStatus.None) revert SlashAlreadyExists();
 
         uint64 nowTs = uint64(block.timestamp);
-        // `attestation.rs:167-177`'s `require_valid_window`, in its order.
+        // `attestation.rs`'s `require_valid_window`, in its order.
         if (
             a.expiresAt <= a.issuedAt
                 || a.expiresAt - a.issuedAt > Constants.MAX_ATTESTATION_LIFETIME_SECONDS
@@ -383,7 +382,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
         ParamSet memory p = CONFIG.params();
         // A ceiling rather than an equality: the verifier computes the penalty off chain and a
-        // deliberately reduced judgement is legal (`propose_slash.rs:95-99`).
+        // deliberately reduced judgement is legal.
         if (a.penalty > p.penaltyAmount) revert PenaltyExceedsMaximum();
 
         ProviderStake storage s = stakes[a.provider];
@@ -440,7 +439,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
     // --- the two-phase slash, phase two: the three exits from Pending ------------------------
 
-    /// `events.rs::SlashExecuted`. `slashCapBps` is the one Anchor field left out: the record's
+    /// `slashCapBps` is the one Anchor field left out: the record's
     /// frozen `capAllowance` is what actually bound this execution, and it is already in
     /// `SlashProposed`.
     event SlashExecuted(
@@ -464,7 +463,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         uint64 proposedAt
     );
 
-    /// `events.rs::SlashCancelled`. One event for both exits that release, because they are one
+    /// One event for both exits that release, because they are one
     /// event with a different `reason` — `cancel_slash.rs` and `expire_slash.rs` emit the same
     /// struct on Solana too.
     event SlashCancelled(
@@ -476,7 +475,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         uint64 cancelledAt
     );
 
-    /// `execute_slash.rs`. Phase two: the delay was served, the execution window has not closed,
+    /// Phase two: the delay was served, the execution window has not closed,
     /// the key can still sign, and the penalty is paid under both caps.
     ///
     /// **Permissionless.** Being front-run for the privilege of paying gas is harmless — the
@@ -493,7 +492,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// [`expireSlash`] calls the boolean, because there the same fact is the CONDITION.
     ///
     /// **Effects strictly before interactions, which is where this diverges from the reference.**
-    /// `execute_slash.rs:243` pays before it mutates a single account, and says so out loud —
+    /// `execute_slash.rs` pays before it mutates a single account, and says so out loud —
     /// that ordering is safe on Solana, where a CPI cannot re-enter this instruction. On EVM it
     /// is the classic hole, so the order is inverted here. `nonReentrant` is the belt;
     /// `test_everyEffectIsWrittenBeforeTheSlashTransfers` is the brace, and it observes the
@@ -554,7 +553,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         s.pendingSlash -= released;
 
         // Unbonding first: a provider on their way out pays from the stake they were leaving
-        // with (`execute_slash.rs:264`).
+        // with.
         uint64 fromUnbonding = taken < s.unbonding ? taken : s.unbonding;
         uint64 fromBonded = taken - fromUnbonding;
         s.unbonding -= fromUnbonding;
@@ -603,7 +602,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         );
     }
 
-    /// `cancel_slash.rs`. Withdraw a pending or disputed judgement before it pays, on the
+    /// Withdraw a pending or disputed judgement before it pays, on the
     /// ADMIN's or (since the dispute upgrade) the ARBITER's signature — the arbiter is a person's
     /// wallet, so a routine overturn no longer needs the admin key.
     ///
@@ -615,7 +614,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// Anchor code
     /// wins**, and the divergence is recorded in `docs/divergences.md`.
     ///
-    /// **NOT pause-gated** (`cancel_slash.rs:31`): it can only release a hold, and pausing it
+    /// **NOT pause-gated**: it can only release a hold, and pausing it
     /// could only extend one.
     function cancelSlash(bytes32 requestId) external nonReentrant {
         _assertCanCancel();
@@ -647,7 +646,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         if (n > Constants.MAX_SLASH_BATCH) revert BatchTooLarge();
     }
 
-    /// `expire_slash.rs`. Release a reservation nobody is going to act on. **Permissionless, and
+    /// Release a reservation nobody is going to act on. **Permissionless, and
     /// that is the whole design: a hold anybody can end is a hold nobody can extend.** Any
     /// authority that can be withheld is an authority whose holder can keep the hold in place.
     ///
@@ -799,7 +798,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// terminal states absorbing, and the record is never `delete`d.
     ///
     /// The reservation is released whole, never in part: a judgement is withdrawn or it is not.
-    /// **Checked** (audit F R2; Anchor saturates, `cancel_slash.rs:74-78`): `pendingSlash` is
+    /// **Checked** (audit F R2; Anchor saturates, `cancel_slash.rs`): `pendingSlash` is
     /// the sum of the standing reservations and this one is among them, so the subtraction cannot
     /// underflow through this contract's own doors — and if that invariant ever broke, reverting
     /// is the honest answer, not a silent zero.

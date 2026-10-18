@@ -636,7 +636,7 @@ contract TypesTest is Test {
     /// The Anchor invariant WITHDRAW_DELAY > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE,
     /// derived rather than typed, exactly as constants.rs derives it.
     ///
-    /// This is half of what `constants.rs:285`'s `const _: () = assert!(…)` was. The other half —
+    /// This is half of what `constants.rs`'s `const _: () = assert!(…)` was. The other half —
     /// a `require` inside `X402Escrow.initialize` — lives there, and `Constants.sol` says so at
     /// the constant. Nothing in this test stops a proxy being initialised into a violating state.
     function test_withdrawDelayOutlivesTheLongestRedeemableVoucher() public pure {

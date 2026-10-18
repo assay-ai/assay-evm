@@ -136,7 +136,7 @@ abstract contract Fixture is Test {
     /// therefore a better fixture than a setter that wrote the field directly.
     ///
     /// The lowered amount lands in `unbonding`, where it is still slashable and no longer counts
-    /// toward the floor (`state.rs:446`: `meets_minimum` reads `bonded` only). That is exactly
+    /// toward the floor (`state.rs`: `meets_minimum` reads `bonded` only). That is exactly
     /// what the stub's `setBonded` was standing in for.
     function _setBonded(address provider_, uint64 target) internal {
         uint64 current = stake.bondedOf(provider_);

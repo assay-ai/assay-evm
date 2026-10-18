@@ -549,7 +549,7 @@ contract X402EscrowRedeemTest is Fixture {
 
     // --- the accounting a refusal must leave alone -------------------------------------------
 
-    /// `tests/escrow.rs::an_underfunded_escrow_refuses_without_consuming_the_sequence`. On Solana
+    /// On Solana
     /// this is free — a failed transaction rolls every account back. Here it is free for the same
     /// structural reason (a revert unwinds storage), and it is asserted anyway because the reason
     /// is structural rather than written down: an implementation that caught its own revert, or
@@ -605,7 +605,7 @@ contract X402EscrowRedeemTest is Fixture {
     }
 
     /// A validator — or a chain reorg — whose clock stepped back must not hand window capacity to
-    /// whoever noticed. `state.rs:605`: "Never moved backwards".
+    /// whoever noticed. `state.rs`: "Never moved backwards".
     function test_theWindowAnchorNeverMovesBackwards() public {
         uint64 t0 = uint64(block.timestamp);
         vm.warp(t0 + 10_000);
@@ -646,8 +646,8 @@ contract X402EscrowRedeemTest is Fixture {
 
     // --- the parameters are read at redemption time, never cached ----------------------------
 
-    /// Signing a fee would mean every parameter change invalidated every voucher in flight
-    /// (`attestation.rs:328-330`). So the split and its destination are read from Config at
+    /// Signing a fee would mean every parameter change invalidated every voucher in flight.
+    /// So the split and its destination are read from Config at
     /// redemption, and the event publishes the rate that was applied.
     function test_theTakeRateAndTheTreasuryAreReadAtRedemptionTime() public {
         address newTreasury = address(0x7EA6);
@@ -685,7 +685,7 @@ contract X402EscrowRedeemTest is Fixture {
     /// A treasury that is owed NOTHING must not be able to halt the payout. USDG may carry an
     /// issuer blocklist, so `safeTransfer(treasury, 0)` is a real call that a blocklisted treasury
     /// would revert — and at a 0% take rate the treasury is owed nothing at all.
-    /// `redeem_voucher.rs:186` guards the same call on `fee > 0` for the same reason, and without
+    /// `redeem_voucher.rs` guards the same call on `fee > 0` for the same reason, and without
     /// this test dropping that guard is invisible: `MockUSDG` accepts a zero transfer happily.
     /// `mockTokenOnly`: needs `MockUSDG.setBlocked`, a lever the real token has no equivalent
     /// of. The USDG deployed on 46630 has NO BLOCKLIST under any of five spellings — measured,
@@ -772,7 +772,7 @@ contract X402EscrowRedeemTest is Fixture {
         _expect(w, EscrowWindowLimitExceeded.selector);
     }
 
-    /// **Deliberate divergence 1 (the design's check order over `redeem_voucher.rs:144`).** The
+    /// **Deliberate divergence 1 (the design's check order over `redeem_voucher.rs`).** The
     /// Anchor program admits the sequence AFTER proving the signature; the design puts it before,
     /// and this is the test that pins which one this contract implements. It is cheaper — a stale
     /// voucher is rejected without paying for `ecrecover` — and it leaks nothing, because `seqHigh`
@@ -793,7 +793,7 @@ contract X402EscrowRedeemTest is Fixture {
         escrow.redeemVoucher(live, _badSig(live));
     }
 
-    /// **Deliberate divergence 2 (`redeem_voucher.rs:148-153` over the design's check list,
+    /// **Deliberate divergence 2 (`redeem_voucher.rs` over the design's check list,
     /// which has no stake check at all).** Reinstated at the Anchor program's position: after the
     /// window limit, before the balance check. Being paid is the counterpart of being slashable,
     /// and the backend the threat model assumes compromised must not be the only thing enforcing

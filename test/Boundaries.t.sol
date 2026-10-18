@@ -21,7 +21,7 @@ import "../src/Errors.sol";
 /// re-assertions and say so at each test.
 ///
 /// **One divergence from the table, and the code wins.** D-13 gives B3's far-side error as
-/// `InvalidVoucherWindow`, because `attestation.rs:477-481` raises that one name for both of its
+/// `InvalidVoucherWindow`, because `attestation.rs` raises that one name for both of its
 /// first two checks. This port splits the width bound out under its own name,
 /// `VoucherLifetimeTooLong` — the `Errors.sol` rule that one condition gets one name — and
 /// `Errors.sol` records the split with its argument. No voucher is admitted here that Anchor
@@ -85,7 +85,7 @@ contract BoundariesTest is Fixture {
     // === the voucher clock ==================================================================
 
     /// **B1 — `issuedAt <= now + 120`, admits exact.** New: no test owned this row before.
-    /// One-sided by design (`constants.rs:244`): a voucher may claim to be younger than the
+    /// One-sided by design: a voucher may claim to be younger than the
     /// chain believes, never older.
     function test_B1_clockSkewToleranceAdmitsItsOwnValue() public {
         uint64 t = uint64(block.timestamp);
@@ -145,7 +145,7 @@ contract BoundariesTest is Fixture {
 
     /// The invariant every one of the four rows above rests on, and the reason B10 is safe:
     /// a voucher signed the instant before `requestWithdraw` is dead 1,380 seconds before the
-    /// withdrawal matures. `constants.rs:285` states it as a build-time assertion; Solidity has
+    /// withdrawal matures. `constants.rs` states it as a build-time assertion; Solidity has
     /// no constant assertion, so it is this plus `X402Escrow.initialize`'s check.
     function test_theWithdrawDelayOutlivesTheLongestRedeemableVoucher() public pure {
         assertGt(

@@ -15,7 +15,7 @@ import "../src/Errors.sol";
 ///
 /// **The rule changed in the dispute upgrade, by the owner's explicit decision.** Until then the
 /// owner exits (`withdraw`, `requestWithdraw`, `setLimits`, the stake top-up and exit) were
-/// pinned here as **never** paused, after `set_paused.rs:14-21`. They are now closed by the
+/// pinned here as **never** paused, after `set_paused.rs`. They are now closed by the
 /// pause too. What stays open is what only reduces risk or releases a hold. The pause still
 /// moves nobody's money — there is no seize and no sweep — so every closed exit reopens on
 /// unpause with its balance untouched (`test_aPausedExitReopensWithTheBalanceUntouched`).

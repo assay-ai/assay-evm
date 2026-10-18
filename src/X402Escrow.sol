@@ -41,21 +41,21 @@ import "./Errors.sol";
 ///
 /// # What this is a port of
 ///
-/// `state.rs::BuyerEscrow` (`state.rs:525-559`) plus the *absence* of `open_escrow.rs`. On
+/// `state.rs::BuyerEscrow` plus the *absence* of `open_escrow.rs`. On
 /// Solana an escrow is an account that has to be created before it can be funded, and
-/// `handle_open_escrow` (`open_escrow.rs:99-111`) writes ten explicit zeroes into it. Here the
+/// `handle_open_escrow` writes ten explicit zeroes into it. Here the
 /// EVM's default storage is those ten zeroes, so the instruction has no body left: a mapping
 /// entry that has never been written reads as an escrow with both limits at `0`, which
-/// `state.rs:545-551` defines as **refuse every voucher**. `open_escrow.rs:94-97`'s one
+/// `state.rs` defines as **refuse every voucher**. `open_escrow.rs`'s one
 /// authority check — a bare identity may open a *disarmed* escrow, only the buyer's own
 /// signature may open an armed one — therefore has nothing to guard at open time and moves
 /// wholly to `setLimits`, whose authority IS `msg.sender`. Its meta-transaction twin
 /// `setLimitsBySig` re-proves that authority from an EIP-712 signature. (So
 /// `EscrowLimitsRequireBuyer` has no EVM condition — `docs/divergences.md`.)
 ///
-/// **Three `BuyerEscrow` fields are deliberately absent.** `buyer` (`state.rs:530`) is the
+/// **Three `BuyerEscrow` fields are deliberately absent.** `buyer` is the
 /// mapping key, so storing it again would be a second source for one identity. `bump`
-/// (`state.rs:556`) is a PDA artefact. `_reserved: [u8; 32]` (`state.rs:558`) is Solana's
+/// is a PDA artefact. `_reserved: [u8; 32]` is Solana's
 /// version of `__gap`, and this contract has a real one — plus UUPS, which Solana's reserve
 /// exists precisely because it lacks.
 ///
@@ -86,16 +86,16 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// compares against a clock is `uint64`.
     struct Escrow {
         uint128 balance; //            slot 0
-        uint64 seqHigh; //              ↑ strictly-increasing high-water mark (state.rs:535)
+        uint64 seqHigh; //              ↑ strictly-increasing high-water mark (state.rs)
         uint64 authNonce; //            ↑ meta-transaction nonce — EVM only
-        uint64 maxVoucherAmount; //    slot 1   0 = refuse every redeem (state.rs:548)
-        uint64 maxPerWindow; //         ↑       0 = refuse every redeem (state.rs:551)
-        uint64 spentInWindow; //        ↑                               (state.rs:553)
-        uint64 windowStartedAt; //      ↑                               (state.rs:555)
-        uint64 withdrawRequested; //   slot 2                           (state.rs:538)
-        uint64 withdrawAvailableAt; //  ↑                               (state.rs:540)
-        uint128 totalRedeemed; //       ↑                               (state.rs:542)
-        uint128 totalWithdrawn; //     slot 3                           (state.rs:544)
+        uint64 maxVoucherAmount; //    slot 1   0 = refuse every redeem (state.rs)
+        uint64 maxPerWindow; //         ↑       0 = refuse every redeem (state.rs)
+        uint64 spentInWindow; //        ↑                               (state.rs)
+        uint64 windowStartedAt; //      ↑                               (state.rs)
+        uint64 withdrawRequested; //   slot 2                           (state.rs)
+        uint64 withdrawAvailableAt; //  ↑                               (state.rs)
+        uint128 totalRedeemed; //       ↑                               (state.rs)
+        uint128 totalWithdrawn; //     slot 3                           (state.rs)
         uint128 totalFunded; //         ↑ EVM only — see the contract note above
     }
 
@@ -136,7 +136,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     mapping(address => Escrow) internal escrows;
 
     /// The solvency counter — `Config.total_deposited` minus its withdrawals, in the contract
-    /// that holds the custody rather than in Config (`state.rs:95-101` keeps the stake totals on
+    /// that holds the custody rather than in Config (`state.rs` keeps the stake totals on
     /// Solana's Config; X402Config.sol's header records why the EVM split puts them here).
     ///
     /// Solvency is NEVER derived from `ASSET.balanceOf(address(this))`: USDG is an upgradeable
@@ -243,7 +243,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint64 until
     );
 
-    /// `events.rs::StakeDeposited` (`events.rs:61-69`) is the nearest analogue — the same
+    /// `events.rs::StakeDeposited` is the nearest analogue — the same
     /// `(funder, amount, running-total)` shape, because a buyer deposit and a provider stake
     /// deposit are the same event with a different noun. `funder` is indexed here as well as
     /// `buyer`: "who funded this buyer" and "what did this address fund" are both queries the
@@ -260,8 +260,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         _disableInitializers();
     }
 
-    /// Was a constructor before design decision D-1. Everything it
-    /// asserted, it still asserts — a constructor simply does not write the proxy's storage.
+    /// An initialiser rather than a constructor because the contract is upgradeable (D-1): a
+    /// constructor would write the implementation's storage, not the proxy's.
     function initialize(IX402Config config, IX402StakeView stake, IERC20 asset)
         external
         initializer
@@ -271,7 +271,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         if (IERC20Decimals(address(asset)).decimals() != 6) revert AssetDecimalsNotSix();
 
         // A buyer's withdrawal must not mature while a voucher they signed before asking for it is
-        // still redeemable (`constants.rs:285`, a Rust build-time assert). Every term is a
+        // still redeemable. Every term is a
         // constant, so this folds to nothing and only guards a FRESH proxy's first
         // implementation — `initializer` never runs again on an upgrade. What holds the invariant
         // for every later implementation is CI:
@@ -288,7 +288,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// The upgrade door (D-1, D-17). The authority is `CONFIG.owner()`, READ FROM CONFIG on every
     /// call and never cached: moving the owner moves the upgrade authority of this contract in
-    /// the same transaction. The admin is NOT an upgrade authority since D-17.
+    /// the same transaction. The admin is NOT an upgrade authority.
     function _authorizeUpgrade(address) internal view override {
         if (msg.sender != CONFIG.owner()) revert NotOwner();
     }
@@ -313,7 +313,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     }
 
     /// Anyone may fund anyone. On Solana funding is a plain SPL transfer to the buyer's escrow
-    /// ATA and is equally open — `deposit_stake.rs:15-18` says the same thing out loud for the
+    /// ATA and is equally open — `deposit_stake.rs` says the same thing out loud for the
     /// provider side ("Not required to be the provider … a deposit can only ever increase what
     /// the provider owns"). Keeping it open here keeps the two paths the same.
     ///
@@ -348,7 +348,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     function depositFor(address buyer, uint64 amount) public nonReentrant {
         CONFIG.assertActive(buyer, msg.sender, address(0));
         if (buyer == address(0)) revert ZeroAddress();
-        if (amount == 0) revert ZeroAmount(); // deposit_stake.rs:56
+        if (amount == 0) revert ZeroAmount(); // deposit_stake.rs
         _pullExact(msg.sender, amount);
         _credit(buyer, amount);
     }
@@ -365,7 +365,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// The delta itself makes a fee-on-transfer surprise fail loudly rather than silently
     /// under-credit.
     ///
-    /// It is the EVM half of `initialize_config.rs:24-32`'s Token-2022 refusal: Solana can
+    /// It is the EVM half of `initialize_config.rs`'s Token-2022 refusal: Solana can
     /// refuse the *class* of token at configuration time because the mint declares its
     /// extensions; here the asset is an opaque upgradeable proxy that could grow a transfer fee
     /// after deployment, so the check has to be made on every transfer instead of once.
@@ -375,7 +375,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
     }
 
-    /// `deposit_stake.rs:75-92` — "Deposits accumulate: a second deposit adds to the first, it
+    /// `deposit_stake.rs` — "Deposits accumulate: a second deposit adds to the first, it
     /// does not replace it", and the same amount is added to the per-account figure and to the
     /// contract-wide total in the same statement sequence.
     ///
@@ -391,7 +391,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         emit Deposited(buyer, msg.sender, amount, e.balance);
     }
 
-    /// `events.rs::VoucherRedeemed` (`events.rs:201-213`), field for field and name for name. Two
+    /// `events.rs::VoucherRedeemed`, field for field and name for name. Two
     /// fields are indexed — the buyer whose money moved and the provider it moved to — because
     /// those are the two questions the reconciler asks of this log. `spentInWindow` is the
     /// running counter AFTER this redemption, which is the only published view of the buyer's cap
@@ -409,18 +409,18 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         uint64 spentInWindow
     );
 
-    /// `events.rs::EscrowLimitsSet` (`events.rs:192`). Both ceilings in one event because
+    /// `events.rs::EscrowLimitsSet`. Both ceilings in one event because
     /// they are only meaningful together: a per-call ceiling with no window cap bounds one
     /// redemption and nothing else.
     event EscrowLimitsSet(address indexed buyer, uint64 maxVoucherAmount, uint64 maxPerWindow);
 
     /// **The only door through which a buyer's money leaves on somebody else's submission.**
     ///
-    /// `redeem_voucher.rs:121`. The submitter is pinned to `Config::redeemer` and is consulted
+    /// The submitter is pinned to `Config::redeemer` and is consulted
     /// about nothing else: it cannot aim the money anywhere, because the provider comes out of the
     /// signed voucher and the treasury out of Config. The pin is about `seq` — a redemption
     /// advances `seqHigh`, so anyone who could land one could void every voucher a buyer had
-    /// already served (`redeem_voucher.rs:19-24`).
+    /// already served.
     ///
     /// **The whole authority over the money is the buyer's authorisation of the EIP-712 voucher**
     /// — its own signature, or a delegate's within the caps the buyer set on chain
@@ -495,7 +495,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// since the dispute upgrade** (the owner's decision): while paused nothing can redeem, so a
     /// tightened limit protects nothing the pause has not already closed.
     ///
-    /// `0` on either field is REFUSE, not "unlimited" (`state.rs:545-551`), which is why a
+    /// `0` on either field is REFUSE, not "unlimited", which is why a
     /// never-configured escrow pays nobody and why this function is the whole of what
     /// `open_escrow.rs` used to do.
     ///
@@ -536,7 +536,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         emit EscrowLimitsSet(buyer, maxVoucherAmount, maxPerWindow);
     }
 
-    /// `events.rs::WithdrawRequested` (`request_withdraw.rs:39-43`), field for field. The
+    /// `events.rs::WithdrawRequested`, field for field. The
     /// maturity instant is carried rather than left for a reader to add `WITHDRAW_DELAY_SECONDS`
     /// onto: the delay is a constant of *this* deployment, and a client that recomputed it would
     /// be recomputing a number a redeploy can move under it.
@@ -558,7 +558,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// has to travel as a message, which is what `SET_LIMITS_TYPEHASH` and [`_consumeAuth`] are.
     ///
     /// Pause-gated and blocklist-gated exactly as [`setLimits`] is (a divergence from
-    /// `set_escrow_limits.rs:16-19`, which takes no `Config` at all).
+    /// `set_escrow_limits.rs`, which takes no `Config` at all).
     function setLimitsBySig(
         address buyer,
         uint64 maxVoucherAmount,
@@ -578,11 +578,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         _setLimits(buyer, maxVoucherAmount, maxPerWindow);
     }
 
-    /// Starts the buyer's exit clock — `request_withdraw.rs:27-44`. It moves no money and it may
+    /// Starts the buyer's exit clock — `request_withdraw.rs`. It moves no money and it may
     /// be relayed. **Pause-gated and blocklist-gated since the dispute upgrade** (the owner's
     /// decision, reversing the earlier "never paused" rule).
     ///
-    /// The delay is `WITHDRAW_DELAY_SECONDS`, sized by `constants.rs:285`'s build-time assertion
+    /// The delay is `WITHDRAW_DELAY_SECONDS`, sized by `constants.rs`'s build-time assertion
     /// rather than chosen: every voucher the buyer signed *before* asking for their money back is
     /// dead before the withdrawal matures (3,600 > 2,220). `initialize` re-states that inequality
     /// because Solidity has no `const _: () = assert!(…)`.
@@ -622,7 +622,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         _requestWithdraw(buyer, amount);
     }
 
-    /// `handle_request_withdraw` (`request_withdraw.rs:27-44`), line for line.
+    /// `handle_request_withdraw`, line for line.
     ///
     /// **`amount == 0` cancels**, clock and all — the Anchor original's `if amount == 0 { 0 }`.
     /// It is not a special case bolted on: a standing request is a claim against a balance the
@@ -663,7 +663,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         emit WithdrawRequested(buyer, amount, availableAt);
     }
 
-    /// `events.rs::EscrowWithdrawn` (`withdraw.rs:145-150`) minus one field. The Anchor event
+    /// `events.rs::EscrowWithdrawn` minus one field. The Anchor event
     /// carries `destination` because on Solana the buyer names a token account; here the
     /// recipient is `msg.sender`, which is also the indexed `buyer`, so a `destination` field
     /// would be a second copy of one address and an indexer could not tell them apart anyway.
@@ -673,8 +673,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// from a smaller one.
     event EscrowWithdrawn(address indexed buyer, uint64 requested, uint64 amount);
 
-    /// The buyer takes their own money out of their own escrow — `handle_withdraw`
-    /// (`withdraw.rs:113-152`), and the second half of the two-step exit [`requestWithdraw`]
+    /// The buyer takes their own money out of their own escrow — `handle_withdraw`,
+    /// and the second half of the two-step exit [`requestWithdraw`]
     /// opens. A full compromise of every key held in an environment variable (the backend's)
     /// can neither stop a buyer taking their own money out nor take it for them. The cold ADMIN
     /// can hold it in place — pause and block close this door since D-19, an accepted risk
@@ -682,7 +682,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// # It takes no destination and pays `msg.sender`
     ///
-    /// `withdraw.rs:83-101` takes a `destination` token account and argues the program should not
+    /// `withdraw.rs` takes a `destination` token account and argues the program should not
     /// pin its owner, "because a key that could redirect this is already a key that could
     /// withdraw". That argument is true on Solana and **false here**, and the difference is not a
     /// preference: there a buyer's escrow authority is a PDA and their tokens live in some *other*
@@ -707,7 +707,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// # It is pause-gated and blocklist-gated (since the dispute upgrade)
     ///
-    /// `withdraw.rs:22-33` has "no `paused` check anywhere in this file", and this door followed
+    /// `withdraw.rs` has "no `paused` check anywhere in this file", and this door followed
     /// it until the owner decided otherwise: while paused, or while the buyer is blocked, the
     /// exit is refused. **Neither gate moves the money** — it stays the buyer's, in this escrow,
     /// and the exit reopens on unpause or unblock. A stolen admin key can therefore hold an exit
@@ -716,13 +716,13 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// # What it pays, and what it refuses
     ///
-    /// `min(requested, balance)`, exactly as `withdraw.rs:120`: a redemption may have landed
+    /// `min(requested, balance)`, exactly as `withdraw.rs`: a redemption may have landed
     /// during the wait, which is the intended ordering — the platform collects what the buyer
     /// already signed for, and the buyer takes the rest. The request is then spent whether or not
-    /// it was filled (`withdraw.rs:136-138`), because a partly-filled request left standing would
+    /// it was filled, because a partly-filled request left standing would
     /// be a claim the buyer never renewed against a balance the platform is still collecting from.
     ///
-    /// An **empty** escrow is refused instead (`withdraw.rs:123`, `EscrowInsufficient`) rather
+    /// An **empty** escrow is refused instead (`withdraw.rs`, `EscrowInsufficient`) rather
     /// than paid as zero and cleared, so a buyer whose money arrives a second later does not have
     /// to serve the whole delay again.
     ///
@@ -769,7 +769,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// The `nonce` and the `deadline` are INSIDE the signed struct, so a leaked relayer key can
     /// neither replay an authorisation nor extend one — it can only carry, once, the exact
     /// message the buyer already agreed to. Each door hashes a DISTINCT typehash (four of them in
-    /// `Voucher712`), so an authorisation collected at one door cannot be presented at another; that is the EIP-712 form of `attestation.rs:126`'s
+    /// `Voucher712`), so an authorisation collected at one door cannot be presented at another; that is the EIP-712 form of `attestation.rs`'s
     /// `assert!(ATTESTATION_MESSAGE_LEN != VOUCHER_MESSAGE_LEN)`, and strictly stronger, because
     /// two lengths can be made to collide by a future field and two typehashes cannot.
     ///
@@ -817,21 +817,21 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     ///
     /// # The order, and where each line comes from
     ///
-    /// `redeem_voucher.rs:38-43` states the Anchor order as "redeemer, pause, amount, `pay_to`,
+    /// `redeem_voucher.rs` states the Anchor order as "redeemer, pause, amount, `pay_to`,
     /// window, signature, sequence, spending limits, stake floor, balance". This function is that
     /// list minus `pay_to` (the EVM voucher drops the field: on Solana it makes the *off-chain*
     /// `payTo` a
     /// signed fact against the escrow PDA, and here `escrows[v.payer]` is derived from the signed
     /// payer with no second address to disagree with) and with **one deliberate reordering**:
     ///
-    /// **`seq` is checked BEFORE the signature; `redeem_voucher.rs:137-144` checks it after.**
+    /// **`seq` is checked BEFORE the signature; `redeem_voucher.rs` checks it after.**
     /// The EVM design specifies it here. It is strictly cheaper — a stale voucher is
     /// refused without paying for `ecrecover` — and it leaks nothing, because `seqHigh` is public
     /// state that `escrowOf` already returns to anybody who asks. Recorded in
     /// `docs/divergences.md`.
     ///
     /// **`ProviderBelowMinimumStake` is reinstated** at the Anchor program's position, after the
-    /// window limit and before the balance check (`redeem_voucher.rs:148-153`). The EVM design's
+    /// window limit and before the balance check. The EVM design's
     /// check
     /// list omits it; D-2 keeps it, because being paid is the counterpart of being slashable and
     /// the
@@ -859,9 +859,9 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // judgement call. It is not; `Cast`'s NatSpec carries the rule.
         uint64 nowTs = Cast.toUint64(block.timestamp);
 
-        if (v.amount == 0) revert ZeroAmount(); // redeem_voucher.rs:125
+        if (v.amount == 0) revert ZeroAmount(); // redeem_voucher.rs
 
-        // `attestation.rs:476-491` (`require_valid_voucher_window`), in its order. The Anchor
+        // `attestation.rs` (`require_valid_voucher_window`), in its order. The Anchor
         // original raises `InvalidVoucherWindow` for both of the first two; this port gives the
         // lifetime bound its own name, which is the Errors.sol rule that one condition gets one
         // name.
@@ -882,7 +882,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         //   `Panic(0x11)` instead of its named refusal. Both legs are pinned, at exact and
         //   `type(uint64).max` inputs, by `test_boundary_theVoucherClockWindowIsBoundedAtBothEnds`.
         //
-        // Anchor needs neither argument: `attestation.rs:483,487` use `saturating_add`, so there
+        // Anchor needs neither argument: `attestation.rs` use `saturating_add`, so there
         // the order is a preference and here it is load-bearing. That is a divergence, recorded
         // in `docs/divergences.md`.
         if (v.expiresAt <= v.issuedAt) revert InvalidVoucherWindow();
@@ -894,7 +894,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         }
         if (nowTs > v.expiresAt + Constants.REDEEM_GRACE_SECONDS) revert VoucherExpired();
 
-        // `state.rs::admit_seq` (`state.rs:576-580`). Strictly increasing, gaps allowed: exactly
+        // `state.rs::admit_seq`. Strictly increasing, gaps allowed: exactly
         // one redemption per `(buyer, seq)` as a fact of the chain, with one `uint64` and no
         // bitmap. Moved above the signature by design — see the note above.
         Escrow storage e = escrows[v.payer];
@@ -903,7 +903,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // D-17: the jump cap. `v.seq > e.seqHigh` was just checked, so the difference cannot wrap.
         if (v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) revert VoucherSeqGapTooLarge();
 
-        // `redeem_voucher.rs:137-142`, widened for delegation. [`_voucherAuthority`] is the whole
+        // `redeem_voucher.rs`, widened for delegation. [`_voucherAuthority`] is the whole
         // authority over the money: the payer's key, or a delegate the payer authorised. It
         // returns the delegate, or `address(0)` when the payer itself signed.
         address delegate =
@@ -914,7 +914,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // signature has been recovered; this is the redeem paths' only pause check (audit F R7).
         CONFIG.assertActive(v.payer, v.provider, delegate);
 
-        // `state.rs::admit_spend` (`state.rs:591-612`). A limit of `0` refuses everything, so an
+        // `state.rs::admit_spend`. A limit of `0` refuses everything, so an
         // unarmed escrow needs no separate branch. A voucher passes if it fits the current pair
         // of caps, or the pair held when the payer last lowered them, while that hold runs
         // ([`_heldRefusal`]); a pair is checked whole, never field by field. The hold is read
@@ -949,12 +949,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
             }
         }
 
-        // `redeem_voucher.rs:148-153` — being paid is the counterpart of being slashable.
-        // `bonded` only: stake already asked back is not backing anybody's traffic
-        // (`state.rs:442-447`).
+        // `redeem_voucher.rs` — being paid is the counterpart of being slashable.
+        // `bonded` only: stake already asked back is not backing anybody's traffic.
         if (STAKE.bondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
 
-        // `redeem_voucher.rs:155-158`. Its job is the DIAGNOSIS: without it `e.balance -=` still
+        // `redeem_voucher.rs`. Its job is the DIAGNOSIS: without it `e.balance -=` still
         // refuses, but as `Panic(0x11)`, which is not what an operator needs to read.
         if (e.balance < v.amount) revert EscrowInsufficient();
 
@@ -974,10 +973,10 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // argument restated, not a new one. `Cast`'s NatSpec carries the rule.
         uint64 spentAfter = Cast.toUint64(spent);
         e.spentInWindow = spentAfter;
-        // `state.rs:609-611` — never moved backwards: a clock that stepped back must not hand
+        // `state.rs` — never moved backwards: a clock that stepped back must not hand
         // capacity to whoever noticed.
         e.windowStartedAt = nowTs > e.windowStartedAt ? nowTs : e.windowStartedAt;
-        e.totalRedeemed += v.amount; // redeem_voucher.rs:206-209
+        e.totalRedeemed += v.amount; // redeem_voucher.rs
         totalEscrowed -= v.amount; // the pooled solvency counter; `totalFunded` is NOT touched
         uint64 delegateSpentAfter;
         if (delegate != address(0)) {
@@ -986,7 +985,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
             d.windowStartedAt = nowTs > d.windowStartedAt ? nowTs : d.windowStartedAt;
         }
 
-        // Redeem into hold: the two payouts of `redeem_voucher.rs:170`/`:186` move to
+        // Redeem into hold: the two payouts of `redeem_voucher.rs`/`:186` move to
         // [`collectHeld`], and this path transfers no token. The take rate and the clock are
         // frozen here; `fee` is computed now only for the event, by the same split collect makes.
         HeldPayment storage h = heldPayments[v.payer][v.seq];
@@ -1103,7 +1102,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         (uint64 fee, uint64 providerAmount) = Fee.splitFee(amount, h.takeRateBps);
 
         // --- interactions --------------------------------------------------------------------
-        // Guarded on zero exactly as `redeem_voucher.rs:170`/`:186` are, so a 0% take rate makes
+        // Guarded on zero exactly as `redeem_voucher.rs`/`:186` are, so a 0% take rate makes
         // no call at all and a blocklisted treasury cannot refuse a payment of nothing.
         if (providerAmount > 0) ASSET.safeTransfer(provider, providerAmount);
         if (fee > 0) ASSET.safeTransfer(p.treasury, fee);

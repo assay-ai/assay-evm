@@ -22,7 +22,7 @@ import {MathOverflow} from "../Errors.sol";
 /// revert is dead code; that proof belongs in a comment at the site, not in a bare cast.
 ///
 /// Its Anchor counterpart is `u64::try_from(x).map_err(|_| error!(ErrorCode::MathOverflow))` —
-/// `execute_slash.rs:310` — which is likewise one spelling used everywhere rather than a judgement
+/// `execute_slash.rs` — which is likewise one spelling used everywhere rather than a judgement
 /// made per site.
 library Cast {
     function toUint64(uint256 value) internal pure returns (uint64) {

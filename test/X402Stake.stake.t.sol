@@ -107,8 +107,8 @@ contract X402StakeTest is Fixture {
         assertEq(stake.totalWithdrawn(), 400_000_000);
     }
 
-    /// The second request restarts ONE clock for the whole balance
-    /// (`request_unstake.rs:51-55`), so the first amount waits again. It can only ever delay a
+    /// The second request restarts ONE clock for the whole balance,
+    /// so the first amount waits again. It can only ever delay a
     /// withdrawal, never let an amount out early.
     function test_boundary_aSecondUnstakeRestartsTheClockForTheWholeBalance() public {
         uint64 period = config.params().unbondingPeriodSeconds;
@@ -150,7 +150,7 @@ contract X402StakeTest is Fixture {
         assertEq(stake.stakeOf(provider).unbonding, 400_000_000, "nothing left the provider");
     }
 
-    /// The three checks are ordered as `withdraw_stake.rs:86-100` orders them, and the order is
+    /// The three checks are ordered as `withdraw_stake.rs` orders them, and the order is
     /// what this pins: an amount beyond `unbonding` is diagnosed as such even when the clock has
     /// ALSO not run out. Delete the first check and `withdrawableOf`'s min subsumes it at every
     /// matured instant — but before maturity the diagnosis flips to the clock, which tells the

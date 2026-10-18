@@ -80,8 +80,8 @@ contract VoucherRecoverer {
 ///   - the struct hash — every one of the eight fields is in the preimage, proved by moving each
 ///     one on its own (`test_flippingAnySingleSignedFieldChangesTheRecoveredSigner`).
 ///
-/// The Anchor program narrows the same three: `attestation.rs:425` writes `b"x402:voucher:v2"`
-/// at offset 0 and `crate::ID` at 15, and the type doc at `attestation.rs:441-453` records that
+/// The Anchor program narrows the same three: `attestation.rs` writes `b"x402:voucher:v2"`
+/// at offset 0 and `crate::ID` at 15, and the type doc at `attestation.rs` records that
 /// the cluster half of that is carried by "mainnet must be deployed under a different program
 /// id than devnet" — an operational rule. `chainId` makes the EVM half of it arithmetic.
 ///
@@ -257,7 +257,7 @@ contract X402EscrowDomainTest is Fixture {
 
     /// ecrecover returns address(0) for garbage. Forget the check and any garbage
     /// "recovers" to a zero address — the EVM counterpart of the pointer-chasing trap the
-    /// Solana precompile parser defends against (`attestation.rs:504-507`).
+    /// Solana precompile parser defends against.
     ///
     /// `r = 0` is the deterministic garbage: `r` is a curve point's x-coordinate and must lie in
     /// `[1, n-1]`, so `ecrecover` returns `address(0)` for it on every input, every time. A
@@ -729,7 +729,7 @@ contract X402EscrowDomainTest is Fixture {
 
     /// CROSS-KIND REPLAY. A distinct typehash per kind puts the guard inside the hashed
     /// preimage, which is strictly stronger than the Solana design's "the message lengths
-    /// differ" check (`attestation.rs:126`'s `const _: () = assert!(ATTESTATION_MESSAGE_LEN !=
+    /// differ" check (`attestation.rs`'s `const _: () = assert!(ATTESTATION_MESSAGE_LEN !=
     /// VOUCHER_MESSAGE_LEN)`): lengths can be made to collide by a future field, typehashes
     /// cannot.
     function test_aSetLimitsSignatureIsNotAVoucherSignature() public view {

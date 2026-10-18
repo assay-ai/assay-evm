@@ -5,7 +5,7 @@ import {Constants} from "../Constants.sol";
 import {Cast} from "./Cast.sol";
 
 /// Ported verbatim from the Anchor program (repository `assay-solana`):
-/// `programs/x402-payment/src/state.rs:633` (`split_fee`) and `instructions/execute_slash.rs:305`
+/// `programs/x402-payment/src/state.rs` (`split_fee`) and `instructions/execute_slash.rs`
 /// (`bps_of`).
 ///
 /// The fee floors and the provider takes the remainder BY SUBTRACTION, so
@@ -39,7 +39,7 @@ library Fee {
         providerAmount = amount - fee; // checked; fee <= amount because takeRateBps <= 10_000
     }
 
-    /// `execute_slash.rs:305`. The penalty split's share function: the agents' share and the
+    /// The penalty split's share function: the agents' share and the
     /// platform's share are each `bpsOf(applied, …)` and the provider keeps what is left, so the
     /// same "one division per share, remainder by subtraction" shape holds there too.
     function bpsOf(uint64 amount, uint16 bps) internal pure returns (uint64) {

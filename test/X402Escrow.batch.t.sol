@@ -703,7 +703,7 @@ contract X402EscrowBatchTest is Fixture {
 
     /// Order, and it is only visible to a submission that violates BOTH guards at once. A suite of
     /// single-violation tests passes against either order; this one pins the redeemer pin first,
-    /// which is `redeemVoucher`'s order and the one `redeem_voucher.rs:38-43` names.
+    /// which is `redeemVoucher`'s order and the one `redeem_voucher.rs` names.
     function test_wrongSigner_theRedeemerPinIsCheckedBeforeThePauseFlag() public {
         (Voucher[] memory vs, bytes[] memory sigs) = _batch(2);
         vm.prank(admin);

@@ -188,7 +188,7 @@ contract X402ConfigAdminTest is Test {
         _deploy(p, admin);
     }
 
-    /// `state.rs:175` widens both shares to `u32` before adding them. The reason is not
+    /// `state.rs` widens both shares to `u32` before adding them. The reason is not
     /// cosmetic: two `uint16` shares can sum past `type(uint16).max`, and in checked Solidity
     /// that is a bare `Panic(0x11)` raised *before* the comparison — the parameter set would be
     /// refused, but with an arithmetic panic instead of the name an operator can act on. This
@@ -261,7 +261,7 @@ contract X402ConfigAdminTest is Test {
     }
 
     /// **The set-wise property.** `validate` runs once, over the whole `ParamSet`, exactly as
-    /// `initialize_config.rs:92` runs `config.validate()` after every field has landed.
+    /// `initialize_config.rs` runs `config.validate()` after every field has landed.
     ///
     /// Neither share has an individual bound; only their sum does, plus `agent > 0`. So a
     /// validator that judged each field on its own against some per-field ceiling would refuse
@@ -292,8 +292,8 @@ contract X402ConfigAdminTest is Test {
     ///
     /// The order is what decides which name a **doubly** invalid config gets, and that is an
     /// operational property, not a cosmetic one: an operator reading the Solana runbook and the
-    /// EVM runbook must see the same name for the same bad parameter set. `state.rs:134-164` runs
-    /// treasury, redeemer, then `validate_split` (`state.rs:168-191`: take rate, split, cap), then
+    /// EVM runbook must see the same name for the same bad parameter set. `state.rs` runs
+    /// treasury, redeemer, then `validate_split`, then
     /// unbonding-low, unbonding-high, minimum stake, verifier daily cap.
     ///
     /// Each row below violates two bounds at once and asserts the name of the **earlier** one, so
@@ -383,7 +383,7 @@ contract X402ConfigAdminTest is Test {
         assertFalse(config.paused(), "and it is reversible");
     }
 
-    /// `set_paused.rs:41` is `config.paused = paused;` — an **idempotent assignment**, not a
+    /// `set_paused.rs` is `config.paused = paused;` — an **idempotent assignment**, not a
     /// toggle. The difference is not academic: under a toggle, an operator who hits pause twice
     /// un-pauses the system, during the incident that made them hit it twice.
     ///

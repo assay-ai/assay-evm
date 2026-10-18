@@ -14,13 +14,13 @@ import {
 /// cross-kind replay — a signature collected for `SetLimits` cannot be presented at
 /// `redeemVoucher`'s door. That guard lives inside the hashed preimage, which is strictly
 /// stronger than the Solana design's "the message lengths differ" length check
-/// (`attestation.rs:126` — `const _: () = assert!(ATTESTATION_MESSAGE_LEN !=
+/// (`attestation.rs` — `const _: () = assert!(ATTESTATION_MESSAGE_LEN !=
 /// VOUCHER_MESSAGE_LEN)`; two lengths can be made to collide by a future field, two typehashes
 /// cannot).
 ///
 /// # What each of these is a port of
 ///
-/// [`hashVoucher`] is `Voucher::signed_message` (`attestation.rs:422-437`), which writes 239
+/// [`hashVoucher`] is `Voucher::signed_message`, which writes 239
 /// bytes at hand-chosen literal offsets. Everything that hand-written encoder has to say out
 /// loud, EIP-712 says structurally instead:
 ///
@@ -31,14 +31,14 @@ import {
 ///   - its fixed-width little-endian field packing becomes one 32-byte word per field;
 ///   - its `VOUCHER_MESSAGE_LEN != ATTESTATION_MESSAGE_LEN` assertion becomes the typehash.
 ///
-/// One field of the Anchor struct has no counterpart here: `pay_to` (`attestation.rs:345`).
+/// One field of the Anchor struct has no counterpart here: `pay_to`.
 /// It is dropped because on EVM one contract holds every buyer, so "which escrow" is fully
 /// determined by `verifyingContract` + `payer` and a `payTo` field would be a second source for
 /// one identity. `Types.sol`'s header carries that decision; `Errors.sol` records that
-/// `EscrowMismatch` (`redeem_voucher.rs:130-133`) goes with it.
+/// `EscrowMismatch` goes with it.
 ///
 /// [`hashSetLimits`] and [`hashRequestWithdraw`] port no encoder at all, because on Solana the
-/// buyer signs the *instruction* (`open_escrow.rs:96`'s `buyer.is_signer`) and there is nothing
+/// buyer signs the *instruction* (`open_escrow.rs`'s `buyer.is_signer`) and there is nothing
 /// to type. Here the consent travels as a message somebody else submits, so it needs a type —
 /// with a `nonce` and a `deadline`, which an instruction signature did not need.
 ///

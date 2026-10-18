@@ -15,22 +15,22 @@ interface IX402Config {
     /// meaningful together, and `state.rs::Config::validate` is written the same way.
     function params() external view returns (ParamSet memory);
 
-    /// `Config.paused` — `state.rs:85`. Since D-19 it closes every user door, the owner exits
-    /// included (a deliberate reversal of `set_paused.rs:13-22`), and leaves open only what
+    /// `Config.paused` — `state.rs`. Since D-19 it closes every user door, the owner exits
+    /// included (a deliberate reversal of `set_paused.rs`), and leaves open only what
     /// releases a hold or removes authority. It never moves money.
     function paused() external view returns (bool);
 
-    /// `Config.admin` — `state.rs:23`. The operational key. NOT the upgrade authority since D-17.
+    /// `Config.admin` — `state.rs`. The operational key. NOT the upgrade authority (D-17).
     function admin() external view returns (address);
 
     /// The upgrade authority for all three contracts (D-17), because the other two read this
     /// live rather than storing their own copy. Two-step transferable, never renounceable.
     function owner() external view returns (address);
 
-    /// `VerifierKey::assert_can_sign` as a predicate — `state.rs:248`.
+    /// `VerifierKey::assert_can_sign` as a predicate — `state.rs`.
     function canSign(address verifier) external view returns (bool);
 
-    /// `VerifierKey::assert_can_sign` — `state.rs:248`. Reverts `VerifierNotRegistered`,
+    /// `VerifierKey::assert_can_sign` — `state.rs`. Reverts `VerifierNotRegistered`,
     /// `VerifierRevoked` or `VerifierKeyExpired` rather than returning false, so a caller cannot
     /// ignore it.
     function assertCanSign(address verifier) external view;

@@ -5,7 +5,7 @@ import {Constants} from "../Constants.sol";
 import {Cast} from "./Cast.sol";
 
 /// The rolling 24-hour counter, ported verbatim from
-/// the Anchor program's `programs/x402-payment/src/state.rs:413` (`decay_window`), in the
+/// the Anchor program's `programs/x402-payment/src/state.rs` (`decay_window`), in the
 /// `assay-solana` repository.
 ///
 /// It DRAINS rather than resetting: a counter anchored at `startedAt` gives capacity back
@@ -13,8 +13,8 @@ import {Cast} from "./Cast.sol";
 /// early. The documented residual is unchanged — an adversary can spend 2x across an
 /// arbitrary 24 hours, and that is accepted on both chains.
 ///
-/// Three callers, one implementation: the buyer's spend window (`state.rs:599`), the provider's
-/// slash window (`state.rs:263`), and the verifier key's daily cap (`state.rs:463`).
+/// Three callers, one implementation: the buyer's spend window, the provider's
+/// slash window, and the verifier key's daily cap.
 ///
 /// **What the unsigned port changes, and what it does not.** The Anchor original takes `i64`
 /// timestamps (Solana's `unix_timestamp` is signed) and reaches the "clock went backwards" case

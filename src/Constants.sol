@@ -12,7 +12,7 @@ pragma solidity 0.8.24;
 /// is positive, so nothing is lost, and the unsigned type removes the negative-duration cases
 /// the Anchor code has to reason about.
 ///
-/// **What was deliberately left behind.** `constants.rs:5-60` also declares six PDA seeds —
+/// **What was deliberately left behind.** `constants.rs` also declares six PDA seeds —
 /// `CONFIG_SEED`, `STAKE_SEED`, `STAKE_VAULT_SEED`, `VERIFIER_SEED`, `SLASH_RECORD_SEED`,
 /// `ESCROW_SEED`. They are Solana address-derivation artefacts and have no EVM meaning: there
 /// are no program-derived addresses here, so the state they seed is a `mapping` keyed by the
@@ -27,7 +27,7 @@ pragma solidity 0.8.24;
 library Constants {
     // --- delays and windows ----------------------------------------------------------------
 
-    /// constants.rs:266 — `SLASH_DELAY_SECONDS: i64 = 72 * 3_600`. The window in which a human
+    /// constants.rs — `SLASH_DELAY_SECONDS: i64 = 72 * 3_600`. The window in which a human
     /// holding the admin key can see a proposal and revoke the key that signed it, and in which
     /// the provider can `disputeSlash`.
     ///
@@ -54,7 +54,7 @@ library Constants {
     /// nobody rules on must not become a hold for ever.
     uint64 internal constant DISPUTE_TIMEOUT_SECONDS = 30 * 86_400;
 
-    /// constants.rs:273 — `WITHDRAW_DELAY_SECONDS: i64 = 3_600`. Sized by the invariant noted
+    /// constants.rs — `WITHDRAW_DELAY_SECONDS: i64 = 3_600`. Sized by the invariant noted
     /// below [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`], not chosen.
     uint64 internal constant WITHDRAW_DELAY_SECONDS = 3600;
 
@@ -87,25 +87,25 @@ library Constants {
     /// the provider as it does in the slash design.
     uint64 internal constant HELD_TIMEOUT_SECONDS = 7 * 86_400;
 
-    /// constants.rs:215 — `REDEEM_GRACE_SECONDS: i64 = 30 * 60`.
+    /// constants.rs — `REDEEM_GRACE_SECONDS: i64 = 30 * 60`.
     uint64 internal constant REDEEM_GRACE_SECONDS = 30 * 60;
 
-    /// constants.rs:230 — `VOUCHER_MAX_LIFETIME_SECONDS: i64 = 5 * 60`. The widest window a
+    /// constants.rs — `VOUCHER_MAX_LIFETIME_SECONDS: i64 = 5 * 60`. The widest window a
     /// voucher may claim for itself, `expiresAt - issuedAt`. The original design put this bound in
     /// the backend, which is the component the threat model assumes is compromised; it lives on
     /// chain for that reason.
     uint64 internal constant VOUCHER_MAX_LIFETIME_SECONDS = 5 * 60;
 
-    /// constants.rs:244 — `CLOCK_SKEW_TOLERANCE_SECONDS: i64 = 120`. Deliberately one-sided: a
+    /// constants.rs — `CLOCK_SKEW_TOLERANCE_SECONDS: i64 = 120`. Deliberately one-sided: a
     /// voucher may claim to be younger than the chain believes, never older.
     uint64 internal constant CLOCK_SKEW_TOLERANCE_SECONDS = 120;
 
-    /// constants.rs:258 — derived, not typed, exactly as the Anchor source derives it, so it
+    /// constants.rs — derived, not typed, exactly as the Anchor source derives it, so it
     /// cannot disagree with the three constants it is the sum of. 2,220s = 37 minutes.
     uint64 internal constant MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS =
         CLOCK_SKEW_TOLERANCE_SECONDS + VOUCHER_MAX_LIFETIME_SECONDS + REDEEM_GRACE_SECONDS;
 
-    // **The invariant constants.rs:285 makes a build failure, and where it went.**
+    // **The invariant constants.rs makes a build failure, and where it went.**
     //
     // ```text
     // WITHDRAW_DELAY_SECONDS (3600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2220)
@@ -131,41 +131,41 @@ library Constants {
     // red, and any redeployment of the escrow becomes uninitialisable. Nothing here constrains a
     // *parameter*; `unbondingPeriodSeconds` and the rest are X402Config's `_validate` to bound.
 
-    /// constants.rs:79 — `SLASH_WINDOW_SECONDS: i64 = 86_400`. One width for two rolling
+    /// constants.rs — `SLASH_WINDOW_SECONDS: i64 = 86_400`. One width for two rolling
     /// counters: the per-provider slash cap and the buyer escrow's own daily ceiling.
     uint64 internal constant SLASH_WINDOW_SECONDS = 86_400;
 
-    /// constants.rs:206 — `SLASH_EXECUTION_GRACE_SECONDS: i64 = 7 * 86_400`. Measured from
+    /// constants.rs — `SLASH_EXECUTION_GRACE_SECONDS: i64 = 7 * 86_400`. Measured from
     /// `executableAt`, so the provider's worst case is the delay plus this.
     uint64 internal constant SLASH_EXECUTION_GRACE_SECONDS = 7 * 86_400;
 
-    /// constants.rs:142 — `MAX_ATTESTATION_LIFETIME_SECONDS: i64 = 7 * 86_400`. Bounds how long
+    /// constants.rs — `MAX_ATTESTATION_LIFETIME_SECONDS: i64 = 7 * 86_400`. Bounds how long
     /// one judgement stays actionable, which is not the same thing as how long a key may sign.
     uint64 internal constant MAX_ATTESTATION_LIFETIME_SECONDS = 7 * 86_400;
 
-    /// constants.rs:155 — `MAX_VERIFIER_KEY_LIFETIME_SECONDS: i64 = 365 * 86_400`. Makes the
+    /// constants.rs — `MAX_VERIFIER_KEY_LIFETIME_SECONDS: i64 = 365 * 86_400`. Makes the
     /// rotation schedule a chain-enforced control rather than a calendar reminder, and it fails
     /// safe: an unrotated key stops being able to slash.
     uint64 internal constant MAX_VERIFIER_KEY_LIFETIME_SECONDS = 365 * 86_400;
 
-    /// constants.rs:171 — `MIN_UNBONDING_PERIOD_SECONDS: i64 = 11 * 86_400`. Sized by Anchor as
+    /// constants.rs — `MIN_UNBONDING_PERIOD_SECONDS: i64 = 11 * 86_400`. Sized by Anchor as
     /// the path from breach to executed penalty (7d SLA window + 3d dispute + 1d margin). On EVM
     /// what it must cover is the breach-to-PROPOSAL leg: once proposed, `pendingSlash` holds the
     /// penalty whatever the slash delay. Below it, a provider exits before a judgement lands.
     uint64 internal constant MIN_UNBONDING_PERIOD_SECONDS = 11 * 86_400;
 
-    /// constants.rs:186 — `MAX_UNBONDING_PERIOD_SECONDS: i64 = 30 * 24 * 3_600`. Defends the
+    /// constants.rs — `MAX_UNBONDING_PERIOD_SECONDS: i64 = 30 * 24 * 3_600`. Defends the
     /// provider against the key that sets the parameter: an unbounded period freezes stake for
     /// as long as the admin cares to leave it there.
     uint64 internal constant MAX_UNBONDING_PERIOD_SECONDS = 30 * 24 * 3600;
 
     // --- basis points ----------------------------------------------------------------------
 
-    /// constants.rs:89 — `MAX_TAKE_RATE_BPS: u16 = 3_000`. Not the shipped default (10%); the
+    /// constants.rs — `MAX_TAKE_RATE_BPS: u16 = 3_000`. Not the shipped default (10%); the
     /// point past which the parameter has stopped being a take rate.
     uint16 internal constant MAX_TAKE_RATE_BPS = 3_000;
 
-    /// constants.rs:132 — `MAX_SLASH_CAP_BPS: u16 = 5_000`. It bounds ONE record's frozen
+    /// constants.rs — `MAX_SLASH_CAP_BPS: u16 = 5_000`. It bounds ONE record's frozen
     /// `capAllowance` and the provider's meter per rolling window. It is **not** "the provider
     /// keeps half": the window decays linearly, so up to about twice the cap can be applied in any
     /// 24 h, it re-arms every window, and at 5 000 bps a provider can lose all of its stake in a
@@ -173,7 +173,7 @@ library Constants {
     /// judgements, not this constant.
     uint16 internal constant MAX_SLASH_CAP_BPS = 5_000;
 
-    /// constants.rs:63 — `BPS_DENOMINATOR: u64 = 10_000`. Narrowed to `uint16` here because every
+    /// constants.rs — `BPS_DENOMINATOR: u64 = 10_000`. Narrowed to `uint16` here because every
     /// value measured against it is a `uint16` bps.
     ///
     /// **The hazard the narrowing carries, and the rule that avoids it.** Solidity evaluates

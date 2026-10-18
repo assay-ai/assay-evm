@@ -88,7 +88,7 @@ contract FeeTest is Test {
 
     /// Dust pays no fee, and that is a decision rather than a rounding accident.
     ///
-    /// The three cases above the divider are `state.rs:953-958` verbatim and all use one rate, so
+    /// The three cases above the divider are `state.rs` verbatim and all use one rate, so
     /// on their own they cannot see a `splitFee` that ignores its `takeRateBps` argument entirely
     /// (measured: MUTATION-LOG.md row E4). The cases below add a second rate so this test carries
     /// its own rate sensitivity instead of borrowing it from the 11-row table; they are derived
@@ -143,7 +143,7 @@ contract FeeTest is Test {
         // Dust floors away, exactly as it does in splitFee.
         assertEq(Fee.bpsOf(9, 1_000), 0);
         assertEq(Fee.bpsOf(10, 1_000), 1);
-        // The execute_slash.rs:170-171 shares of a $1.00 penalty at the shipped 70/20 split.
+        // The execute_slash.rs shares of a $1.00 penalty at the shipped 70/20 split.
         assertEq(Fee.bpsOf(1_000_000, 7_000), 700_000);
         assertEq(Fee.bpsOf(1_000_000, 2_000), 200_000);
     }
@@ -181,7 +181,7 @@ contract FeeTest is Test {
         return uint64((numerator - (numerator % BPS)) / BPS);
     }
 
-    /// `bpsOf`'s own caller, ported as a property: execute_slash.rs:170-178 takes two independent
+    /// `bpsOf`'s own caller, ported as a property: execute_slash.rs takes two independent
     /// bps shares of the applied penalty and gives the provider the remainder BY SUBTRACTION.
     /// Whenever the two shares fit inside 10,000 bps, that three-way split neither loses nor
     /// invents a base unit — the same guarantee `splitFee` makes for the two-way one.
@@ -204,7 +204,7 @@ contract FeeTest is Test {
 
     // --- the checked narrowing -------------------------------------------------------------
 
-    /// `execute_slash.rs:310` narrows with `u64::try_from(...)` and yields `MathOverflow`; a bare
+    /// `execute_slash.rs` narrows with `u64::try_from(...)` and yields `MathOverflow`; a bare
     /// `uint64(...)` cast in Solidity truncates silently instead. Asserted at the exact boundary:
     /// the largest share that still fits, then the very next amount, whose share is `2**64`.
     function test_bpsOfRevertsMathOverflowWhenTheNarrowingWouldLoseABit() public {
@@ -232,7 +232,7 @@ contract FeeTest is Test {
     }
 
     /// The same guard on the other entry point. Note this half is deliberately STRICTER than the
-    /// Anchor original — `state.rs:634-635` narrows the fee with a bare `as u64`, which truncates
+    /// Anchor original — `state.rs` narrows the fee with a bare `as u64`, which truncates
     /// in Rust too — so it is asserted here rather than inherited. See `Fee.narrow`'s NatSpec.
     function test_splitFeeRevertsMathOverflowWhenTheNarrowingWouldLoseABit() public {
         vm.expectRevert(MathOverflow.selector);

@@ -322,7 +322,7 @@ contract X402EscrowWithdrawTest is Fixture {
         );
     }
 
-    /// An EMPTY escrow is refused rather than paid as zero and cleared — `withdraw.rs:123`. The
+    /// An EMPTY escrow is refused rather than paid as zero and cleared — `withdraw.rs`. The
     /// standing request SURVIVES, so a buyer whose money arrives a second later does not have to
     /// serve the whole delay again. Nothing else in the suite reaches `EscrowInsufficient`.
     function test_wrongState_anEmptyEscrowIsRefusedAndTheRequestSurvives() public {
@@ -371,7 +371,7 @@ contract X402EscrowWithdrawTest is Fixture {
         assertEq(usdg.balanceOf(poor), 400_000);
     }
 
-    /// A partly-filled request IS spent — `withdraw.rs:136-138`. The two halves are opposite
+    /// A partly-filled request IS spent — `withdraw.rs`. The two halves are opposite
     /// answers to "was anything paid", and only a fixture where a redemption took *some* of the
     /// balance can tell them apart.
     function test_happyPath_aPartlyFilledRequestIsSpentAllTheSame() public {
