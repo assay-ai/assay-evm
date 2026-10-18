@@ -19,11 +19,27 @@ restored from a byte-exact copy whose SHA-256 is checked before the next row. Se
 order in which each contract surface was implemented; a "round" names that surface (the Window
 round, the redeem round, and so on), and a "follow-up round" is a later pass over the same surface
 after code review. Row ids (W1a, S8, C35, T13, ...) are stable and are cited from code comments.
-Decision ids D-1 ... D-15 are defined in `docs/design-decisions.md`.
+Decision ids (`D-1`, `D-17`, ...) are defined in `docs/design-decisions.md`.
 
 Throughout the log, probe and fixture files (for example `test/_C22Probe.t.sol`,
 `X402EscrowT10ReentrancyProbe.t.sol`, `*.T12GOOD.sol`) and the `mutate.py` helper were temporary
 working files used while mutating. They are not committed to this repository.
+
+**Rows for code that no longer exists.** This is an evidence log, so rows are not rewritten
+after the fact. The rows below describe code that has since been removed; they are kept as the
+record of what was measured, and they are marked here rather than deleted:
+
+- `depositWithPermit2`, `Permit2NotConfigured` and the `PERMIT2` slot (rows E5, E6, E10–E13,
+  E23 and the DX1 degenerates) — the door went in D-18, the slot at the fresh deployment (D-22);
+- `recoverVoucherSigner` and the lenient `tryRecover` (the `Voucher712` / `recoverVoucherSigner`
+  section) — removed in D-18;
+- `verifierExpiry`, `Fee.narrow` / `Window.narrow`, `slashProviderBps` and
+  `VerifierDailyCapExceeded` — removed in D-18 and D-20;
+- the `newAdmin` half of `updateConfig` (rows C31, C32, C39, C41, C43, C44): the argument and
+  `AdminChangeRequiresOwner` went at the fresh deployment (D-22), and `updateConfig` now takes
+  the parameter set only;
+- `X402Config.initializeV2` and the pre-upgrade copies under `test/helpers/legacy/` — removed at
+  the fresh deployment (D-22).
 
 ---
 
@@ -683,7 +699,7 @@ announced. It does not, and cannot, prove that nothing else was enrolled.
 
 ---
 
-## `src/X402Escrow.sol` (storage, `deposit`, `depositFor`, `depositWithPermit2`)
+## `src/X402Escrow.sol` (storage, `deposit`, `depositFor`, `depositWithPermit2`) — Permit2 rows removed code
 
 Every row: the mutation applied to `src/X402Escrow.sol` alone, the *named* test run on its own
 (`forge test --match-contract X402EscrowDepositTest --match-test <name>`), the verbatim result, then
@@ -824,7 +840,7 @@ still give their recorded verdicts (`controls exit=0`, `restored GOOD: True`).
 
 ---
 
-## `src/libraries/Voucher712.sol` and `X402Escrow.recoverVoucherSigner` / `_recover`
+## `src/libraries/Voucher712.sol` and `X402Escrow.recoverVoucherSigner` / `_recover` — `recoverVoucherSigner` is removed code
 
 Every row: the mutation applied to one source file, the *named* test run on its own
 (`forge test --match-contract X402EscrowDomainTest --match-test <name>`), the verbatim result, then

@@ -517,7 +517,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
 
     /// **`address(0)` is refused**: with no arbiter a dispute is a free 30-day veto (audit A
     /// M-2). A lost or compromised arbiter is REPLACED, never removed. (Before the first
-    /// appointment the slot reads `address(0)`; the runbook appoints it in the upgrade session.)
+    /// appointment the slot reads `address(0)`; the runbook appoints it after the deploy.)
     ///
     /// The arbiter is a separate person: never the admin, the redeemer or a live verifier
     /// ([`_assertRolesDistinct`], `InvalidArbiter`).

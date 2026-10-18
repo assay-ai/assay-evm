@@ -5,12 +5,13 @@ messages — places a reader has to already know about. **The rule for every
 row below is that it names which side is authoritative**, because a divergence nobody has ruled on
 is not a divergence — it is a bug waiting for whoever reads the doc first.
 
-Two tables. The first is the port against its own design specification and against the Anchor
-source (the Solana program in the `assay-solana` repo, `programs/x402-payment/src/`). The
-second is what `script/check-errors.sh` found on its first run.
+Section 1 is the port against its own design specification and against the Anchor source (the
+Solana program in the `assay-solana` repo, `programs/x402-payment/src/`). Section 2 is the one
+behaviour the Anchor program does not have yet. The program has never been deployed and will be
+reworked to follow this code (D-22), so these rows record intent rather than a parity contract.
 
 **A note on references.** Section marks such as `§C.2` or `§D.5` refer to the original design
-specification for this port, which is not published. Decision ids `D-1` … `D-15` are defined in
+specification for this port, which is not published. Decision ids (`D-1`, `D-17`, ...) are defined in
 `design-decisions.md`. Rust file names (`redeem_voucher.rs`, `state.rs:442`, `error.rs:74`) refer to
 the Anchor program.
 
@@ -86,59 +87,7 @@ an upgrade, not a redeploy.
 
 ---
 
-## 2. Errors declared with no producer — removed in D-18
-
-The error-catalogue gate (`script/check-errors.sh`) enumerates every `error X();` in
-`src/Errors.sol` and every `revert X()` in `src/`, and reports the difference. Its first run found
-five, and the decision then was to KEEP them for name parity with `error.rs`.
-
-**D-18 reversed that decision**: a reader of `Errors.sol`, or an auditor, reads a declared error as
-a condition that is checked on chain, and these five are not. They were removed, with their entries
-in the backend's `error-selectors.ts`:
-
-| # | Error | Why it had no producer | What fires instead |
-|---|---|---|---|
-| 1 | `EscrowLimitsRequireBuyer` (`error.rs:165`, `open_escrow.rs:96`) | It names "non-zero limits set with NO buyer authorisation offered at all". `setLimits` takes `msg.sender` as the buyer, and `setLimitsBySig` refuses first | `SignerIsNotBuyer` on the relayed path |
-| 2 | `DestinationIsVault` (folds `error.rs:179`) | `withdraw()` and `withdrawStake` take no destination and pay `msg.sender` (D-15) | — the condition cannot be expressed |
-| 3 | `NotBuyer` | Every buyer-authority path is `msg.sender` or a recovered EIP-712 signer | `SignerIsNotBuyer` |
-| 4 | `SignerIsNotVerifier` (renames `error.rs:74`) | `proposeSlash` recovers with `Sig.recover`, then `CONFIG.assertCanSign` asks three sharper questions | `VerifierNotRegistered` / `VerifierRevoked` / `VerifierKeyExpired` |
-| 5 | `AmountExceedsUint64` | A duplicate of `MathOverflow`, which `Cast.toUint64` raises | `MathOverflow` |
-
-Two errors also went with the doors that produced them: `WalletCheckUnderfunded` (EIP-1271) and
-`Permit2NotConfigured` (the Permit2 deposit). The `Errors.sol` header carries the new accounting
-(47 shared, 34 EVM-only, 8 absent, all named).
-
-## 3. Parity notes moved out of the source (D-18)
-
-The source used to carry these as natspec. They describe code that no longer exists, or Solana
-history that a reader of the EVM contract does not need, so they live here.
-
-- **EIP-1271 wallet authority** (`_voucherAuthority` branch (c), `_isValidERC1271`,
-  `ERC1271_GAS_LIMIT` = 150,000, `ERC1271_GAS_RESERVE` = 10,000). A capped STATICCALL copying
-  at most one word of return data, added for agent delegation (D-16), hardened twice (gas burn,
-  return-data bomb). It was the only call to payer-chosen code in the money path, it ran inside the
-  batch loop, and the backend never used it (`allowErc1271: false`). Removed. A contract-wallet
-  payer calls `authorizeDelegate` directly. Anchor never had it.
-- **The lenient `Sig.tryRecover`** existed only for that branch. One strict recovery remains, and
-  the single-call-site gate still counts exactly one.
-- **The Permit2 deposit** (`depositWithPermit2`, `IPermit2`, D-11). It credited the Permit2
-  `owner` (never the caller), used the measured-delta check, and was never called by any product
-  path. Removed. The `PERMIT2` slot stays declared under its label, because the layout is
-  append-only.
-- **`recoverVoucherSigner`** was an off-chain pre-flight view. Its own natspec recorded it as not
-  load-bearing, and the backend recovers off chain. Removed. `test/X402Escrow.domain.t.sol` drives
-  the same recovery properties through a test harness over `Sig.recover`.
-- **`verifierExpiry`** was the `IX402Config` half of `VerifierKey.expiresAt`. Nothing called it.
-  `X402Stake.expireSlash` reads `canSign`, not this view, and an older comment wrongly said it did.
-  `verifierKey(addr).expiresAt` is the same value.
-- **`Fee.narrow` / `Window.narrow`** were one-line forwarders to `Cast.toUint64`, kept from before
-  `Cast` existed. They are inlined now. The rule they argued for, that no money narrowing is a bare
-  cast, is unchanged.
-- **The "exactly TWO relayed doors" comments** predate agent delegation. There are four
-  (`setLimitsBySig`, `requestWithdrawBySig`, `authorizeDelegateBySig`, `revokeDelegateBySig`),
-  all through `_consumeAuth`, and since D-18 the four direct twins consume the same `authNonce`.
-
-## 4. Redeem into hold (EVM only) — Solana parity item
+## 2. Redeem into hold (EVM only) — Solana parity item
 
 A redemption on EVM no longer pays the provider. `_redeem` keeps every check and every effect of
 `redeem_voucher.rs`, but the two payouts move to `collectHeld`: the amount leaves the buyer's

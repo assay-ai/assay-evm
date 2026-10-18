@@ -51,7 +51,7 @@ import "./Errors.sol";
 /// signature may open an armed one — therefore has nothing to guard at open time and moves
 /// wholly to `setLimits`, whose authority IS `msg.sender`. Its meta-transaction twin
 /// `setLimitsBySig` re-proves that authority from an EIP-712 signature. (So
-/// `EscrowLimitsRequireBuyer` has no EVM condition — `docs/divergences.md`.)
+/// `EscrowLimitsRequireBuyer` has no EVM condition — see the `Errors.sol` header.)
 ///
 /// **Three `BuyerEscrow` fields are deliberately absent.** `buyer` is the
 /// mapping key, so storing it again would be a second source for one identity. `bump`

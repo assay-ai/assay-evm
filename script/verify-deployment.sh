@@ -235,7 +235,7 @@ if [ -n "$own" ]; then
     echo "WARN: config.pendingOwner() is $pend — an ownership transfer is proposed and not yet accepted" >&2
   fi
 elif cast call "$cfg" 'owner()(address)' --rpc-url "$RPC" >/dev/null 2>&1; then
-  fail "the live config has an owner() but the record names none — add .owner (runbook §7.4)"
+  fail "the live config has an owner() but the record names none — add .owner (runbook §5)"
 fi
 
 # Read from the PROXY, which is the `verifyingContract` every voucher names. If an upgrade ever

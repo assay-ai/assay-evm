@@ -8,6 +8,11 @@ No `deployments/<chainId>.json` record is published in this repository; the runb
 record that `script/new-deployment-record.sh` writes when you deploy, and the addresses and
 outputs quoted below are examples from the authors' own dry runs and testnet runs.
 
+**The next deploy is a fresh one (D-22).** The earlier testnet 46630 deployment is abandoned, not
+upgraded: §3 creates new proxies at new addresses, so the backend's `EVM_DEPLOYMENTS`, the
+frontend's contract config and every published address change with it. No migration from the old
+proxies exists or is needed.
+
 Read `docs/risk-register.md` first. Entries **9** and **10** are mainnet blockers and this runbook
 cannot clear either of them.
 
@@ -322,6 +327,13 @@ backend's configuration is per-deployment, and never derivable from the chain id
 3. **Prove both roles work** (§6.3): the admin pauses and unpauses, the owner calls `setAdmin`
    with the current admin (a no-op that proves the owner signs).
 4. **Appoint the arbiter** (§6.5) — a person's wallet or a Safe, never a backend key.
+5. **Check the redeemer is not the relayer.** `params().redeemer` must be the address of the
+   backend's `EVM_REDEEMER_KEYS` key, and the `EVM_RELAYER_KEYS` address must differ from it; the
+   backend fails closed at its first vault-control check otherwise.
+6. **For a testnet run only**, `setCollectHold(600)` (admin) shortens the collect hold to 10
+   minutes and `setSlashDelay(600)` the slash delay; production keeps the defaults (§6.5).
+7. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `X402Config`
+   (`docs/risk-register.md` §4a — the admin's indirect reach over stake and fees).
 
 ### The slash lifecycle and who acts in it (D-19)
 
@@ -499,9 +511,8 @@ re-judged under the replacement key.**
 
 ## 7. The upgrade runbook
 
-*(This section was "the redeploy runbook" in the immutable draft. Design decision D-1
-makes an upgrade the normal repair and a redeploy the exception, so the two swap
-places. Both are here; the redeploy half is the last paragraph.)*
+An upgrade is the normal repair and a redeploy the exception (D-1). Both are here; the redeploy
+half is the last paragraph.
 
 ### Who does what (D-17)
 
@@ -511,7 +522,12 @@ places. Both are here; the redeploy half is the last paragraph.)*
    points at it.
 2. **You verify**, before the owner is asked to sign: the pre-checks below — layout, bytecode,
    function surface, EIP-712 strings — and an **anvil-fork rehearsal** of the exact upgrade against
-   live state (§7.4 shows the shape; `testnet/rehearse-owner-split.sh` is the D-17 one).
+   live state: fork the chain with anvil, run `UpgradeByOwner.s.sol` `run()` with the owner
+   impersonated (`--unlocked --sender <owner>`), then `script/postcheck-upgrade.sh` against the
+   fork.
+   If an upgrade makes Stake or Escrow call a Config function that does not exist yet, upgrade
+   Config in the same session first (`_plan` always runs Config, Stake, Escrow in that order), and
+   on a Safe send the `safeCalldata()` lines as ONE MultiSend transaction in that order.
 3. **The OWNER signs** `upgradeToAndCall`:
    - a Ledger: `forge script script/UpgradeByOwner.s.sol --rpc-url <rpc> --broadcast --ledger --sender <owner>`
      with `IMPL_<NAME>=<address from step 1>` (and `CALL_<NAME>=<reinitialiser calldata>` if any);
@@ -579,8 +595,8 @@ also needs `EXPECTED_CODEHASH_<NAME>` — the `extcodehash` of `IMPL_<NAME>`
 exactly the verified code and not for whatever address ended up in the env.
 
 The `bytes` payload is `0x` unless a reinitialiser is genuinely needed; if it is, it is a
-`reinitializer(n)` function — **the next Config one is `reinitializer(3)`, the next Stake or Escrow
-one `reinitializer(2)`** (versions after D-17: Config 2, Stake 1, Escrow 1) — it is written and reviewed as part of the same change, and its
+`reinitializer(n)` function — **a fresh deployment leaves all three contracts at version 1, so the
+first one is `reinitializer(2)`** — it is written and reviewed as part of the same change, and its
 calldata goes here so the state migration and the upgrade are one atomic transaction.
 
 ### Post-checks, immediately, in this order
@@ -607,119 +623,6 @@ calldata goes here so the state migration and the upgrade are one atomic transac
       **green** — and commit the record in the same change. `verify-deployment.sh`'s check 0 is
       the function surface and runs before it touches the network, so a surface you did not mean
       to change fails immediately and by name.
-
-### 7.4 The one-time D-17 / D-18 migration (testnet 46630)
-
-The deployed implementations still check `CONFIG.admin()` for upgrades, so this one upgrade is
-signed by the **current admin**, and the owner is created inside it.
-
-1. **Layout gate, against each deployed commit** — Config and Stake were built at `0e5e4b8`, the
-   Escrow at `675e2be`:
-   `./script/check-layout-branch.sh 0e5e4b8` and `./script/check-layout-branch.sh 675e2be`, both
-   green ("identical" or "APPEND-ONLY").
-2. **Rehearse on an anvil fork** of the live chain, with the real admin impersonated:
-   `testnet/rehearse-owner-split.sh`. It runs the script below, then proves the domain separators,
-   a sampled buyer's escrow and the provider's stake are byte-identical, runs the two-step
-   ownership transfer, proves the admin can no longer upgrade and the owner can, and proves the
-   seq cap.
-3. **Broadcast** `script/UpgradeOwnerSplit.s.sol`, signed by the admin. In one run it deploys the
-   three implementations (from `DEPLOYER_ADDRESS` if set) and calls
-   `config.upgradeToAndCall(newConfig, initializeV2())`, which makes owner = admin in the same
-   transaction. It then upgrades `stake` and `escrow` (their old code still checks the admin) and,
-   with `NEW_OWNER` set, proposes the ownership to the cold key.
-   - **3b. Post-check ON CHAIN.** The script's own asserts ran in forge's local simulation before
-     the broadcast, so they prove the simulation, not the chain. Read what landed, with the three
-     implementation addresses the broadcast printed (`broadcast/UpgradeOwnerSplit.s.sol/46630/run-latest.json`):
-     ```sh
-     RPC=<rpc> PROXY_CONFIG=<c> PROXY_STAKE=<s> PROXY_ESCROW=<e> \
-     IMPL_CONFIG=<newConfig> IMPL_STAKE=<newStake> IMPL_ESCROW=<newEscrow> \
-     EXPECTED_OWNER=<admin> EXPECTED_PENDING_OWNER=<NEW_OWNER> script/postcheck-upgrade.sh
-     ```
-   - **3c. If the broadcast landed only partly.** The upgrades and `transferOwnership` are separate
-     transactions. If the Config upgrade landed and a later one did not, a re-run of
-     `UpgradeOwnerSplit.s.sol` reverts `AlreadyMigrated(owner)` — `owner()` now exists — and must
-     not be forced. Finish from the **same admin key**, which is also the owner at this point
-     (owner = admin until step 4): `UpgradeByOwner.s.sol` with `UPGRADE_STAKE=true` and/or
-     `UPGRADE_ESCROW=true`, `IMPL_*` = the implementations step 3 already deployed (or `deploy()`
-     fresh ones), and their `EXPECTED_CODEHASH_*`. If `pendingOwner()` is still zero, propose with
-     `cast send <configProxy> "transferOwnership(address)" <NEW_OWNER>` from the same key. Re-run
-     3b; it must be green **before** step 4. Until then the not-yet-upgraded Stake/Escrow still
-     check `CONFIG.admin()`, so the admin can still upgrade them — close the gap in the same
-     session.
-4. **Accept** from the cold key: `cast send <configProxy> "acceptOwnership()"` (`--ledger` in
-   production). From this block the admin can no longer upgrade anything.
-   - **4b. Rotate the redeemer off the relayer key.** Live `params().redeemer` on 46630 is still
-     the backend relayer key `0x24A2c5823204150fe1bdc5Ce378A704788B345DB`, so the backend's
-     redeemer/relayer key split protects nothing until one of these is done — pick ONE:
-     (a) the admin `updateConfig`s `params().redeemer` to the address of the new
-     `EVM_REDEEMER_KEYS` key, or (b) move the existing `0x24A2…45DB` key into `EVM_REDEEMER_KEYS`
-     and mint a NEW key for `EVM_RELAYER_KEYS` (fund it; runbook §10). The backend now fails closed
-     at its first vault-control check per chain unless the `EVM_REDEEMER_KEYS` address equals the
-     live `params().redeemer` **and** the `EVM_RELAYER_KEYS` address does not. Change the env and
-     the chain in the same window (§11). Do not keep the old key in `EVM_RELAYER_KEYS` with a new
-     redeemer key and no `updateConfig`: that halts every redemption.
-5. **Record**: `implementation`, `implementationRuntimeKeccak`, `builtAt`, `abiKeccak`,
-   `abiFunctions` for all three; copy each old `implementation` into `initialImplementation` on
-   a contract's first upgrade; add `.owner`; then `./script/verify-deployment.sh` and the
-   backend's `EVM_DEPLOYMENTS` (`owner`, `escrowImplementation`). `verify-deployment.sh` and the
-   backend's vault-control check both WARN on a non-zero `pendingOwner()` (a proposal nobody
-   accepted); `owner()` is the fail-closed check.
-6. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `X402Config`
-   (`docs/risk-register.md` §4a — the admin's indirect reach over stake and fees).
-
-### 7.5 The dispute upgrade (D-19) — prepared, not run
-
-All three implementations change; **no layout field moves** (`check-layout.sh` classifies Config
-and Stake as APPEND-ONLY, Escrow as identical) and no initializer runs (`CALL_*` empty). Config
-must land FIRST: the new Stake and Escrow call `CONFIG.assertActive`, `slashDelaySeconds` and
-`arbiter`, so behind the old Config their deposit, exit and slash doors revert.
-`UpgradeByOwner.s.sol` upgrades in the order Config, Stake, Escrow and refuses
-(`ConfigMustBeUpgradedFirst`) a Stake or Escrow upgrade behind a Config that lacks them — but that
-check and the codehash pins run only in forge's simulation. **On a Safe, send the three
-`safeCalldata()` lines as ONE MultiSend transaction, in that order**, never as three Safe
-transactions: executed out of order they brick the Stake deposit, exit and propose doors and every
-Escrow door until Config lands.
-
-1. Layout gate against the deployed commit: `./script/check-layout-branch.sh <deployed commit>`.
-2. `deploy()` with `UPGRADE_CONFIG=true UPGRADE_STAKE=true UPGRADE_ESCROW=true`; take each
-   `EXPECTED_CODEHASH_*` from the implementation `check-bytecode.sh` matched.
-3. Rehearse on an anvil fork with the owner impersonated, then `run()` (or the Safe batch).
-4. Post-check on chain: `script/postcheck-upgrade.sh` with the three `IMPL_*`,
-   `EXPECTED_SLASH_DELAY=259200` and `EXPECTED_ARBITER=0x0000000000000000000000000000000000000000`.
-5. **In the same session as the upgrade**, §6.5: appoint the arbiter. Until it is set nobody can
-   uphold; a dispute filed in that gap is NOT lost — it can still be upheld once the arbiter is
-   set, as long as that happens before its `disputedAt + 30 d` (audit G G-3). Then run
-   `script/postcheck-upgrade.sh` **a second time** with `EXPECTED_ARBITER=<the real arbiter>`.
-   Record `abiKeccak` / `abiFunctions` for Config (+7 functions, −1: `slashProviderBps` removed
-   in D-20) and Stake (+5: disputeSlash, upholdSlash and the three batch forms); Escrow's surface
-   is unchanged.
-6. **Tell the backend and frontend** before step 3: the exits now revert `ProgramPaused` while
-   paused, and every guarded door reverts `AddressBlocked` for a blocked party.
-
-### 7.6 The redeem-into-hold upgrade — prepared, not run
-
-Config and Escrow change; Stake does not. **No layout field moves**: `check-layout.sh` classifies
-Config as APPEND-ONLY (`_collectHoldSeconds`, one slot out of `__gap`, 47 → 46) and Escrow as
-APPEND-ONLY (`heldPayments` and `totalHeld`, two slots out of `__gap`, 46 → 44). No initializer
-runs (`CALL_*` empty): `collectHoldSeconds()` reads 3,600 until set and `totalHeld` starts at 0.
-Config must land FIRST: the new Escrow calls `CONFIG.collectHoldSeconds()` on every redemption,
-so behind the old Config every redeem reverts. `UpgradeByOwner.s.sol` refuses an Escrow upgrade
-behind a Config that does not answer `collectHoldSeconds()` (`ConfigMustBeUpgradedFirst`). On a
-Safe, send the two `safeCalldata()` lines as ONE MultiSend transaction, Config first.
-
-1. Layout gate against the deployed commit: `./script/check-layout-branch.sh <deployed commit>`.
-2. `deploy()` with `UPGRADE_CONFIG=true UPGRADE_ESCROW=true`; take each `EXPECTED_CODEHASH_*` from
-   the implementation `check-bytecode.sh` matched.
-3. Rehearse on an anvil fork with the owner impersonated, then `run()` (or the Safe batch).
-4. Post-check on chain: `script/postcheck-upgrade.sh` with `IMPL_CONFIG` and `IMPL_ESCROW`, then
-   `EXPECTED_COLLECT_HOLD=3600` and `EXPECTED_TOTAL_HELD=0`. Record `abiKeccak` / `abiFunctions`
-   for Config (+2: `collectHoldSeconds`, `setCollectHold`) and Escrow (+6: `held`, `totalHeld`,
-   `collectHeld`, `collectHeldBatch`, `refundHeld`, `refundHeldBatch`).
-5. **The backend must be on the hold build before step 3.** From the upgrade on, a redemption
-   pays nobody: providers are credited on `HeldCollected`, not on `VoucherRedeemed`, and nothing
-   reaches a provider until the collection job calls `collectHeld(Batch)`. A backend still on the
-   old build would book provider earnings that were never paid out.
-6. For a testnet run, `setCollectHold(600)` (admin) shortens the hold to 10 minutes.
 
 ### The one thing an upgrade must never do: change the EIP-712 `name` or `version`
 
