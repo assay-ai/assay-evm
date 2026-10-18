@@ -519,7 +519,22 @@ refund open until the timeout. Records already held keep their `collectableAt`. 
 **The pause and the blocklist freeze collection** (payer and provider). A record frozen past its
 timeout cannot be refunded any more, so it waits, `Held`, until the gate lifts and then anybody
 collects it. A provider blocked for good therefore holds its records in the escrow for good: no
-role can redirect them.
+role can redirect them, and unblocking it pays them to that provider. **Mitigation (owner's
+decision, off chain):** when the platform blocks a provider, the backend refunds every record still
+`Held` for it at once, and pages if any is left within a day of its timeout. A payer blocked by the
+issuer freezes its providers' records the same way; the contract stays as it is.
+
+**The fee goes to the treasury read at collect time — ACCEPTED.** A stolen admin key that changes the
+treasury (§4a) also takes the fee of every record already held, not only of later redemptions: at
+most `takeRateBps` of `totalHeld`. Freezing the treasury into each record would cost a third slot
+per redemption. Alert on treasury changes; the admin is meant to be a Safe.
+
+**A stranger can make a mixed collect batch revert.** Once a record in a redeemer batch is past its
+timeout, anybody may collect it first, and the atomic batch reverts. Only gas is lost; the collector
+sends past-timeout records singly.
+
+**A refund does not cancel or restart a standing withdraw.** Money refunded after the buyer's
+`withdraw()` lands in the balance with no request; the buyer requests again and waits again.
 
 **A refund does not restore the buyer's `spentInWindow`** (owner's decision): a refund must not
 hand a buyer or a delegate fresh capacity inside the window it was spent in. It does lower
