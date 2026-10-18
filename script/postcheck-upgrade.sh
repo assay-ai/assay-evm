@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ON-CHAIN post-check of an upgrade (runbook §7.4 step 3b, §7 post-checks). Read-only: `cast call`
+# ON-CHAIN post-check of an upgrade (runbook §7 post-checks). Read-only: `cast call`
 # and `cast storage` only, nothing is signed or sent.
 #
 # Why it exists: `forge script` runs a script's own post-checks in its local SIMULATION before it
-# broadcasts, so the asserts in UpgradeOwnerSplit.s.sol / UpgradeByOwner.s.sol prove the
+# broadcasts, so the asserts in UpgradeByOwner.s.sol prove the
 # simulation, not the chain. Each upgrade is its own transaction, so a broadcast can land partly.
 # This reads what actually landed.
 #
@@ -13,11 +13,11 @@
 #   IMPL_CONFIG IMPL_STAKE IMPL_ESCROW   (each optional) the implementation each slot must hold
 #   EXPECTED_OWNER                    (optional) config.owner()
 #   EXPECTED_PENDING_OWNER            (optional) config.pendingOwner(); 0x0…0 for "none"
-#   EXPECTED_SLASH_DELAY              (optional) config.slashDelaySeconds(); 259200 right after
-#                                     the dispute upgrade (runbook §7.5)
+#   EXPECTED_SLASH_DELAY              (optional) config.slashDelaySeconds(); 259200 until the
+#                                     admin sets one
 #   EXPECTED_ARBITER                  (optional) config.arbiter(); 0x0…0 for "none"
-#   EXPECTED_COLLECT_HOLD             (optional) config.collectHoldSeconds(); 3600 right after the
-#                                     redeem-into-hold upgrade (runbook §7.6)
+#   EXPECTED_COLLECT_HOLD             (optional) config.collectHoldSeconds(); 3600 until the
+#                                     admin sets one
 #   EXPECTED_TOTAL_HELD               (optional) escrow.totalHeld(); 0 right after that upgrade
 #
 # Exit 0 when every check given holds; non-zero naming the first that does not.

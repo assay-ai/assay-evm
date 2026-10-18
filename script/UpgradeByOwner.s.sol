@@ -16,7 +16,6 @@ error ImplementationSlotMismatch(address proxy);
 error DomainSeparatorMoved(address proxy);
 error SampleMoved(address proxy);
 error StateMoved(string what);
-error ConfigMustBeUpgradedFirst(address config);
 
 /// **Every upgrade after D-17, signed by the OWNER** (runbook §7). Two phases, two keys:
 ///
@@ -41,14 +40,9 @@ error ConfigMustBeUpgradedFirst(address config);
 ///                 build (`cast keccak $(cast code $IMPL_<NAME>)`), so the owner signs for exactly
 ///                 the code that was verified and not for whatever address ended up in the env.
 ///
-/// **Order (the dispute upgrade, runbook §7.5).** The proxies are always upgraded Config, Stake,
-/// Escrow, in that order. The Stake and Escrow built since the dispute upgrade call
-/// `CONFIG.assertActive`, `CONFIG.slashDelaySeconds` and `CONFIG.arbiter`; upgrading either
-/// behind a Config that lacks them would brick their deposit, exit and slash doors. The Escrow
-/// built since the redeem-into-hold change also reads `CONFIG.collectHoldSeconds` on every
-/// redemption. Both entry points refuse (`ConfigMustBeUpgradedFirst`) a Stake or Escrow upgrade
-/// unless Config is flagged too or the live Config already answers `slashDelaySeconds()` (for
-/// Stake) and `collectHoldSeconds()` (for Escrow).
+/// **Order.** The proxies are always upgraded Config, Stake, Escrow, in that order (`_plan`), so
+/// a Stake or Escrow build that reads a new Config function lands after the Config that has it.
+/// An upgrade that introduces such a cross-contract dependency adds its own probe here.
 contract UpgradeByOwner is Script {
     bytes32 internal constant IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -75,7 +69,6 @@ contract UpgradeByOwner is Script {
             bool[3] memory on,
             bytes32[3] memory hashes
         ) = _plan();
-        _assertOrder(proxies[0], on);
         for (uint256 i = 0; i < 3; i++) {
             if (!on[i]) continue;
             _assertImplementation(impls[i], hashes[i]);
@@ -102,7 +95,6 @@ contract UpgradeByOwner is Script {
             bool[3] memory on,
             bytes32[3] memory hashes
         ) = _plan();
-        _assertOrder(proxies[0], on);
         for (uint256 i = 0; i < 3; i++) {
             if (on[i]) _assertImplementation(impls[i], hashes[i]);
         }
@@ -147,28 +139,11 @@ contract UpgradeByOwner is Script {
         if (config.owner() != owner) revert StateMoved("owner");
         if (keccak256(abi.encode(config.params())) != paramsBefore) revert StateMoved("params");
         if (config.paused() != pausedBefore) revert StateMoved("paused");
-        // The dispute upgrade's appended Config state, printed for the record: on the first
-        // upgrade past it these read 72 hours and address(0).
+        // Printed for the record.
         console2.log("slashDelaySeconds", config.slashDelaySeconds());
         console2.log("arbiter", config.arbiter());
-        // The redeem-into-hold change's appended state: 3600 and 0 on the first upgrade past it.
         console2.log("collectHoldSeconds", config.collectHoldSeconds());
         console2.log("totalHeld", escrow.totalHeld());
-    }
-
-    /// See the contract note. `slashDelaySeconds()` is the probe for Stake: it exists from the
-    /// dispute upgrade on, and a Config without it lacks `assertActive` and `arbiter` too.
-    /// `collectHoldSeconds()` is the probe for Escrow: the Escrow built since the redeem-into-hold
-    /// change reads it on every redemption, so behind an older Config every redeem would revert.
-    function _assertOrder(address config, bool[3] memory on) internal view {
-        if (on[0]) return;
-        if (on[1]) _probe(config, "slashDelaySeconds()");
-        if (on[2]) _probe(config, "collectHoldSeconds()");
-    }
-
-    function _probe(address config, string memory sig) internal view {
-        (bool ok, bytes memory ret) = config.staticcall(abi.encodeWithSignature(sig));
-        if (!ok || ret.length != 32) revert ConfigMustBeUpgradedFirst(config);
     }
 
     function _plan()

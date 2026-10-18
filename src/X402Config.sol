@@ -130,15 +130,15 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// argument as it arrives. The two split shares are only meaningful together.
     ///
     /// **A fresh deployment names both roles, and neither may be the deployer's to keep.**
-    /// `reinitializer(2)` rather than `initializer`, so a fresh proxy lands at the SAME version an
-    /// upgraded one reaches through [`initializeV2`]; the two are alternatives and whichever runs
-    /// first closes the other. The `admin != 0` refusal makes that true even on a proxy that was
-    /// upgraded without its `initializeV2` call, where version 2 would otherwise still be open.
+    ///
+    /// **Initializer versions.** All three contracts start at version 1 (plain `initializer`) on
+    /// a fresh proxy. The first upgrade that needs an initialiser call therefore uses
+    /// `reinitializer(2)`, the next `reinitializer(3)`, and so on: a reused number reverts
+    /// `InvalidInitialization` inside the upgrade's `upgradeToAndCall`.
     function initialize(ParamSet memory initialParams, address initialAdmin, address initialOwner)
         external
-        reinitializer(2)
+        initializer
     {
-        if (admin != address(0)) revert InvalidInitialization();
         // Not a port: on Solana the admin is `Signer<'info>` and a signature by the zero key is
         // unforgeable, so `initialize_config` cannot receive one. Here it is a plain argument,
         // and a config whose admin is `address(0)` can never be paused or upgraded again.
@@ -150,27 +150,6 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         _params = initialParams;
         // `paused` is left at its zero value — `initialize_config.rs:81` writes `false`.
         emit ConfigInitialized(initialAdmin, initialParams);
-    }
-
-    /// The D-17 migration of a proxy initialised by the version-1 `initialize`, run inside the
-    /// upgrade's own `upgradeToAndCall`: the owner role starts at the CURRENT admin (the key that
-    /// was the upgrade authority until this call). The ownership then moves to a cold key in two
-    /// steps, outside this call.
-    ///
-    /// It takes no argument, so there is nothing for whoever lands it to choose. The caller check
-    /// is defence in depth: inside `upgradeToAndCall` the caller already passed the OLD
-    /// implementation's `_authorizeUpgrade`, which is exactly `msg.sender == admin`.
-    ///
-    /// **Initializer versions.** Config is now at version 2 (this function and `initialize` both
-    /// close it); `X402Stake` and `X402Escrow` are still at version 1 (`initializer`). The NEXT
-    /// Config reinitializer must therefore be `reinitializer(3)`, and the next Stake or Escrow one
-    /// `reinitializer(2)` — a reused number would revert `InvalidInitialization` inside the
-    /// upgrade's `upgradeToAndCall`.
-    function initializeV2() external reinitializer(2) {
-        address current = admin;
-        if (current == address(0)) revert InvalidInitialization();
-        if (msg.sender != current) revert NotAdmin();
-        __Ownable_init(current);
     }
 
     /// The upgrade door, for this contract — and through `CONFIG.owner()` for the other two.

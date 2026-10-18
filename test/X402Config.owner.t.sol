@@ -8,7 +8,6 @@ import {Ownable2StepUpgradeable} from
     "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 import {Fixture} from "./helpers/Fixture.sol";
-import {X402ConfigV1} from "./helpers/legacy/X402ConfigV1.sol";
 import {X402Config} from "../src/X402Config.sol";
 import {X402Escrow} from "../src/X402Escrow.sol";
 import {X402Stake} from "../src/X402Stake.sol";
@@ -19,9 +18,7 @@ import "../src/Errors.sol";
 ///
 /// - the owner (cold) is the upgrade authority of all three contracts and appoints the admin;
 ///   it moves in two steps and can never be renounced or become `address(0)`;
-/// - the admin (operational) holds every config door and nothing else;
-/// - the version-1 proxy on the testnet migrates through `initializeV2`, inside the upgrade's
-///   own `upgradeToAndCall`, with owner = the current admin.
+/// - the admin (operational) holds every config door and nothing else.
 contract X402ConfigOwnerTest is Fixture {
     bytes32 internal constant IMPL_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -214,114 +211,14 @@ contract X402ConfigOwnerTest is Fixture {
         );
     }
 
-    /// `initialize` and `initializeV2` are alternatives at version 2: on a fresh proxy the first
-    /// closes the second, and neither runs on the implementation.
+    /// `initialize` runs once, on the proxy, and never on the implementation.
     function test_wrongState_noInitialiserRunsTwiceOrOnTheImplementation() public {
         ParamSet memory p = config.params();
-        vm.prank(admin);
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
-        config.initializeV2();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         config.initialize(p, stranger, stranger);
 
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        configImpl.initializeV2();
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
         configImpl.initialize(p, stranger, stranger);
-    }
-
-    // === the D-17 migration of the deployed version-1 proxy ==================================
-
-    function _v1() internal returns (X402ConfigV1 v1) {
-        v1 = X402ConfigV1(
-            address(
-                new ERC1967Proxy(
-                    address(new X402ConfigV1()),
-                    abi.encodeCall(X402ConfigV1.initialize, (config.params(), admin))
-                )
-            )
-        );
-        vm.startPrank(admin);
-        v1.registerVerifier(address(0xF1), bytes32("k"), uint64(block.timestamp + 1000));
-        v1.setPaused(true);
-        vm.stopPrank();
-    }
-
-    /// The upgrade the testnet runs: the CURRENT admin calls
-    /// `upgradeToAndCall(new, initializeV2())`. Afterwards the owner is that admin, the admin is
-    /// unchanged, every pre-existing slot reads back identically, and version 2 is closed.
-    function test_theMigrationMakesTheCurrentAdminTheOwnerAndMovesNoSlot() public {
-        X402ConfigV1 v1 = _v1();
-        bytes32[60] memory before;
-        for (uint256 i = 0; i < 60; i++) {
-            before[i] = vm.load(address(v1), bytes32(i));
-        }
-        bytes memory paramsBefore = abi.encode(v1.params());
-
-        // A stranger cannot run the V1 upgrade door.
-        vm.prank(stranger);
-        vm.expectRevert(NotAdmin.selector);
-        v1.upgradeToAndCall(address(configImpl), abi.encodeCall(X402Config.initializeV2, ()));
-
-        vm.expectEmit(true, true, false, false, address(v1));
-        emit OwnableUpgradeable.OwnershipTransferred(address(0), admin);
-        vm.prank(admin);
-        v1.upgradeToAndCall(address(configImpl), abi.encodeCall(X402Config.initializeV2, ()));
-
-        X402Config v2 = X402Config(address(v1));
-        assertEq(v2.owner(), admin, "owner = the admin that was the upgrade authority");
-        assertEq(v2.admin(), admin, "the admin is unchanged");
-        assertEq(v2.pendingOwner(), address(0));
-        assertEq(abi.encode(v2.params()), paramsBefore, "params unchanged");
-        assertTrue(v2.paused(), "pause unchanged");
-        assertTrue(v2.verifierKey(address(0xF1)).registered, "registry unchanged");
-        for (uint256 i = 0; i < 60; i++) {
-            assertEq(vm.load(address(v1), bytes32(i)), before[i], "a sequential slot moved");
-        }
-
-        vm.prank(admin);
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
-        v2.initializeV2();
-        ParamSet memory p = v2.params(); // read first: expectRevert arms the NEXT call
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
-        v2.initialize(p, stranger, stranger);
-
-        // …then the two-step move to the cold key, after which the admin cannot upgrade.
-        vm.prank(admin);
-        v2.transferOwnership(cold);
-        vm.prank(cold);
-        v2.acceptOwnership();
-        address next = address(new X402Config());
-        vm.prank(admin);
-        vm.expectRevert(_unauthorized(admin));
-        v2.upgradeToAndCall(next, "");
-        vm.prank(cold);
-        v2.upgradeToAndCall(next, "");
-        assertEq(_impl(address(v2)), next);
-        assertEq(v2.admin(), admin, "the admin stays the operational key");
-    }
-
-    /// If an operator upgrades WITHOUT the `initializeV2` call, version 2 stays open — and it
-    /// still cannot be captured: `initialize` refuses an already-initialised admin, and
-    /// `initializeV2` admits only the current admin, who lands exactly the owner it would have.
-    function test_wrongState_anUpgradeWithoutItsInitialiserCannotBeCaptured() public {
-        X402ConfigV1 v1 = _v1();
-        vm.prank(admin);
-        v1.upgradeToAndCall(address(configImpl), "");
-        X402Config v2 = X402Config(address(v1));
-        assertEq(v2.owner(), address(0), "no owner yet");
-
-        ParamSet memory p = v2.params();
-        vm.startPrank(stranger);
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
-        v2.initialize(p, stranger, stranger);
-        vm.expectRevert(NotAdmin.selector);
-        v2.initializeV2();
-        vm.stopPrank();
-
-        vm.prank(admin);
-        v2.initializeV2();
-        assertEq(v2.owner(), admin);
     }
 
     // === the deployer keeps nothing ==========================================================
