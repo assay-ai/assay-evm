@@ -2,11 +2,11 @@
 pragma solidity 0.8.24;
 
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {X402Escrow} from "../../src/X402Escrow.sol";
+import {AssayEscrow} from "../../src/AssayEscrow.sol";
 
-/// The **quiet** version of `X402EscrowBadDomainV2`, and the one that catches a lazy test.
+/// The **quiet** version of `AssayEscrowBadDomainV2`, and the one that catches a lazy test.
 ///
-/// `X402EscrowBadDomainV2` is loud: its `DOMAIN_SEPARATOR()` returns a different value, so any
+/// `AssayEscrowBadDomainV2` is loud: its `DOMAIN_SEPARATOR()` returns a different value, so any
 /// test that compares that one getter across the upgrade sees it. This contract does not touch
 /// `DOMAIN_SEPARATOR()` at all — it is `external` and non-`virtual` on the parent, so it keeps
 /// returning the old, correct value and every "the separator did not move" assertion stays
@@ -22,7 +22,7 @@ import {X402Escrow} from "../../src/X402Escrow.sol";
 ///
 /// The layout is the parent's, unchanged — nothing is appended — so it is a legal upgrade in
 /// every respect the storage gate can see. Nothing on chain refuses it either.
-contract X402EscrowSilentDomainV2 is X402Escrow {
+contract AssayEscrowSilentDomainV2 is AssayEscrow {
     bytes32 private constant TYPE_HASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );

@@ -6,7 +6,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {RedeemReentrantUSDG} from "./helpers/MockUSDG.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {Voucher, ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -77,15 +77,15 @@ contract RedeemObserverUSDG {
         if (armed) {
             armed = false;
             observed = true;
-            X402Escrow.Escrow memory e = X402Escrow(escrow).escrowOf(observedBuyer);
+            AssayEscrow.Escrow memory e = AssayEscrow(escrow).escrowOf(observedBuyer);
             seenBalance = e.balance;
             seenSeqHigh = e.seqHigh;
             seenSpentInWindow = e.spentInWindow;
             seenWindowStartedAt = e.windowStartedAt;
             seenTotalRedeemed = e.totalRedeemed;
-            seenTotalEscrowed = X402Escrow(escrow).totalEscrowed();
-            seenTotalHeld = X402Escrow(escrow).totalHeld();
-            seenHeldStatus = uint8(X402Escrow(escrow).held(observedBuyer, observedSeq).status);
+            seenTotalEscrowed = AssayEscrow(escrow).totalEscrowed();
+            seenTotalHeld = AssayEscrow(escrow).totalHeld();
+            seenHeldStatus = uint8(AssayEscrow(escrow).held(observedBuyer, observedSeq).status);
         }
         return true;
     }
@@ -105,7 +105,7 @@ contract RedeemObserverUSDG {
 ///     single-violation tests passes against any permutation of the check list, so the three
 ///     `…CheckOrder…` / `…divergence…` tests below are not decoration — they are the only cover
 ///     the ordering has.
-contract X402EscrowRedeemTest is Fixture {
+contract AssayEscrowRedeemTest is Fixture {
     address internal stranger = address(0xDEAD);
     uint256 internal constant WRONG_KEY = 0xBADBAD;
 
@@ -162,7 +162,7 @@ contract X402EscrowRedeemTest is Fixture {
 
     /// Redeem, then collect the held payment as the redeemer (redeem into hold): the tests in
     /// this file reason about the money a redemption moves, which since the hold is the money
-    /// its collect moves. `X402Escrow.hold.t.sol` covers the hold itself.
+    /// its collect moves. `AssayEscrow.hold.t.sol` covers the hold itself.
     function _redeem(Voucher memory v) internal {
         bytes memory sig = _sig(v);
         vm.prank(redeemer);
@@ -824,7 +824,7 @@ contract X402EscrowRedeemTest is Fixture {
     /// what refuses it.
     function test_wrongState_aReentrantAssetCannotRecurseIntoCollectHeld() public {
         RedeemReentrantUSDG evil = new RedeemReentrantUSDG();
-        X402Escrow e2 = _deployEscrow(address(evil));
+        AssayEscrow e2 = _deployEscrow(address(evil));
 
         evil.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -844,7 +844,7 @@ contract X402EscrowRedeemTest is Fixture {
         e2.redeemVoucher(v, sig); // redeem into hold transfers nothing, so nothing re-enters
         vm.warp(e2.held(buyer, 1).collectableAt);
 
-        bytes memory collect = abi.encodeCall(X402Escrow.collectHeld, (buyer, uint64(1)));
+        bytes memory collect = abi.encodeCall(AssayEscrow.collectHeld, (buyer, uint64(1)));
         evil.arm(address(e2), collect);
         // `expectCall` survives the outer revert, so it is what proves the nested call happened.
         vm.expectCall(address(e2), collect, 2);
@@ -852,7 +852,7 @@ contract X402EscrowRedeemTest is Fixture {
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         e2.collectHeld(buyer, 1);
 
-        assertEq(uint8(e2.held(buyer, 1).status), uint8(X402Escrow.HeldStatus.Held), "unwound");
+        assertEq(uint8(e2.held(buyer, 1).status), uint8(AssayEscrow.HeldStatus.Held), "unwound");
         assertEq(e2.totalHeld(), 250_000);
         assertEq(evil.balanceOf(provider), 0, "and nothing moved");
     }
@@ -864,7 +864,7 @@ contract X402EscrowRedeemTest is Fixture {
     /// `totalHeld` lowered) are all in place when the provider payout runs.
     function test_everyEffectIsWrittenBeforeTheFirstTransfer() public {
         RedeemObserverUSDG obs = new RedeemObserverUSDG();
-        X402Escrow e2 = _deployEscrow(address(obs));
+        AssayEscrow e2 = _deployEscrow(address(obs));
 
         obs.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -896,7 +896,7 @@ contract X402EscrowRedeemTest is Fixture {
         assertEq(obs.seenTotalHeld(), 0, "totalHeld not yet lowered at payout time");
         assertEq(
             obs.seenHeldStatus(),
-            uint8(X402Escrow.HeldStatus.Collected),
+            uint8(AssayEscrow.HeldStatus.Collected),
             "the record not yet Collected at payout time"
         );
 
@@ -1093,9 +1093,9 @@ contract X402EscrowRedeemTest is Fixture {
     /// the payer authorised on chain, and raises
     /// `SignerIsNotPayer` otherwise. What is pinned is that `_redeem` calls it unconditionally on
     /// the voucher's own digest, that the payer comparison is its first test, and that nothing else
-    /// in the file raises the refusal. The behaviour is `test/X402Escrow.delegate.t.sol`'s.
+    /// in the file raises the refusal. The behaviour is `test/AssayEscrow.delegate.t.sol`'s.
     function test_theSignatureComparisonIsUnconditionalInTheSource() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Escrow.sol"));
+        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
 
         assertEq(
             _count(

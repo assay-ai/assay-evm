@@ -68,12 +68,12 @@ error ProgramPaused();
 // --- authority ---------------------------------------------------------------
 error NotAdmin();
 /// Raised by `initialize` and `setAdmin` for `address(0)`, and by any role writer that would make
-/// the admin a live verifier (`X402Config._assertRolesDistinct`, D-19). `ParamSet` carries no
+/// the admin a live verifier (`AssayConfig._assertRolesDistinct`, D-19). `ParamSet` carries no
 /// admin: only the owner's `setAdmin` moves it (D-17).
 error InvalidAdmin();
 error NotRedeemer();
-/// EVM only. The caller of an upgrade on `X402Stake` or `X402Escrow` is not `CONFIG.owner()`.
-/// (`X402Config`'s own owner-gated doors use OpenZeppelin's `onlyOwner`, which raises
+/// EVM only. The caller of an upgrade on `AssayStake` or `AssayEscrow` is not `CONFIG.owner()`.
+/// (`AssayConfig`'s own owner-gated doors use OpenZeppelin's `onlyOwner`, which raises
 /// `OwnableUnauthorizedAccount(account)` for the same condition.)
 error NotOwner();
 /// EVM only. `renounceOwnership` is disabled: an owner of `address(0)` would leave all three
@@ -139,7 +139,7 @@ error InvalidVoucherWindow();
 /// refuses, or the reverse.** The two implementations partition the same refusal set; only the
 /// label differs, and only for the second half of it. Recorded in `docs/divergences.md`; the
 /// argument
-/// at the check itself is at `X402Escrow.sol`'s
+/// at the check itself is at `AssayEscrow.sol`'s
 /// `require_valid_voucher_window` port.
 error VoucherLifetimeTooLong();
 error VoucherExceedsPerCallLimit();
@@ -180,7 +180,7 @@ error DelegateWindowLimitExceeded();
 // --- escrow withdrawal -------------------------------------------------------
 error WithdrawNotYetAvailable();
 error NoWithdrawRequested();
-/// `constants.rs`'s build-time assertion, moved to `X402Escrow.initialize`. Rust states
+/// `constants.rs`'s build-time assertion, moved to `AssayEscrow.initialize`. Rust states
 /// `WITHDRAW_DELAY_SECONDS > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE` as a `const _: ()
 /// = assert!(…)`, so lowering the delay fails the build. Solidity has no constant assertion —
 /// `assert` is a runtime opcode and a constant expression cannot invoke one — so the inequality
@@ -222,9 +222,9 @@ error NotSlashedProvider();
 error DisputeWindowClosed();
 /// `upholdSlash` on a record that is not `Disputed`.
 error SlashNotDisputed();
-/// `upholdSlash` from anybody but `X402Config.arbiter()`.
+/// `upholdSlash` from anybody but `AssayConfig.arbiter()`.
 error NotArbiter();
-/// A party `X402Config.blocked()` names, at a door the blocklist closes.
+/// A party `AssayConfig.blocked()` names, at a door the blocklist closes.
 error AddressBlocked();
 /// `setSlashDelay` outside `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]`.
 error InvalidSlashDelay();
@@ -238,7 +238,7 @@ error SlashWindowNotDrained();
 /// `setBlocked(account, false)` from the arbiter: only the admin unblocks.
 error ArbiterCannotUnblock();
 /// `setArbiter(address(0))`, or any role writer that would make the arbiter the admin, the
-/// redeemer or a live verifier (`X402Config._assertRolesDistinct`).
+/// redeemer or a live verifier (`AssayConfig._assertRolesDistinct`).
 error InvalidArbiter();
 
 // --- redeem into hold (EVM only) -------------------------------------------------

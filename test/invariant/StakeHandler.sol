@@ -4,9 +4,9 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {X402Config} from "../../src/X402Config.sol";
-import {X402Stake} from "../../src/X402Stake.sol";
-import {IX402Config} from "../../src/interfaces/IX402Config.sol";
+import {AssayConfig} from "../../src/AssayConfig.sol";
+import {AssayStake} from "../../src/AssayStake.sol";
+import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import {SlashAttestation, ResponseClass, SlashStatus, ParamSet} from "../../src/Types.sol";
 import {Constants} from "../../src/Constants.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
@@ -26,8 +26,8 @@ import {StepCounter} from "./StepCounter.sol";
 /// `pendingSlash` with itself.
 contract StakeHandler is Test, StepCounter {
     MockUSDG public usdg;
-    X402Config public config;
-    X402Stake public stake;
+    AssayConfig public config;
+    AssayStake public stake;
 
     address internal constant ADMIN = address(0xADAA);
     address internal constant TREASURY = address(0x7EA5);
@@ -68,20 +68,21 @@ contract StakeHandler is Test, StepCounter {
             slashCapBps: 1_000
         });
 
-        config = X402Config(
+        config = AssayConfig(
             address(
                 new ERC1967Proxy(
-                    address(new X402Config()),
-                    abi.encodeCall(X402Config.initialize, (p, ADMIN, address(0x0A1E)))
+                    address(new AssayConfig()),
+                    abi.encodeCall(AssayConfig.initialize, (p, ADMIN, address(0x0A1E)))
                 )
             )
         );
-        stake = X402Stake(
+        stake = AssayStake(
             address(
                 new ERC1967Proxy(
-                    address(new X402Stake()),
+                    address(new AssayStake()),
                     abi.encodeCall(
-                        X402Stake.initialize, (IX402Config(address(config)), IERC20(address(usdg)))
+                        AssayStake.initialize,
+                        (IAssayConfig(address(config)), IERC20(address(usdg)))
                     )
                 )
             )
@@ -123,7 +124,7 @@ contract StakeHandler is Test, StepCounter {
     /// D-14's fourth identity, per provider, folded into one boolean the suite can assert.
     function everyProviderCoversItsPendingSlash() external view returns (bool) {
         for (uint256 i = 0; i < 4; i++) {
-            X402Stake.ProviderStake memory s = stake.stakeOf(providers[i]);
+            AssayStake.ProviderStake memory s = stake.stakeOf(providers[i]);
             if (uint256(s.bonded) + s.unbonding < s.pendingSlash) return false;
         }
         return true;
@@ -133,7 +134,7 @@ contract StakeHandler is Test, StepCounter {
     /// the `reserved` this handler booked at proposal, never less.
     function everyExecutedRecordWasPaidInFull() external view returns (bool) {
         for (uint256 i = 0; i < proposedIds.length; i++) {
-            X402Stake.SlashRecord memory r = stake.slashRecordOf(proposedIds[i]);
+            AssayStake.SlashRecord memory r = stake.slashRecordOf(proposedIds[i]);
             if (r.status == SlashStatus.Executed && r.applied != reservedOf[proposedIds[i]]) {
                 return false;
             }

@@ -197,7 +197,7 @@ chain's, not in the token.
 contract runs correctly on a Cancun chain; raising `evm_version` would change the runtime bytecode
 of all three production contracts, move gate 4's sizes, gate 6's hashes and gate 8's snapshot, and
 is a decision no test may make on its own. The cost is that two **view** functions of the
-settlement token cannot be read on a fork. `X402Escrow` and `X402Stake` touch only `decimals`,
+settlement token cannot be read on a fork. `AssayEscrow` and `AssayStake` touch only `decimals`,
 `balanceOf`, `approve`, `transfer` and `transferFrom` — none of which reach the MCOPY — so **no
 money path is affected**, which is what the fork suite exists to exercise.
 `test/fork/ForkFacts.t.sol::test_theTokensStringGettersAreUnreachableUnderTheShanghaiPin` asserts
@@ -302,7 +302,7 @@ Identical on 46630. Both chains report `ArbSys.arbOSVersion() == 116`.
 | headroom | **6.01×**, i.e. ~416,800 gas per voucher, ~208,400 per token transfer |
 
 The batch figures are `test_measure_distinctPayerBatchOfSixtyFour`, re-measured 2026-09-09
-(`MockUSDG`) and 2026-09-10 (real token, on a fork) against `src/X402Escrow.sol` at sha256
+(`MockUSDG`) and 2026-09-10 (real token, on a fork) against `src/AssayEscrow.sol` at sha256
 `e796474e…`. **The two derived rows above come from them and are only true for
 that file**: the 2026-09-08 edition read 5,180,000 / 16.2 % / 6.18×
 against a version of the escrow three commits older, and stayed on this page after the source moved

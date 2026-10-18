@@ -146,7 +146,7 @@ contract BoundariesTest is Fixture {
     /// The invariant every one of the four rows above rests on, and the reason B10 is safe:
     /// a voucher signed the instant before `requestWithdraw` is dead 1,380 seconds before the
     /// withdrawal matures. `constants.rs` states it as a build-time assertion; Solidity has
-    /// no constant assertion, so it is this plus `X402Escrow.initialize`'s check.
+    /// no constant assertion, so it is this plus `AssayEscrow.initialize`'s check.
     function test_theWithdrawDelayOutlivesTheLongestRedeemableVoucher() public pure {
         assertGt(
             Constants.WITHDRAW_DELAY_SECONDS,
@@ -163,7 +163,7 @@ contract BoundariesTest is Fixture {
 
     // === the sequence and the spending limits ===============================================
 
-    /// **B5 — `seq > seqHigh`, EXCLUDES equal.** Re-assertion (`X402Escrow.redeem.t.sol`).
+    /// **B5 — `seq > seqHigh`, EXCLUDES equal.** Re-assertion (`AssayEscrow.redeem.t.sol`).
     /// Gaps are allowed; equality is not, which is what makes exactly one redemption per
     /// `(buyer, seq)` a fact of the chain with one `uint64` and no bitmap.
     function test_B5_theSequenceIsStrictlyIncreasing() public {
@@ -251,7 +251,7 @@ contract BoundariesTest is Fixture {
     // === the buyer's exit ====================================================================
 
     /// **B10 — `now >= withdrawAvailableAt`, admits exact.** Re-assertion
-    /// (`X402Escrow.withdraw.t.sol`), restated at all three instants in one place.
+    /// (`AssayEscrow.withdraw.t.sol`), restated at all three instants in one place.
     function test_B10_theWithdrawalMaturesAtExactlyItsOwnInstant() public {
         vm.prank(buyer);
         escrow.requestWithdraw(1_000_000);
@@ -346,7 +346,7 @@ contract BoundariesTest is Fixture {
     }
 
     /// **B13 — `now <= key.expiresAt`, admits exact.** Re-assertion
-    /// (`X402Stake.slash.t.sol::test_boundary_theVerifierExpiryInstantBelongsToExecute` proves the
+    /// (`AssayStake.slash.t.sol::test_boundary_theVerifierExpiryInstantBelongsToExecute` proves the
     /// pair with `expireSlash`; this proves the comparison itself at all three instants).
     function test_B13_theVerifierKeyExpiryInstantBelongsToTheKey() public {
         uint64 expiresAt = uint64(block.timestamp) + 180 * 86_400;
@@ -405,7 +405,7 @@ contract BoundariesTest is Fixture {
     }
 
     /// **B14 — `now >= unbondingStartedAt + period`, admits exact.** Re-assertion
-    /// (`X402Stake.stake.t.sol`), restated at all three instants.
+    /// (`AssayStake.stake.t.sol`), restated at all three instants.
     function test_B14_theUnbondingMaturesAtExactlyItsOwnInstant() public {
         _stake(BOND);
         uint64 startedAt = uint64(block.timestamp);

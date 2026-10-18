@@ -3,9 +3,9 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {SystemHandler} from "./SystemHandler.sol";
-import {X402Config} from "../../../src/X402Config.sol";
-import {X402Escrow} from "../../../src/X402Escrow.sol";
-import {X402Stake} from "../../../src/X402Stake.sol";
+import {AssayConfig} from "../../../src/AssayConfig.sol";
+import {AssayEscrow} from "../../../src/AssayEscrow.sol";
+import {AssayStake} from "../../../src/AssayStake.sol";
 import {SlashStatus} from "../../../src/Types.sol";
 import {MockUSDG} from "../../helpers/MockUSDG.sol";
 
@@ -22,9 +22,9 @@ import {MockUSDG} from "../../helpers/MockUSDG.sol";
 /// forge-config: default.invariant.depth = 100
 contract SystemInvariantsTest is Test {
     SystemHandler internal h;
-    X402Config internal config;
-    X402Escrow internal escrow;
-    X402Stake internal stake;
+    AssayConfig internal config;
+    AssayEscrow internal escrow;
+    AssayStake internal stake;
     MockUSDG internal usdg;
 
     function setUp() public {
@@ -154,7 +154,7 @@ contract SystemInvariantsTest is Test {
     function invariant_escrowConservation() public view {
         uint256 sum;
         for (uint256 i = 0; i < 3; i++) {
-            X402Escrow.Escrow memory e = escrow.escrowOf(h.buyers(i));
+            AssayEscrow.Escrow memory e = escrow.escrowOf(h.buyers(i));
             sum += e.balance;
             assertEq(
                 e.totalFunded,
@@ -177,7 +177,7 @@ contract SystemInvariantsTest is Test {
         uint256 wd;
         uint256 sl;
         for (uint256 i = 0; i < 3; i++) {
-            X402Stake.ProviderStake memory s = stake.stakeOf(h.providers(i));
+            AssayStake.ProviderStake memory s = stake.stakeOf(h.providers(i));
             atRisk += uint256(s.bonded) + s.unbonding;
             dep += s.totalDeposited;
             wd += s.totalWithdrawn;
@@ -222,7 +222,7 @@ contract SystemInvariantsTest is Test {
             address prov = h.providers(p);
             uint256 sum;
             for (uint256 k = 0; k < n; k++) {
-                X402Stake.SlashRecord memory r = stake.slashRecordOf(h.ids(k));
+                AssayStake.SlashRecord memory r = stake.slashRecordOf(h.ids(k));
                 if (r.provider != prov) continue;
                 assertLe(r.reserved, r.capAllowance, "reserved > capAllowance");
                 assertLe(r.reserved, r.penalty, "reserved > penalty");
@@ -230,7 +230,7 @@ contract SystemInvariantsTest is Test {
                     sum += r.reserved;
                 }
             }
-            X402Stake.ProviderStake memory s = stake.stakeOf(prov);
+            AssayStake.ProviderStake memory s = stake.stakeOf(prov);
             assertEq(s.pendingSlash, sum, "pendingSlash != sum of open reservations");
             assertLe(s.pendingSlash, uint256(s.bonded) + s.unbonding, "pendingSlash > at-risk");
         }
@@ -290,7 +290,7 @@ contract SystemInvariantsTest is Test {
         uint64 period = config.params().unbondingPeriodSeconds;
         for (uint256 i = 0; i < 3; i++) {
             address p = h.providers(i);
-            X402Stake.ProviderStake memory s = stake.stakeOf(p);
+            AssayStake.ProviderStake memory s = stake.stakeOf(p);
             assertEq(s.pendingSlash, 0, "a reservation survived every expiry");
             if (s.bonded > 0) {
                 vm.prank(p);
@@ -300,7 +300,7 @@ contract SystemInvariantsTest is Test {
         vm.warp(block.timestamp + period);
         for (uint256 i = 0; i < 3; i++) {
             address p = h.providers(i);
-            X402Stake.ProviderStake memory s = stake.stakeOf(p);
+            AssayStake.ProviderStake memory s = stake.stakeOf(p);
             if (s.unbonding == 0) continue;
             uint256 before = usdg.balanceOf(p);
             vm.prank(p);

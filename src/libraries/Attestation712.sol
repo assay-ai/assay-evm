@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {SlashAttestation, SLASH_ATTESTATION_TYPEHASH} from "../Types.sol";
 
-/// Signed against X402Stake's domain — a different `verifyingContract` from X402Escrow's,
+/// Signed against AssayStake's domain — a different `verifyingContract` from AssayEscrow's,
 /// so an attestation can never be presented at the escrow's door and a voucher can never be
 /// presented here. Two independent guards: the typehash and the domain.
 ///

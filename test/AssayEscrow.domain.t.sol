@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {Voucher712} from "../src/libraries/Voucher712.sol";
 import {Sig} from "../src/libraries/Sig.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -48,10 +48,10 @@ contract Voucher712Harness {
 }
 
 /// The escrow's voucher digest recovered through the one `Sig.recover`, exactly as `_redeem`
-/// does. `X402Escrow.recoverVoucherSigner` was removed in D-18 (nothing called it); this harness
+/// does. `AssayEscrow.recoverVoucherSigner` was removed in D-18 (nothing called it); this harness
 /// keeps the recovery properties below testable without moving money.
 contract VoucherRecoverer {
-    function recoverVoucherSigner(X402Escrow e, Voucher calldata v, bytes calldata sig)
+    function recoverVoucherSigner(AssayEscrow e, Voucher calldata v, bytes calldata sig)
         external
         view
         returns (address)
@@ -91,7 +91,7 @@ contract VoucherRecoverer {
 /// on the signature today, so a second valid 65-byte encoding of one authorisation is a
 /// correctness bug rather than a formality. Four guards, four named errors, four tests, plus the
 /// two boundary tests that pin `>` and `∈ {27, 28}` rather than merely exercising them.
-contract X402EscrowDomainTest is Fixture {
+contract AssayEscrowDomainTest is Fixture {
     Voucher712Harness internal hasher;
     VoucherRecoverer internal recoverer;
 
@@ -420,7 +420,7 @@ contract X402EscrowDomainTest is Fixture {
     }
 
     /// The guards are only guards if EVERY recovery goes through `_recover`. That rule is stated
-    /// in `X402Escrow`'s natspec and, before this test, enforced by nothing — a second recovery
+    /// in `AssayEscrow`'s natspec and, before this test, enforced by nothing — a second recovery
     /// call anywhere in `src/` would be a path with no length check, no low-s check, no `v` check
     /// and no zero-signer check.
     ///
@@ -433,15 +433,15 @@ contract X402EscrowDomainTest is Fixture {
     ///
     /// It **counts** those sites rather than grepping for absence. `script/check-vendor.sh`'s
     /// header records why: enumerating what is present can never answer "is anything missing", and
-    /// the trap runs in reverse here — asserting "no recovery outside `X402Escrow.sol`" would pass
-    /// a tree in which `X402Escrow.sol` itself had grown a second one.
+    /// the trap runs in reverse here — asserting "no recovery outside `AssayEscrow.sol`" would pass
+    /// a tree in which `AssayEscrow.sol` itself had grown a second one.
     ///
     /// Comment lines are skipped, so the prose in `_recover`'s own natspec — which names all
     /// three spellings — does not count as a call site. `test/Types.t.sol`'s source scanner skips
     /// them the same way and for the same reason.
     ///
     /// **The body now lives in `src/libraries/Sig.sol`**, with a forwarder in
-    /// `X402Escrow._recover` behind it, so the owning file is now that library and the count is
+    /// `AssayEscrow._recover` behind it, so the owning file is now that library and the count is
     /// still exactly 1. The list below is a list rather than a single name because a future change
     /// may legitimately add a second owner; what it must never do is let a recovery appear in a
     /// file that moves money.
@@ -551,7 +551,7 @@ contract X402EscrowDomainTest is Fixture {
     /// CROSS-CONTRACT REPLAY. Two deployments, one chain. A second PROXY — which is what a
     /// redeploy is (D-7); an upgrade would reuse this one and is proved in `Upgrade.t.sol`.
     function test_aVoucherSignedForOneDeploymentDoesNotVerifyOnAnother() public {
-        X402Escrow other = _deployEscrow(address(usdg));
+        AssayEscrow other = _deployEscrow(address(usdg));
         assertTrue(other.DOMAIN_SEPARATOR() != escrow.DOMAIN_SEPARATOR());
 
         Voucher memory v = _voucher();

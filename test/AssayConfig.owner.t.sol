@@ -8,9 +8,9 @@ import {Ownable2StepUpgradeable} from
     "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 import {Fixture} from "./helpers/Fixture.sol";
-import {X402Config} from "../src/X402Config.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
-import {X402Stake} from "../src/X402Stake.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayStake} from "../src/AssayStake.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
 
@@ -19,7 +19,7 @@ import "../src/Errors.sol";
 /// - the owner (cold) is the upgrade authority of all three contracts and appoints the admin;
 ///   it moves in two steps and can never be renounced or become `address(0)`;
 /// - the admin (operational) holds every config door and nothing else.
-contract X402ConfigOwnerTest is Fixture {
+contract AssayConfigOwnerTest is Fixture {
     bytes32 internal constant IMPL_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
@@ -67,9 +67,9 @@ contract X402ConfigOwnerTest is Fixture {
 
     /// Every OWNER door refuses the admin, the redeemer and a stranger, and admits the owner.
     function test_everyOwnerDoorRefusesTheAdminTheRedeemerAndAStranger() public {
-        address cfgNext = address(new X402Config());
-        address stakeNext = address(new X402Stake());
-        address escrowNext = address(new X402Escrow());
+        address cfgNext = address(new AssayConfig());
+        address stakeNext = address(new AssayStake());
+        address escrowNext = address(new AssayEscrow());
         address[3] memory refused = [admin, redeemer, stranger];
         for (uint256 i = 0; i < refused.length; i++) {
             vm.startPrank(refused[i]);
@@ -121,7 +121,7 @@ contract X402ConfigOwnerTest is Fixture {
         assertEq(config.pendingOwner(), cold);
 
         // The proposed key holds NOTHING until it accepts.
-        address next = address(new X402Stake());
+        address next = address(new AssayStake());
         vm.startPrank(cold);
         vm.expectRevert(NotOwner.selector);
         stake.upgradeToAndCall(next, "");
@@ -203,11 +203,11 @@ contract X402ConfigOwnerTest is Fixture {
             abi.encodeWithSelector(OwnableUpgradeable.OwnableInvalidOwner.selector, address(0))
         );
         new ERC1967Proxy(
-            address(configImpl), abi.encodeCall(X402Config.initialize, (p, admin, address(0)))
+            address(configImpl), abi.encodeCall(AssayConfig.initialize, (p, admin, address(0)))
         );
         vm.expectRevert(InvalidAdmin.selector);
         new ERC1967Proxy(
-            address(configImpl), abi.encodeCall(X402Config.initialize, (p, address(0), owner))
+            address(configImpl), abi.encodeCall(AssayConfig.initialize, (p, address(0), owner))
         );
     }
 

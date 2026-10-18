@@ -19,7 +19,7 @@ pragma solidity 0.8.24;
 /// same value, and the seed string would be a label for nothing. Two of them carry a security
 /// property that does *not* travel with the name and has to be rebuilt: `SLASH_RECORD_SEED`'s
 /// replay lock is `init`-succeeds-once on `["slash", request_id]`, which on EVM becomes an
-/// explicit `SlashStatus.None` check in `X402Stake`, and `ESCROW_SEED`'s "the authority is derived
+/// explicit `SlashStatus.None` check in `AssayStake`, and `ESCROW_SEED`'s "the authority is derived
 /// from the buyer and nothing else" becomes `msg.sender` plus an EIP-712 signature.
 /// Listed so their absence reads as a decision rather than an oversight.
 ///
@@ -32,7 +32,7 @@ library Constants {
     /// the provider can `disputeSlash`.
     ///
     /// **Since the dispute upgrade this is the DEFAULT, not the delay.** The live value is
-    /// `X402Config.slashDelaySeconds()`, which the admin may set inside
+    /// `AssayConfig.slashDelaySeconds()`, which the admin may set inside
     /// `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` and which
     /// reads back as this constant until it is first set — so a proxy upgraded from the earlier
     /// code keeps 72 hours. A stolen admin key can shorten it to the minimum, never to zero, and
@@ -65,8 +65,8 @@ library Constants {
     /// call can make an already-admitted voucher unredeemable before its deadline.
     uint64 internal constant TIGHTEN_DELAY_SECONDS = WITHDRAW_DELAY_SECONDS;
 
-    /// EVM only. The shortest settable collect hold (`X402Config.setCollectHold`): how long a
-    /// redeemed payment waits in `X402Escrow.held` before the redeemer may collect it to the
+    /// EVM only. The shortest settable collect hold (`AssayConfig.setCollectHold`): how long a
+    /// redeemed payment waits in `AssayEscrow.held` before the redeemer may collect it to the
     /// provider. One minute, so a testnet run can collect inside a test.
     uint64 internal constant MIN_COLLECT_HOLD_SECONDS = 60;
 
@@ -75,7 +75,7 @@ library Constants {
     /// only delay every undisputed provider payment.
     uint64 internal constant MAX_COLLECT_HOLD_SECONDS = 86_400;
 
-    /// EVM only. The collect hold `X402Config.collectHoldSeconds()` reads back until the admin
+    /// EVM only. The collect hold `AssayConfig.collectHoldSeconds()` reads back until the admin
     /// first sets one, so an upgraded proxy holds every payment for an hour with no initializer
     /// call — the same shape as [`SLASH_DELAY_SECONDS`].
     uint64 internal constant DEFAULT_COLLECT_HOLD_SECONDS = 3_600;
@@ -120,7 +120,7 @@ library Constants {
     //   1. HERE, NOW: `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`
     //      derives the 2,220 from its three terms rather than typing it, and asserts the
     //      inequality. A red test instead of a red build.
-    //   2. `X402Escrow.initialize` checks the same inequality and reverts
+    //   2. `AssayEscrow.initialize` checks the same inequality and reverts
     //      [`WithdrawDelayTooShort`]. Runtime rather than a constructor because these contracts
     //      sit behind UUPS proxies (D-1) and a constructor does not run against the storage
     //      a proxy uses.
@@ -129,7 +129,7 @@ library Constants {
     // constant, so the optimiser folds the check in `initialize` to nothing and no input can
     // reach it. Both exist to make a future edit to the numbers above fail loudly: the test goes
     // red, and any redeployment of the escrow becomes uninitialisable. Nothing here constrains a
-    // *parameter*; `unbondingPeriodSeconds` and the rest are X402Config's `_validate` to bound.
+    // *parameter*; `unbondingPeriodSeconds` and the rest are AssayConfig's `_validate` to bound.
 
     /// constants.rs — `SLASH_WINDOW_SECONDS: i64 = 86_400`. One width for two rolling
     /// counters: the per-provider slash cap and the buyer escrow's own daily ceiling.
@@ -189,7 +189,7 @@ library Constants {
     ///
     /// The `uint64`/`uint256` numerator promotes the whole expression, so the `uint16` operands
     /// never meet each other alone. What is forbidden is writing the two `uint16`s adjacent —
-    /// `bps * BPS_DENOMINATOR`, or a bare `a * b` where both are bps. `Fee` and `X402Config` own
+    /// `bps * BPS_DENOMINATOR`, or a bare `a * b` where both are bps. `Fee` and `AssayConfig` own
     /// the sites.
     uint16 internal constant BPS_DENOMINATOR = 10_000;
 
@@ -208,7 +208,7 @@ library Constants {
     /// and that limit does not exist here, so the bound has to be written down.
     uint256 internal constant MAX_REDEEM_BATCH = 64;
 
-    /// The bound on `X402Stake`'s `disputeSlashBatch`, `upholdSlashBatch` and `cancelSlashBatch`,
+    /// The bound on `AssayStake`'s `disputeSlashBatch`, `upholdSlashBatch` and `cancelSlashBatch`,
     /// for `MAX_REDEEM_BATCH`'s reason. EVM only; `docs/gas.md` has the measurement.
     uint256 internal constant MAX_SLASH_BATCH = 64;
 

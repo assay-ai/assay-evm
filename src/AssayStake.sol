@@ -8,8 +8,8 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
-import {IX402Config} from "./interfaces/IX402Config.sol";
-import {IX402StakeView} from "./interfaces/IX402StakeView.sol";
+import {IAssayConfig} from "./interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "./interfaces/IAssayStakeView.sol";
 import {IERC20Decimals} from "./interfaces/IERC20Decimals.sol";
 import {Attestation712} from "./libraries/Attestation712.sol";
 import {Cast} from "./libraries/Cast.sol";
@@ -21,7 +21,7 @@ import {CancelReason, ParamSet, ResponseClass, SlashAttestation, SlashStatus} fr
 import "./Errors.sol";
 
 /// Provider collateral, and the two-phase slash. Holds no buyer money and holds no
-/// reference to X402Escrow — the only edge between them points the other way and is a view.
+/// reference to AssayEscrow — the only edge between them points the other way and is a view.
 ///
 /// Deployed behind an ERC1967Proxy and upgraded through UUPS (D-1), with the same single
 /// authority: `CONFIG.owner()` (D-17), a Ledger or a Safe, immediate, no timelock. The proxy address is the
@@ -35,13 +35,13 @@ import "./Errors.sol";
 /// funder). What stays open while paused is what only releases or freezes a hold:
 /// `disputeSlash`, `cancelSlash`, `expireSlash`, and `upholdSlash` (which moves no money). The
 /// pause still moves nobody's funds anywhere; there is no seize and no sweep.
-contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, ReentrancyGuard {
+contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// `state.rs`'s `ProviderStake`, minus the two Solana-only fields (`provider`, which is
     /// the mapping key here, and `bump`). Four slots, asserted by `script/check-layout.sh`.
     ///
-    /// The widths follow `X402Escrow.Escrow`'s rule: cumulative counters are `uint128` (they are
+    /// The widths follow `AssayEscrow.Escrow`'s rule: cumulative counters are `uint128` (they are
     /// sums of many amounts and must not be able to wrap where an amount cannot), and everything
     /// an instruction takes as an argument or compares against a clock is `uint64`.
     struct ProviderStake {
@@ -57,9 +57,9 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         uint128 totalSlashed; //     slot 3  state.rs
     }
 
-    /// The verifier's rolling daily cap counter lives HERE, not in X402Config: it is a
-    /// consequence of slashing, and X402Config must never be written by another contract
-    /// (D-3). X402Config owns only the key's lifecycle. On Solana both halves sit on the
+    /// The verifier's rolling daily cap counter lives HERE, not in AssayConfig: it is a
+    /// consequence of slashing, and AssayConfig must never be written by another contract
+    /// (D-3). AssayConfig owns only the key's lifecycle. On Solana both halves sit on the
     /// one `VerifierKey` account because there is only one program.
     struct VerifierWindow {
         uint64 slashedInWindow;
@@ -68,18 +68,18 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
 
     /// Storage, not immutables, since D-1 (design decision that makes this
     /// contract upgradeable). Written once in `initialize`; the names and getters are unchanged.
-    IX402Config public CONFIG;
+    IAssayConfig public CONFIG;
     IERC20 public ASSET;
 
-    /// `internal` rather than `public` for `X402Escrow.escrows`'s reason: the generated getter
+    /// `internal` rather than `public` for `AssayEscrow.escrows`'s reason: the generated getter
     /// for a struct-valued mapping returns a flattened tuple, which reorders silently when a
     /// field is appended. [`stakeOf`] returns the struct, so a decoder breaks loudly instead.
     mapping(address => ProviderStake) internal stakes;
     mapping(address => VerifierWindow) internal verifierWindows;
 
     /// `state.rs` keeps these on Solana's `Config`. Here they live on the contract that
-    /// holds the custody (D-3), exactly as `X402Escrow.totalEscrowed` does, because
-    /// X402Config must never be written by another contract.
+    /// holds the custody (D-3), exactly as `AssayEscrow.totalEscrowed` does, because
+    /// AssayConfig must never be written by another contract.
     ///
     /// The identity they maintain, asserted directly by the tests:
     /// `totalStaked == totalDeposited - totalWithdrawn - totalSlashed`.
@@ -89,7 +89,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     uint128 public totalSlashed;
 
     /// `events.rs::StakeDeposited`. `funder` is indexed as well as
-    /// `provider` for `X402Escrow.Deposited`'s reason: "who funded this provider" and "what did
+    /// `provider` for `AssayEscrow.Deposited`'s reason: "who funded this provider" and "what did
     /// this address fund" are both queries the reconciler makes.
     event StakeDeposited(
         address indexed provider, address indexed funder, uint64 amount, uint128 bonded
@@ -106,7 +106,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
         _disableInitializers();
     }
 
-    function initialize(IX402Config config, IERC20 asset) external initializer {
+    function initialize(IAssayConfig config, IERC20 asset) external initializer {
         if (address(config) == address(0) || address(asset) == address(0)) revert ZeroAddress();
         if (IERC20Decimals(address(asset)).decimals() != 6) revert AssetDecimalsNotSix();
         CONFIG = config;
@@ -180,7 +180,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// calls back into this function from inside `transferFrom` makes the OUTER call's balance
     /// delta larger than the outer `amount`, so [`TransferAmountMismatch`] fires whether or not
     /// `nonReentrant` is present — the same finding `test/MUTATION-LOG.md` rows E4 and E23
-    /// record on `X402Escrow.depositFor`. The modifier is the belt.
+    /// record on `AssayEscrow.depositFor`. The modifier is the belt.
     function depositStakeFor(address provider, uint64 amount) public nonReentrant {
         CONFIG.assertActive(provider, msg.sender, address(0));
         if (provider == address(0)) revert ZeroAddress();
@@ -239,7 +239,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// subtracts what pending judgements have reserved.
     ///
     /// **msg.sender-only, pays msg.sender, no destination** — the same argument
-    /// `X402Escrow.withdraw()` makes. The Anchor original takes a `destination` token account
+    /// `AssayEscrow.withdraw()` makes. The Anchor original takes a `destination` token account
     /// and has to defend it with `DestinationIsVault`; here there is nothing to defend because
     /// there is nothing to choose.
     ///
@@ -249,7 +249,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// **What stops re-entrancy here is the ordering.** Every effect is written before
     /// `safeTransfer`, so a token that calls back finds `unbonding` already reduced and
     /// `totalWithdrawn` already raised. `nonReentrant` is the belt and only changes the error
-    /// name — `test/MUTATION-LOG.md` row W12 measured exactly that on `X402Escrow.withdraw`.
+    /// name — `test/MUTATION-LOG.md` row W12 measured exactly that on `AssayEscrow.withdraw`.
     ///
     /// **Pause-gated and blocklist-gated since the dispute upgrade** — the owner's decision,
     /// reversing `withdraw_stake.rs`. Neither gate moves the stake anywhere: it stays the
@@ -637,7 +637,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     }
 
     /// The batch forms (`disputeSlashBatch`, `upholdSlashBatch`, `cancelSlashBatch`) are
-    /// **atomic**, like `X402Escrow.redeemVoucherBatch`: each loops over the single call's own
+    /// **atomic**, like `AssayEscrow.redeemVoucherBatch`: each loops over the single call's own
     /// internal function, so one bad id — including a duplicate, which the second iteration's
     /// status check refuses — reverts the whole batch. Clients pre-filter with `slashRecordOf`.
     /// The caller check depends only on `msg.sender`, so it is made once per batch.
@@ -748,7 +748,7 @@ contract X402Stake is Initializable, UUPSUpgradeable, IX402StakeView, EIP712, Re
     /// beneficiary and verifier are the record's. To rule FOR the provider it calls
     /// [`cancelSlash`].
     ///
-    /// The arbiter is never a live verifier: `X402Config` refuses that at every role writer
+    /// The arbiter is never a live verifier: `AssayConfig` refuses that at every role writer
     /// (`_assertRolesDistinct`). The only way the arbiter can equal a record's verifier is a key
     /// REVOKED after it judged, and such a record can never pay (`executeSlash` re-checks the
     /// key), so the per-record `ArbiterIsVerifier` check defended nothing and is gone (audit F

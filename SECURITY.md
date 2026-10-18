@@ -6,7 +6,7 @@ Only the `main` branch is supported. Fixes are not backported to older commits o
 
 ## Scope
 
-The contracts in `src/` (`X402Config`, `X402Escrow`, `X402Stake` and their libraries), the
+The contracts in `src/` (`AssayConfig`, `AssayEscrow`, `AssayStake` and their libraries), the
 deployment and verification scripts in `script/`, and any deployment records you generate with them.
 These contracts are intended for Robinhood Chain testnet (46630) only; no deployment is published from this repository. They have not had an independent
 third-party audit. Known, accepted design risks are listed in `docs/risk-register.md`; please read

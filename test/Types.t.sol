@@ -437,7 +437,7 @@ contract TypesTest is Test {
         assertEq(rDeadline, 4, "RequestWithdraw field 3");
 
         // `ParamSet` is the odd one out here: it is not an EIP-712 struct and no signature binds
-        // its order. It is in this test because it is `X402Config._params`, a
+        // its order. It is in this test because it is `AssayConfig._params`, a
         // **storage** struct occupying slots 1-3 behind a UUPS proxy — so a reorder does not
         // change a message, it silently changes the layout the next implementation reads, and
         // `admin`/`treasury`/`redeemer` come back as each other. It also wastes 12 bytes in slot
@@ -499,7 +499,7 @@ contract TypesTest is Test {
     /// is order plus width and nothing else, and the named form, which adds the field names. Both
     /// are derived by solc; neither is a re-reading of `src/Types.sol`.
     ///
-    /// What it still cannot see: `__gap`'s size, and a field inserted into `X402Config` *before*
+    /// What it still cannot see: `__gap`'s size, and a field inserted into `AssayConfig` *before*
     /// `_params`. Those move the layout without touching this struct at all, and only a layout
     /// snapshot catches them (`script/check-layout.sh`).
     function test_paramSetCarriesItsDeclaredWidthsAndOrder() public view {
@@ -637,7 +637,7 @@ contract TypesTest is Test {
     /// derived rather than typed, exactly as constants.rs derives it.
     ///
     /// This is half of what `constants.rs`'s `const _: () = assert!(…)` was. The other half —
-    /// a `require` inside `X402Escrow.initialize` — lives there, and `Constants.sol` says so at
+    /// a `require` inside `AssayEscrow.initialize` — lives there, and `Constants.sol` says so at
     /// the constant. Nothing in this test stops a proxy being initialised into a violating state.
     function test_withdrawDelayOutlivesTheLongestRedeemableVoucher() public pure {
         uint64 life = Constants.CLOCK_SKEW_TOLERANCE_SECONDS

@@ -5,7 +5,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Constants} from "../Constants.sol";
 import "../Errors.sol";
 
-/// The one signature recovery in `src/`, shared by `X402Escrow` and `X402Stake`. Four guards,
+/// The one signature recovery in `src/`, shared by `AssayEscrow` and `AssayStake`. Four guards,
 /// all load-bearing, each refusal under its own name:
 ///
 ///   1. exactly 65 bytes — the 64-byte EIP-2098 compact form is refused, so every signature has

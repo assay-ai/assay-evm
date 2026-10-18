@@ -11,7 +11,7 @@
 # correct, not a failure.
 #
 # The loop below was made to fail on both of its questions against a locally flipped record — a
-# mutated runtime hash, and `setAdminUnchecked(address)` appended to X402Config. A record is
+# mutated runtime hash, and `setAdminUnchecked(address)` appended to AssayConfig. A record is
 # written at "pending-deploy" because a record must not claim a deployment that does not exist;
 # docs/ci-gates.md §6 carries both outputs.
 set -euo pipefail
@@ -31,7 +31,7 @@ for rec in deployments/*.json; do
     echo "skipping $rec (status: $(jq -er '.status' "$rec"))"
     continue
   fi
-  for c in X402Config X402Stake X402Escrow; do
+  for c in AssayConfig AssayStake AssayEscrow; do
     want=$(jq -er ".contracts.\"$c\".implementationRuntimeKeccak" "$rec")
     # `cast keccak` reading the bytecode from a PIPE fails — the trailing newline makes it
     # "Error: odd number of digits", and under `set -euo pipefail` that aborted the whole gate.

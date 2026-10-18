@@ -52,8 +52,8 @@ contract ForkFactsTest is ForkFixture {
     /// **The pin stays.** Shanghai is a subset of Cancun, so a Shanghai-compiled contract runs
     /// correctly on a Cancun chain; raising `evm_version` would change the bytecode of all three
     /// production contracts and is a decision no test may make on its own. The cost is that two
-    /// VIEW functions of the settlement token cannot be read on a fork. `X402Escrow` and
-    /// `X402Stake` touch only `decimals`, `balanceOf`, `approve`, `transfer` and `transferFrom`,
+    /// VIEW functions of the settlement token cannot be read on a fork. `AssayEscrow` and
+    /// `AssayStake` touch only `decimals`, `balanceOf`, `approve`, `transfer` and `transferFrom`,
     /// none of which reach the MCOPY, so no money path is affected.
     ///
     /// This test goes RED the day the pin moves — which is the point. Delete it in the same

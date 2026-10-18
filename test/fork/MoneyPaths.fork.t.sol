@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.24;
 
-import {X402EscrowDepositTest} from "../X402Escrow.deposit.t.sol";
-import {X402EscrowRedeemTest} from "../X402Escrow.redeem.t.sol";
-import {X402EscrowBatchTest} from "../X402Escrow.batch.t.sol";
-import {X402EscrowWithdrawTest} from "../X402Escrow.withdraw.t.sol";
-import {X402EscrowBySigTest} from "../X402Escrow.bysig.t.sol";
-import {X402EscrowDomainTest} from "../X402Escrow.domain.t.sol";
-import {X402StakeTest} from "../X402Stake.stake.t.sol";
-import {X402StakeSlashTest} from "../X402Stake.slash.t.sol";
+import {AssayEscrowDepositTest} from "../AssayEscrow.deposit.t.sol";
+import {AssayEscrowRedeemTest} from "../AssayEscrow.redeem.t.sol";
+import {AssayEscrowBatchTest} from "../AssayEscrow.batch.t.sol";
+import {AssayEscrowWithdrawTest} from "../AssayEscrow.withdraw.t.sol";
+import {AssayEscrowBySigTest} from "../AssayEscrow.bysig.t.sol";
+import {AssayEscrowDomainTest} from "../AssayEscrow.domain.t.sol";
+import {AssayStakeTest} from "../AssayStake.stake.t.sol";
+import {AssayStakeSlashTest} from "../AssayStake.slash.t.sol";
 import {PauseTest} from "../Pause.t.sol";
 import {BoundariesTest} from "../Boundaries.t.sol";
 import {UpgradeTest} from "../Upgrade.t.sol";
@@ -41,56 +41,56 @@ import {UpgradeTest} from "../Upgrade.t.sol";
 ///
 /// **`name()` and `symbol()` are never called on the fork token.** Its one post-Shanghai opcode
 /// lives on that path; `docs/chain-facts.md` §1b. Nothing in `src/` calls them either.
-contract ForkEscrowDepositTest is X402EscrowDepositTest {
+contract ForkEscrowDepositTest is AssayEscrowDepositTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkEscrowRedeemTest is X402EscrowRedeemTest {
+contract ForkEscrowRedeemTest is AssayEscrowRedeemTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkEscrowBatchTest is X402EscrowBatchTest {
+contract ForkEscrowBatchTest is AssayEscrowBatchTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkEscrowWithdrawTest is X402EscrowWithdrawTest {
+contract ForkEscrowWithdrawTest is AssayEscrowWithdrawTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkEscrowBySigTest is X402EscrowBySigTest {
+contract ForkEscrowBySigTest is AssayEscrowBySigTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkEscrowDomainTest is X402EscrowDomainTest {
+contract ForkEscrowDomainTest is AssayEscrowDomainTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkStakeTest is X402StakeTest {
+contract ForkStakeTest is AssayStakeTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();
     }
 }
 
-contract ForkStakeSlashTest is X402StakeSlashTest {
+contract ForkStakeSlashTest is AssayStakeSlashTest {
     function setUp() public override {
         forkMode = true;
         super.setUp();

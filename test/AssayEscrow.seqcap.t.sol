@@ -10,7 +10,7 @@ import "../src/Errors.sol";
 /// D-17: the seq jump cap. A redeemed voucher needs `seq <= seqHigh + MAX_SEQ_GAP`, a CONSTANT
 /// (1,000,000), on the single and batch paths and for every signer kind. Without it one voucher
 /// at `2^64 - 1` bricks the payer's sequence space for ever.
-contract X402EscrowSeqCapTest is Fixture {
+contract AssayEscrowSeqCapTest is Fixture {
     uint256 internal constant DELEGATE_KEY = 0xDE1E6A7E;
     uint64 internal constant GAP = 1_000_000;
     bytes32 internal ds;
@@ -131,7 +131,7 @@ contract X402EscrowSeqCapTest is Fixture {
     /// The order: the cap is checked after `VoucherSeqNotIncreasing` (so the subtraction cannot
     /// wrap) and before the signature, like the rest of the seq rule.
     function test_theCapSitsBesideTheMonotonicCheckInTheSource() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Escrow.sol"));
+        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
         bytes memory h = bytes(src);
         bytes memory n = bytes(
             "        if (v.seq <= e.seqHigh) revert VoucherSeqNotIncreasing();\n        // D-17: the jump cap. `v.seq > e.seqHigh` was just checked, so the difference cannot wrap.\n        if (v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) revert VoucherSeqGapTooLarge();\n"

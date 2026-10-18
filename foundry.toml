@@ -29,7 +29,7 @@ cbor_metadata    = true
 # It is artifact CONTENT only: creation and runtime bytecode are byte-identical with and without
 # it, for both contracts (measured with SHA-256 over the artifact objects).
 extra_output     = ["storageLayout"]
-gas_reports      = ["X402Escrow", "X402Stake", "X402Config"]
+gas_reports      = ["AssayEscrow", "AssayStake", "AssayConfig"]
 # The repository root is read-write: the layout and snapshot gates write under it. Nothing in the
 # suite reads or writes outside the repository.
 fs_permissions   = [{ access = "read-write", path = "./" }]

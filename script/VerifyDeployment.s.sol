@@ -3,9 +3,9 @@ pragma solidity 0.8.24;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
-import {X402Config} from "../src/X402Config.sol";
-import {X402Stake} from "../src/X402Stake.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
+import {AssayStake} from "../src/AssayStake.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {IERC20Decimals} from "../src/interfaces/IERC20Decimals.sol";
 import {ParamSet} from "../src/Types.sol";
 
@@ -39,9 +39,9 @@ contract VerifyDeployment is Script {
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     function run() external view {
-        X402Config config = X402Config(vm.envAddress("PROXY_CONFIG"));
-        X402Stake stake = X402Stake(vm.envAddress("PROXY_STAKE"));
-        X402Escrow escrow = X402Escrow(vm.envAddress("PROXY_ESCROW"));
+        AssayConfig config = AssayConfig(vm.envAddress("PROXY_CONFIG"));
+        AssayStake stake = AssayStake(vm.envAddress("PROXY_STAKE"));
+        AssayEscrow escrow = AssayEscrow(vm.envAddress("PROXY_ESCROW"));
 
         console2.log("chainId               ", block.chainid);
 
@@ -59,9 +59,9 @@ contract VerifyDeployment is Script {
         // The implementation each proxy currently points at. This is the field an UPGRADE changes,
         // and the only one that tells an operator whether an upgrade they did not perform has
         // happened. `verify-deployment.sh` compares it to the record; here it is printed.
-        console2.log("X402Config  impl (live)", _implOf(address(config)));
-        console2.log("X402Stake   impl (live)", _implOf(address(stake)));
-        console2.log("X402Escrow  impl (live)", _implOf(address(escrow)));
+        console2.log("AssayConfig  impl (live)", _implOf(address(config)));
+        console2.log("AssayStake   impl (live)", _implOf(address(stake)));
+        console2.log("AssayEscrow  impl (live)", _implOf(address(escrow)));
 
         // `owner()` exists only after the D-17 upgrade; a version-1 config logs address(0).
         console2.log("owner                 ", _addrOrZero(address(config), "owner()"));

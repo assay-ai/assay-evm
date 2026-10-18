@@ -64,7 +64,7 @@ Nothing below changes. The four `balanceOf` reads and the never-a-solvency-asser
 properties of this contract, not of the token, and they stay whichever way §10 resolves.
 
 Today's implementation has no transfer callbacks; tomorrow's might. The reentrancy guards and the
-checks-effects-interactions ordering are what make that survivable, and `X402Escrow`'s four
+checks-effects-interactions ordering are what make that survivable, and `AssayEscrow`'s four
 `balanceOf` reads are all delta halves — **no read is ever a solvency assertion, and none may be
 added** (a `balanceOf`-based solvency check would refuse *every* withdrawal rather than the one
 actually blocked).
@@ -74,9 +74,9 @@ this risk and raises the next one.
 
 ## 4. The upgrade key is the OWNER, and a compromised owner is total loss
 
-**Amended by D-17.** The upgrade authority of all three contracts is `X402Config.owner()`, a cold
+**Amended by D-17.** The upgrade authority of all three contracts is `AssayConfig.owner()`, a cold
 key (a Ledger, or a Safe in production), and no longer the operational admin. The owner can replace
-`X402Escrow`'s logic in one transaction with no delay and take every buyer's USDG.
+`AssayEscrow`'s logic in one transaction with no delay and take every buyer's USDG.
 
 **The upgrade is the owner's power over funds, but it is not the only role power over them.** No
 role has a door that transfers a token to itself: there is no sweep, no rescue, no "excess"
@@ -126,7 +126,7 @@ aspiration.
 **What limits it:** the caps per record, per provider window and per key-day, and how fast the
 owner replaces the admin (`setAdmin`) and the fresh admin revokes the rogue key and unpauses.
 **Monitoring (required, off chain):** page on every `ConfigUpdated`, `VerifierRegistered`,
-`ArbiterSet`, `SlashDelaySet`, `PauseToggled` and `BlockedSet` from `X402Config`.
+`ArbiterSet`, `SlashDelaySet`, `PauseToggled` and `BlockedSet` from `AssayConfig`.
 
 ## 5. The admin and the upgrade key were the same key — resolved by D-17
 

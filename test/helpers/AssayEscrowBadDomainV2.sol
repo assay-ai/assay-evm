@@ -5,17 +5,17 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IX402Config} from "../../src/interfaces/IX402Config.sol";
+import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import "../../src/Errors.sol";
 
-/// The NEGATIVE case, and the reason every X402 implementation must be constructed with
+/// The NEGATIVE case, and the reason every Assay implementation must be constructed with
 /// `EIP712("Assay Settlement", "2")`. The name and version are ShortString IMMUTABLES compiled
 /// into the implementation; change either and the proxy's domain separator changes on the next
 /// block, and every voucher a buyer has already signed becomes unredeemable. Nothing on chain
 /// stops this — `_authorizeUpgrade` checks *who*, never *what* — so the only controls are the
 /// runbook (`docs/deploy-runbook.md` §7) and `Upgrade.t.sol`'s (d).
 ///
-/// The base list and its ORDER are load-bearing, and they are copied from `X402Escrow` for that
+/// The base list and its ORDER are load-bearing, and they are copied from `AssayEscrow` for that
 /// reason: `Initializable` and `UUPSUpgradeable` are ERC-7201 namespaced and consume no
 /// sequential slot, `EIP712` takes slots 0 and 1 (`_nameFallback`, `_versionFallback`) and
 /// `ReentrancyGuard` takes slot 2 (`_status`). Declaring `CONFIG` first therefore lands it on
@@ -25,8 +25,8 @@ import "../../src/Errors.sol";
 /// It is deliberately layout-incompatible in every other respect. It exists to be upgraded
 /// **to** in exactly one test, and that test asserts the damage rather than the recovery. Do not
 /// reuse it, and do not "fix" its layout to match: a stub that matched would prove nothing.
-contract X402EscrowBadDomainV2 is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
-    IX402Config public CONFIG;
+contract AssayEscrowBadDomainV2 is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
+    IAssayConfig public CONFIG;
 
     /// Version "3" where the shipped implementations say "2". One character.
     constructor() EIP712("Assay Settlement", "3") {

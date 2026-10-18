@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-import {X402Config} from "../src/X402Config.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
@@ -17,13 +17,13 @@ import "../src/Errors.sol";
 /// well — so `_valid()` gives every field a distinct value, `test_happyPath_…` reads all ten back,
 /// and `test_theStoredParamsAreThisInstancesOwn` deploys a second proxy with a second parameter
 /// set so a hard-coded `params()` cannot satisfy both.
-contract X402ConfigAdminTest is Test {
+contract AssayConfigAdminTest is Test {
     /// ERC-1967 implementation slot — `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`.
     bytes32 internal constant IMPL_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
-    X402Config internal config;
-    X402Config internal configImpl;
+    AssayConfig internal config;
+    AssayConfig internal configImpl;
     address internal admin = address(0xADAA);
     address internal next = address(0xBEEF);
     address internal treasury = address(0x7EA5);
@@ -44,22 +44,22 @@ contract X402ConfigAdminTest is Test {
         });
     }
 
-    /// Every X402Config in this suite is a PROXY (D-1). The implementation is deployed once;
+    /// Every AssayConfig in this suite is a PROXY (D-1). The implementation is deployed once;
     /// `initialize` runs through the proxy's constructor, so a revert inside `_validate`
     /// still surfaces here as a revert of the `new ERC1967Proxy(...)` expression.
-    function _deploy(ParamSet memory p, address a) internal returns (X402Config) {
-        return X402Config(
+    function _deploy(ParamSet memory p, address a) internal returns (AssayConfig) {
+        return AssayConfig(
             address(
                 new ERC1967Proxy(
                     address(configImpl),
-                    abi.encodeCall(X402Config.initialize, (p, a, address(0x0A1E)))
+                    abi.encodeCall(AssayConfig.initialize, (p, a, address(0x0A1E)))
                 )
             )
         );
     }
 
     function setUp() public {
-        configImpl = new X402Config();
+        configImpl = new AssayConfig();
         config = _deploy(_valid(), admin);
     }
 
@@ -100,7 +100,7 @@ contract X402ConfigAdminTest is Test {
         q.slashPlatformBps = 1_000;
         q.slashCapBps = 4_999;
 
-        X402Config other = _deploy(q, next);
+        AssayConfig other = _deploy(q, next);
 
         ParamSet memory a = config.params();
         ParamSet memory b = other.params();
@@ -122,7 +122,7 @@ contract X402ConfigAdminTest is Test {
     function test_initializeEmitsConfigInitialized() public {
         ParamSet memory p = _valid();
         vm.expectEmit(true, false, false, true);
-        emit X402Config.ConfigInitialized(admin, p);
+        emit AssayConfig.ConfigInitialized(admin, p);
         _deploy(p, admin);
     }
 
@@ -222,7 +222,7 @@ contract X402ConfigAdminTest is Test {
         p.minimumStake = 10_000; // the smallest a 1-bps cap can slash (audit C7)
         p.verifierDailyCap = 1;
         p.penaltyAmount = 0; // two penalties fit one key-day (audit G G-1)
-        X402Config floor_ = _deploy(p, admin);
+        AssayConfig floor_ = _deploy(p, admin);
         assertEq(floor_.params().slashCapBps, 1, "a one-bps cap is a cap");
         assertEq(floor_.params().takeRateBps, 0, "a zero take rate is not refused");
     }
@@ -271,7 +271,7 @@ contract X402ConfigAdminTest is Test {
         ParamSet memory p = _valid();
         p.slashAgentBps = 9_000;
         p.slashPlatformBps = 1_000; // sums to exactly 10_000 — the provider keeps nothing
-        X402Config a = _deploy(p, admin);
+        AssayConfig a = _deploy(p, admin);
         assertEq(a.params().slashAgentBps, 9_000, "a 90% agent share is legal in this pair");
         assertEq(a.params().slashPlatformBps, 1_000, "and so is the 10% beside it");
 
@@ -420,7 +420,7 @@ contract X402ConfigAdminTest is Test {
     function test_setPausedEmitsPauseToggled() public {
         vm.warp(1_760_000_000);
         vm.expectEmit(true, false, false, true, address(config));
-        emit X402Config.PauseToggled(admin, true, 1_760_000_000);
+        emit AssayConfig.PauseToggled(admin, true, 1_760_000_000);
         vm.prank(admin);
         config.setPaused(true);
     }
@@ -432,7 +432,7 @@ contract X402ConfigAdminTest is Test {
     /// The upgrade key is `owner()` since D-17 — not `Config.admin`. Tested here, beside the
     /// admin guards, because no guard ships without a test that fails when it is removed.
     function test_wrongSigner_onlyTheOwnerUpgradesConfig() public {
-        X402Config newImpl = new X402Config();
+        AssayConfig newImpl = new AssayConfig();
 
         address[2] memory refused = [next, admin];
         for (uint256 i = 0; i < refused.length; i++) {

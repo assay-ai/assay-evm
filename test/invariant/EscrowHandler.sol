@@ -4,11 +4,11 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {X402Config} from "../../src/X402Config.sol";
-import {X402Escrow} from "../../src/X402Escrow.sol";
-import {X402Stake} from "../../src/X402Stake.sol";
-import {IX402Config} from "../../src/interfaces/IX402Config.sol";
-import {IX402StakeView} from "../../src/interfaces/IX402StakeView.sol";
+import {AssayConfig} from "../../src/AssayConfig.sol";
+import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {AssayStake} from "../../src/AssayStake.sol";
+import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
 import {Voucher, ParamSet} from "../../src/Types.sol";
 import {MockUSDG} from "../helpers/MockUSDG.sol";
 import {VoucherSigner} from "../helpers/VoucherSigner.sol";
@@ -28,9 +28,9 @@ import {StepCounter} from "./StepCounter.sol";
 /// "assert every op landed >= 1", and it ports.
 contract EscrowHandler is Test, StepCounter {
     MockUSDG public usdg;
-    X402Config public config;
-    X402Escrow public escrow;
-    X402Stake public stake;
+    AssayConfig public config;
+    AssayEscrow public escrow;
+    AssayStake public stake;
 
     address internal constant ADMIN = address(0xADAA);
     address internal constant TREASURY = address(0x7EA5);
@@ -75,33 +75,34 @@ contract EscrowHandler is Test, StepCounter {
             slashCapBps: 1_000
         });
 
-        config = X402Config(
+        config = AssayConfig(
             address(
                 new ERC1967Proxy(
-                    address(new X402Config()),
-                    abi.encodeCall(X402Config.initialize, (p, ADMIN, address(0x0A1E)))
+                    address(new AssayConfig()),
+                    abi.encodeCall(AssayConfig.initialize, (p, ADMIN, address(0x0A1E)))
                 )
             )
         );
-        stake = X402Stake(
+        stake = AssayStake(
             address(
                 new ERC1967Proxy(
-                    address(new X402Stake()),
+                    address(new AssayStake()),
                     abi.encodeCall(
-                        X402Stake.initialize, (IX402Config(address(config)), IERC20(address(usdg)))
+                        AssayStake.initialize,
+                        (IAssayConfig(address(config)), IERC20(address(usdg)))
                     )
                 )
             )
         );
-        escrow = X402Escrow(
+        escrow = AssayEscrow(
             address(
                 new ERC1967Proxy(
-                    address(new X402Escrow()),
+                    address(new AssayEscrow()),
                     abi.encodeCall(
-                        X402Escrow.initialize,
+                        AssayEscrow.initialize,
                         (
-                            IX402Config(address(config)),
-                            IX402StakeView(address(stake)),
+                            IAssayConfig(address(config)),
+                            IAssayStakeView(address(stake)),
                             IERC20(address(usdg))
                         )
                     )
@@ -130,8 +131,8 @@ contract EscrowHandler is Test, StepCounter {
     /// `totalHeld`'s identity.
     function sumOfHeld() external view returns (uint128 total) {
         for (uint256 k = 0; k < heldSeq.length; k++) {
-            X402Escrow.HeldPayment memory h = escrow.held(actors[heldActor[k]], heldSeq[k]);
-            if (h.status == X402Escrow.HeldStatus.Held) total += h.amount;
+            AssayEscrow.HeldPayment memory h = escrow.held(actors[heldActor[k]], heldSeq[k]);
+            if (h.status == AssayEscrow.HeldStatus.Held) total += h.amount;
         }
     }
 
@@ -192,7 +193,7 @@ contract EscrowHandler is Test, StepCounter {
     function redeem(uint256 actorSeed, uint64 seqDelta, uint64 amount) external step {
         uint256 i = _actor(actorSeed);
         address a = actors[i];
-        X402Escrow.Escrow memory e = escrow.escrowOf(a);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(a);
 
         // Bias hard toward a redeem that CAN land: at or below the balance, at or below both
         // ceilings. The fuzzer still reaches the refusals through `seqDelta == 0` and through

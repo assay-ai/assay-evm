@@ -37,7 +37,7 @@ library VoucherSigner {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     /// The secp256k1 group order. `s` and `N - s` recover to the same address, which is the
-    /// malleability [`malleate`] exhibits and `X402Escrow._recover` refuses. Also the exclusive
+    /// malleability [`malleate`] exhibits and `AssayEscrow._recover` refuses. Also the exclusive
     /// upper bound on a private key, so fuzz tests bound into `[1, N - 1]` before `vm.addr`.
     uint256 internal constant N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
 
@@ -101,7 +101,7 @@ library VoucherSigner {
         return abi.encodePacked(r, s, v);
     }
 
-    /// The verifier's judgement, signed against X402Stake's domain.
+    /// The verifier's judgement, signed against AssayStake's domain.
     ///
     /// Written independently of `src/libraries/Attestation712.sol` for the reason this file's
     /// header gives: if this called that encoder, a field dropped there would be dropped from

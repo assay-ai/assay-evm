@@ -2,12 +2,12 @@
 pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
-import {X402Stake} from "../src/X402Stake.sol";
+import {AssayStake} from "../src/AssayStake.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {StakeObserverUSDG, ReentrantStakeUSDG} from "./helpers/MockUSDG.sol";
 import "../src/Errors.sol";
 
-contract X402StakeTest is Fixture {
+contract AssayStakeTest is Fixture {
     uint64 internal constant DEPOSIT = 1_000_000_000; // 1,000 USDG
 
     function setUp() public virtual override {
@@ -273,7 +273,7 @@ contract X402StakeTest is Fixture {
     /// already be written when it does.
     function test_everyEffectIsWrittenBeforeTheWithdrawalTransfer() public {
         StakeObserverUSDG asset = new StakeObserverUSDG();
-        X402Stake s = _deployStake(address(asset));
+        AssayStake s = _deployStake(address(asset));
 
         asset.mint(provider, DEPOSIT);
         vm.startPrank(provider);
@@ -323,10 +323,10 @@ contract X402StakeTest is Fixture {
     /// found the same thing on the escrow's two funding doors. This test pins the name.
     function test_wrongState_aReentrantAssetCannotRecurseIntoDepositStakeFor() public {
         ReentrantStakeUSDG asset = new ReentrantStakeUSDG();
-        X402Stake s = _deployStake(address(asset));
+        AssayStake s = _deployStake(address(asset));
         asset.arm(
             address(s),
-            abi.encodeCall(X402Stake.depositStakeFor, (provider, 1_000)),
+            abi.encodeCall(AssayStake.depositStakeFor, (provider, 1_000)),
             1_000,
             true,
             false
@@ -347,7 +347,7 @@ contract X402StakeTest is Fixture {
     /// that, and this row only pins the name the modifier gives the refusal.
     function test_wrongState_aReentrantAssetCannotRecurseIntoWithdrawStake() public {
         ReentrantStakeUSDG asset = new ReentrantStakeUSDG();
-        X402Stake s = _deployStake(address(asset));
+        AssayStake s = _deployStake(address(asset));
 
         asset.mint(provider, DEPOSIT);
         vm.startPrank(provider);
@@ -358,7 +358,7 @@ contract X402StakeTest is Fixture {
         vm.warp(block.timestamp + config.params().unbondingPeriodSeconds);
 
         asset.arm(
-            address(s), abi.encodeCall(X402Stake.withdrawStake, (400_000_000)), 0, false, true
+            address(s), abi.encodeCall(AssayStake.withdrawStake, (400_000_000)), 0, false, true
         );
         vm.prank(provider);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);

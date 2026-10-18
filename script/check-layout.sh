@@ -5,7 +5,7 @@
 # upgrade. (On the Solana side an unchecked layout change left 41 devnet accounts unreadable;
 # that is what happens when nothing checks.)
 #
-# ALL THREE contracts are gated, not only X402Escrow. X402Config is upgradeable too, it holds
+# ALL THREE contracts are gated, not only AssayEscrow. AssayConfig is upgradeable too, it holds
 # `admin`, and `admin` is the upgrade authority of the other two — leaving the one contract that
 # holds the upgrade key outside the gate would be the worst of the three to leave out.
 #
@@ -67,7 +67,7 @@ classify() {
   return $v
 }
 
-for c in X402Config X402Escrow X402Stake; do
+for c in AssayConfig AssayEscrow AssayStake; do
   cur="$TMPD/$c.json"
   snap="snapshots/$c.storage.json"
   if ! $FORGE inspect "$c" storageLayout --json > "$cur" 2>"$TMPD/$c.err"; then
@@ -166,9 +166,9 @@ check_struct_size() {  # <contract> <struct label> <expected bytes> <why>
     echo "could not read the size of $2"; rc=1
   fi
 }
-check_struct_size X402Escrow "struct X402Escrow.Escrow" 128 "four slots — D-4"
-check_struct_size X402Stake "struct X402Stake.ProviderStake" 128 "four slots — the designed packing"
-check_struct_size X402Stake "struct X402Stake.SlashRecord" 192 "six slots — disputedAt appended as slot 5 (D-19)"
+check_struct_size AssayEscrow "struct AssayEscrow.Escrow" 128 "four slots — D-4"
+check_struct_size AssayStake "struct AssayStake.ProviderStake" 128 "four slots — the designed packing"
+check_struct_size AssayStake "struct AssayStake.SlashRecord" 192 "six slots — disputedAt appended as slot 5 (D-19)"
 
 [ $rc -eq 0 ] && echo "layout OK"
 exit $rc

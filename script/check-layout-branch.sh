@@ -15,7 +15,7 @@
 # the check `python3 script/check-layout.py … || { echo "not an append"; }` and claimed the `||`
 # "catches only the refusal". It does not: shell `||` and `if !` fire on ANY non-zero status, so
 # exit 2 — a LEGAL APPEND, the ordinary case on any upgrade branch — was refused too. Measured
-# 2026-09-10 on a probe branch carrying one appended `uint256` on X402Stake: the classifier
+# 2026-09-10 on a probe branch carrying one appended `uint256` on AssayStake: the classifier
 # returned 2 and this gate printed "the BRANCH is not an append against the merge base". A gate
 # that refuses the change it exists to permit is a gate somebody switches off, and it is a gate
 # answering a different question from the one its name asks. An unrecognised exit
@@ -41,7 +41,7 @@ echo "classifying against merge base $BASE ($BASE_REF)"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 rm -rf out cache && "$FORGE" build >/dev/null
 rc=0
-for c in X402Config X402Escrow X402Stake; do
+for c in AssayConfig AssayEscrow AssayStake; do
   # Paths are relative to THIS repository's root. Older history of these contracts kept
   # them under an `evm/` subdirectory, where a snapshot path carried an `evm/` prefix; it does
   # not now. Re-adding it makes every lookup miss silently — the loop below

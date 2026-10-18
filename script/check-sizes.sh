@@ -9,7 +9,7 @@
 # **It measures `deployedBytecode`, not `bytecode`.** An earlier version measured
 # `forge inspect <c> bytecode`, which is the CREATION bytecode — constructor plus the runtime it
 # returns. That is the wrong number twice over: EIP-170 bounds the runtime half only, and the two
-# differ by 1,427 bytes on X402Escrow and X402Stake here (constructor code plus the EIP-712
+# differ by 1,427 bytes on AssayEscrow and AssayStake here (constructor code plus the EIP-712
 # ShortString immutables). Gating on the larger figure would fire early and, worse, would teach a
 # reader that the limit applies to creation code. Creation size is printed beside it as
 # information — EIP-3860's initcode limit is 49,152 and nothing here is near it.
@@ -22,7 +22,7 @@ CEILING=22000
 HARD=24576
 rc=0
 $FORGE build >/dev/null
-for c in X402Config X402Escrow X402Stake; do
+for c in AssayConfig AssayEscrow AssayStake; do
   runtime=$($FORGE inspect "$c" deployedBytecode | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
   creation=$($FORGE inspect "$c" bytecode        | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
   printf '%-12s runtime %6d bytes  (%5.1f%% of the %d hard limit)   creation %6d\n' \

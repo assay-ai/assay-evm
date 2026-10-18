@@ -3,13 +3,13 @@ pragma solidity 0.8.24;
 
 import {ParamSet} from "../Types.sol";
 
-/// The read surface X402Escrow and X402Stake consume. Both edges are views; neither
+/// The read surface AssayEscrow and AssayStake consume. Both edges are views; neither
 /// contract can write here, which is the whole point of the split (D-1, D-3).
 ///
 /// On Solana the same split is spelled by account permissions: `redeem_voucher` and the two
 /// slash phases take `Config` **without** `mut`, so the runtime refuses a write. Here the
 /// interface is the only handle the other two contracts hold, so a write is not expressible.
-interface IX402Config {
+interface IAssayConfig {
     /// The whole economic parameter set, read as one value. Callers that need two fields must
     /// not be able to read them from two different blocks of state — the split's shares are only
     /// meaningful together, and `state.rs::Config::validate` is written the same way.
@@ -35,16 +35,16 @@ interface IX402Config {
     /// ignore it.
     function assertCanSign(address verifier) external view;
 
-    /// The dispute arbiter (EVM only): rules on `X402Stake.upholdSlash` and may `cancelSlash`.
+    /// The dispute arbiter (EVM only): rules on `AssayStake.upholdSlash` and may `cancelSlash`.
     /// A person's wallet or a Safe, never the backend. Reads `address(0)` only before the first
     /// `setArbiter`; after that it can be replaced but never unset.
     function arbiter() external view returns (address);
 
-    /// The delay `X402Stake.proposeSlash` freezes into a new record's `executableAt`, and so the
+    /// The delay `AssayStake.proposeSlash` freezes into a new record's `executableAt`, and so the
     /// provider's dispute window. `Constants.SLASH_DELAY_SECONDS` until the admin sets it.
     function slashDelaySeconds() external view returns (uint64);
 
-    /// How long `X402Escrow` holds a new redemption before the redeemer may collect it, frozen
+    /// How long `AssayEscrow` holds a new redemption before the redeemer may collect it, frozen
     /// into each record's `collectableAt`. `Constants.DEFAULT_COLLECT_HOLD_SECONDS` until set.
     function collectHoldSeconds() external view returns (uint64);
 

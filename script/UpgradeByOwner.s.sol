@@ -4,9 +4,9 @@ pragma solidity 0.8.24;
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {X402Config} from "../src/X402Config.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
-import {X402Stake} from "../src/X402Stake.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayStake} from "../src/AssayStake.sol";
 
 error UnexpectedChain(uint256 got, uint256 want);
 error NotTheOwner(address broadcaster, address owner);
@@ -51,11 +51,13 @@ contract UpgradeByOwner is Script {
         _chain();
         vm.startBroadcast();
         if (vm.envOr("UPGRADE_CONFIG", false)) {
-            console2.log("IMPL_CONFIG=", address(new X402Config()));
+            console2.log("IMPL_CONFIG=", address(new AssayConfig()));
         }
-        if (vm.envOr("UPGRADE_STAKE", false)) console2.log("IMPL_STAKE=", address(new X402Stake()));
+        if (vm.envOr("UPGRADE_STAKE", false)) {
+            console2.log("IMPL_STAKE=", address(new AssayStake()));
+        }
         if (vm.envOr("UPGRADE_ESCROW", false)) {
-            console2.log("IMPL_ESCROW=", address(new X402Escrow()));
+            console2.log("IMPL_ESCROW=", address(new AssayEscrow()));
         }
         vm.stopBroadcast();
     }
@@ -81,9 +83,9 @@ contract UpgradeByOwner is Script {
 
     function run() external {
         _chain();
-        X402Config config = X402Config(vm.envAddress("PROXY_CONFIG"));
-        X402Stake stake = X402Stake(vm.envAddress("PROXY_STAKE"));
-        X402Escrow escrow = X402Escrow(vm.envAddress("PROXY_ESCROW"));
+        AssayConfig config = AssayConfig(vm.envAddress("PROXY_CONFIG"));
+        AssayStake stake = AssayStake(vm.envAddress("PROXY_STAKE"));
+        AssayEscrow escrow = AssayEscrow(vm.envAddress("PROXY_ESCROW"));
         address owner = config.owner();
         (, address broadcaster,) = vm.readCallers();
         if (broadcaster != owner) revert NotTheOwner(broadcaster, owner);

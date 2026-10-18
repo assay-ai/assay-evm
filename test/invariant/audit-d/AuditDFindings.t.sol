@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "../../helpers/Fixture.sol";
 import {VoucherSigner} from "../../helpers/VoucherSigner.sol";
-import {X402Stake} from "../../../src/X402Stake.sol";
+import {AssayStake} from "../../../src/AssayStake.sol";
 import {SlashAttestation, ResponseClass, SlashStatus, ParamSet} from "../../../src/Types.sol";
 import "../../../src/Errors.sol";
 

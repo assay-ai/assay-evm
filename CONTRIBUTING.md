@@ -36,7 +36,7 @@ The full gate sequence, and what each gate cannot see, is in `README.md` and `do
 
 These describe how the code is written, to help when reading it or filing a precise report:
 
-- Solidity files are PascalCase and named after the contract they contain (`X402Escrow.sol`);
+- Solidity files are PascalCase and named after the contract they contain (`AssayEscrow.sol`);
   verification tooling relies on that.
 - Formatting is `forge fmt` with `line_length = 100`.
 - Errors are custom errors from `src/Errors.sol`, one name per condition; there are no revert

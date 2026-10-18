@@ -52,7 +52,7 @@ lc() { echo "$1" | tr 'A-Z' 'a-z'; }
 #
 # **The spans are taken from the build of the commit that implementation was built at**, not from
 # this tree. A shared library change moves the offsets of a contract that was NOT upgraded — the
-# delegation upgrade (2026-10-12) refactored `Sig`, which X402Stake also links, so Stake's
+# delegation upgrade (2026-10-12) refactored `Sig`, which AssayStake also links, so Stake's
 # deployed code and this tree's Stake build put their immutables at different offsets, and masking
 # the old code at the new offsets failed a correct deployment. The commit is the contract's own
 # `builtAt` when the record has one (set on upgrade), else the record's `commit`. When that
@@ -111,7 +111,7 @@ SLOT=0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
 #    is what the other three checks cannot supply: `implementationRuntimeKeccak` is rewritten by
 #    the operator as part of every upgrade, so it says the deployed code matches the NEW source,
 #    never that the new source's shape matches the old.
-for c in X402Config X402Stake X402Escrow; do
+for c in AssayConfig AssayStake AssayEscrow; do
   wantAbi=$(jq -r ".contracts.\"$c\".abiKeccak // empty" "$REC")
   [ -n "$wantAbi" ] || fail "$c has no abiKeccak in $REC — the record predates the surface gate"
   gotAbi=$(abi_hash "$c")
@@ -173,7 +173,7 @@ fi
 PROXY_DIR=$(build_dir_at "$(jq -r '.commit // empty' "$REC")" src lib remappings.txt foundry.toml)
 [ -f "$PROXY_DIR/out/ERC1967Proxy.sol/ERC1967Proxy.json" ] || (cd "$PROXY_DIR" && "$FORGE" build --quiet >/dev/null)
 PROXY_INITCODE=$(jq -er '.bytecode.object' "$PROXY_DIR/out/ERC1967Proxy.sol/ERC1967Proxy.json")
-for c in X402Config X402Stake X402Escrow; do
+for c in AssayConfig AssayStake AssayEscrow; do
   proxy=$(jq -er ".contracts.\"$c\".proxy" "$REC")
   salt=$(jq -er ".contracts.\"$c\".salt" "$REC")
   args=$(jq -er ".contracts.\"$c\".initializerArgs" "$REC")
@@ -188,7 +188,7 @@ for c in X402Config X402Stake X402Escrow; do
 done
 echo "CREATE2 reproduction OK for all three proxies (arithmetic, no chain read)"
 
-for c in X402Config X402Stake X402Escrow; do
+for c in AssayConfig AssayStake AssayEscrow; do
   proxy=$(jq -er ".contracts.\"$c\".proxy" "$REC")
   impl=$(jq -er ".contracts.\"$c\".implementation" "$REC")
   want=$(jq -er ".contracts.\"$c\".implementationRuntimeKeccak" "$REC")
@@ -207,9 +207,9 @@ for c in X402Config X402Stake X402Escrow; do
 
 done
 
-cfg=$(jq -er '.contracts.X402Config.proxy' "$REC")
-stk=$(jq -er '.contracts.X402Stake.proxy'  "$REC")
-esc=$(jq -er '.contracts.X402Escrow.proxy' "$REC")
+cfg=$(jq -er '.contracts.AssayConfig.proxy' "$REC")
+stk=$(jq -er '.contracts.AssayStake.proxy'  "$REC")
+esc=$(jq -er '.contracts.AssayEscrow.proxy' "$REC")
 ast=$(jq -er '.asset.address' "$REC")
 
 [ "$(lc "$(cast call "$esc" 'CONFIG()(address)' --rpc-url "$RPC")")" = "$(lc "$cfg")" ] || fail "escrow.CONFIG"
@@ -240,7 +240,7 @@ fi
 
 # Read from the PROXY, which is the `verifyingContract` every voucher names. If an upgrade ever
 # moved this, every outstanding voucher is already dead — see Upgrade.t.sol (d).
-for c in X402Escrow X402Stake; do
+for c in AssayEscrow AssayStake; do
   a=$(jq -er ".contracts.\"$c\".proxy" "$REC")
   w=$(jq -er ".domainSeparators.\"$c\"" "$REC")
   g=$(cast call "$a" 'DOMAIN_SEPARATOR()(bytes32)' --rpc-url "$RPC")

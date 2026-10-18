@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Test, Vm} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-import {X402Config} from "../src/X402Config.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
 import {ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -29,9 +29,9 @@ import "../src/Errors.sol";
 ///   and storing `now + MAX_VERIFIER_KEY_LIFETIME_SECONDS` instead. See
 ///   `test_registrationStoresTheExpiryItWasGivenAndNotADefault`, which registers two keys with
 ///   two different lifetimes and pins both values and both expiry instants.
-contract X402ConfigVerifierTest is Test {
-    X402Config internal config;
-    X402Config internal configImpl;
+contract AssayConfigVerifierTest is Test {
+    AssayConfig internal config;
+    AssayConfig internal configImpl;
 
     address internal admin = address(0xADAA);
     address internal verifier = address(0x7E51);
@@ -57,14 +57,14 @@ contract X402ConfigVerifierTest is Test {
         });
     }
 
-    /// Behind a proxy, like every X402Config in this suite (D-1). The registry's storage is the
+    /// Behind a proxy, like every AssayConfig in this suite (D-1). The registry's storage is the
     /// proxy's, so a test that read the implementation's would see an empty registry forever.
-    function _deploy(address a) internal returns (X402Config) {
-        return X402Config(
+    function _deploy(address a) internal returns (AssayConfig) {
+        return AssayConfig(
             address(
                 new ERC1967Proxy(
                     address(configImpl),
-                    abi.encodeCall(X402Config.initialize, (_valid(), a, address(0x0A1E)))
+                    abi.encodeCall(AssayConfig.initialize, (_valid(), a, address(0x0A1E)))
                 )
             )
         );
@@ -72,7 +72,7 @@ contract X402ConfigVerifierTest is Test {
 
     function setUp() public {
         vm.warp(T);
-        configImpl = new X402Config();
+        configImpl = new AssayConfig();
         config = _deploy(admin);
     }
 
@@ -99,7 +99,7 @@ contract X402ConfigVerifierTest is Test {
         bool revoked,
         string memory what
     ) internal view {
-        X402Config.VerifierKey memory k = config.verifierKey(who);
+        AssayConfig.VerifierKey memory k = config.verifierKey(who);
         assertEq(k.registeredAt, registeredAt, string.concat(what, ": registeredAt"));
         assertEq(k.expiresAt, expiresAt, string.concat(what, ": expiresAt"));
         assertEq(k.revokedAt, revokedAt, string.concat(what, ": revokedAt"));
@@ -206,7 +206,7 @@ contract X402ConfigVerifierTest is Test {
     /// above and dies here.
     function test_theRegistryIsThisProxysOwn() public {
         _register(180 * 86_400);
-        X402Config otherConfig = _deploy(admin);
+        AssayConfig otherConfig = _deploy(admin);
 
         assertTrue(config.canSign(verifier), "registered on the first proxy");
         assertFalse(otherConfig.canSign(verifier), "and only on the first proxy");
@@ -556,7 +556,7 @@ contract X402ConfigVerifierTest is Test {
     /// argument is caught here as well as in the storage tests.
     function test_registrationEmitsVerifierRegistered() public {
         vm.expectEmit(true, true, false, true, address(config));
-        emit X402Config.VerifierRegistered(verifier, admin, LABEL, T, T + 1_000);
+        emit AssayConfig.VerifierRegistered(verifier, admin, LABEL, T, T + 1_000);
         _register(1_000);
     }
 
@@ -622,7 +622,7 @@ contract X402ConfigVerifierTest is Test {
         vm.warp(T + 400);
 
         vm.expectEmit(true, true, false, true, address(config));
-        emit X402Config.VerifierRevokedEvent(verifier, admin, T + 400);
+        emit AssayConfig.VerifierRevokedEvent(verifier, admin, T + 400);
         vm.prank(admin);
         config.revokeVerifier(verifier);
     }

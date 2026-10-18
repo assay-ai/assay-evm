@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -13,7 +13,7 @@ import "../src/Errors.sol";
 /// (b) a DELEGATE key the payer authorised on chain, within the delegate's own caps and the
 /// escrow's, until `validUntil` and unless revoked. Nothing else: there is no EIP-1271 branch
 /// (D-18). The delegate signs vouchers and nothing else.
-contract X402EscrowDelegateTest is Fixture {
+contract AssayEscrowDelegateTest is Fixture {
     uint256 internal constant DELEGATE_KEY = 0xDE1E6A7E;
     uint256 internal constant OTHER_KEY = 0x07E4;
     uint256 internal constant WALLET_OWNER_KEY = 0x0A11E7;
@@ -141,7 +141,7 @@ contract X402EscrowDelegateTest is Fixture {
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, until);
 
-        X402Escrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertEq(d.maxVoucherAmount, D_PER_CALL);
         assertEq(d.maxPerWindow, D_PER_WINDOW);
         assertEq(d.validUntil, until);
@@ -416,7 +416,7 @@ contract X402EscrowDelegateTest is Fixture {
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _until());
         vm.stopPrank();
 
-        X402Escrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertFalse(d.revoked);
         assertEq(d.spentInWindow, D_PER_CALL, "re-authorising handed out fresh capacity");
 
@@ -488,13 +488,13 @@ contract X402EscrowDelegateTest is Fixture {
         emit DelegateVoucherRedeemed(buyer, delegate, 1, 250_000, 250_000);
         _redeem(v, _signed(DELEGATE_KEY, v));
 
-        X402Escrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 10_000_000 - 250_000);
         assertEq(e.seqHigh, 1);
         assertEq(e.spentInWindow, 250_000);
         assertEq(usdg.balanceOf(provider), 225_000);
         assertEq(usdg.balanceOf(treasury), 25_000);
-        X402Escrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertEq(d.spentInWindow, 250_000);
         assertEq(d.windowStartedAt, block.timestamp);
     }
@@ -538,7 +538,7 @@ contract X402EscrowDelegateTest is Fixture {
         _authorize(buyer, delegate);
         vm.prank(buyer);
         escrow.setLimits(100_000, 150_000);
-        // The lowering binds once the tighten delay has passed (test/X402Escrow.tighten.t.sol).
+        // The lowering binds once the tighten delay has passed (test/AssayEscrow.tighten.t.sol).
         vm.warp(block.timestamp + Constants.TIGHTEN_DELAY_SECONDS + 1);
 
         Voucher memory v = _v(buyer, 200_000, 1);
@@ -709,7 +709,7 @@ contract X402EscrowDelegateTest is Fixture {
         escrow.authorizeDelegate(accomplice, 1, 1, _until());
         vm.stopPrank();
 
-        X402Escrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 10_000_000);
         assertEq(e.maxPerWindow, ESCROW_PER_WINDOW);
         assertEq(e.withdrawRequested, 0);
@@ -723,10 +723,10 @@ contract X402EscrowDelegateTest is Fixture {
         w = new ExecWallet();
         _fund(address(w), 5_000_000);
         w.exec(address(usdg), abi.encodeCall(IERC20.approve, (address(escrow), 5_000_000)));
-        w.exec(address(escrow), abi.encodeCall(X402Escrow.deposit, (5_000_000)));
+        w.exec(address(escrow), abi.encodeCall(AssayEscrow.deposit, (5_000_000)));
         w.exec(
             address(escrow),
-            abi.encodeCall(X402Escrow.setLimits, (ESCROW_PER_CALL, ESCROW_PER_WINDOW))
+            abi.encodeCall(AssayEscrow.setLimits, (ESCROW_PER_CALL, ESCROW_PER_WINDOW))
         );
     }
 
@@ -750,14 +750,14 @@ contract X402EscrowDelegateTest is Fixture {
         w.exec(
             address(escrow),
             abi.encodeCall(
-                X402Escrow.authorizeDelegate, (delegate, D_PER_CALL, D_PER_WINDOW, _until())
+                AssayEscrow.authorizeDelegate, (delegate, D_PER_CALL, D_PER_WINDOW, _until())
             )
         );
         Voucher memory v = _v(address(w), 1_000, 1);
         _redeem(v, _signed(DELEGATE_KEY, v));
         assertEq(escrow.delegationOf(address(w), delegate).spentInWindow, 1_000);
 
-        w.exec(address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (delegate)));
+        w.exec(address(escrow), abi.encodeCall(AssayEscrow.revokeDelegate, (delegate)));
         vm.warp(block.timestamp + Constants.TIGHTEN_DELAY_SECONDS + 1);
         Voucher memory x = _v(address(w), 1_000, 2);
         _expect(x, _signed(DELEGATE_KEY, x), DelegateIsRevoked.selector);

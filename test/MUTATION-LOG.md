@@ -22,7 +22,7 @@ after code review. Row ids (W1a, S8, C35, T13, ...) are stable and are cited fro
 Decision ids (`D-1`, `D-17`, ...) are defined in `docs/design-decisions.md`.
 
 Throughout the log, probe and fixture files (for example `test/_C22Probe.t.sol`,
-`X402EscrowT10ReentrancyProbe.t.sol`, `*.T12GOOD.sol`) and the `mutate.py` helper were temporary
+`AssayEscrowT10ReentrancyProbe.t.sol`, `*.T12GOOD.sol`) and the `mutate.py` helper were temporary
 working files used while mutating. They are not committed to this repository.
 
 **Rows for code that no longer exists.** This is an evidence log, so rows are not rewritten
@@ -38,7 +38,7 @@ record of what was measured, and they are marked here rather than deleted:
 - the `newAdmin` half of `updateConfig` (rows C31, C32, C39, C41, C43, C44): the argument and
   `AdminChangeRequiresOwner` went at the fresh deployment (D-22), and `updateConfig` now takes
   the parameter set only;
-- `X402Config.initializeV2` and the pre-upgrade copies under `test/helpers/legacy/` — removed at
+- `AssayConfig.initializeV2` and the pre-upgrade copies under `test/helpers/legacy/` — removed at
   the fresh deployment (D-22).
 
 ---
@@ -157,12 +157,12 @@ W3 is the only row where the mutation changes an answer rather than reaching a r
 
 ---
 
-## `src/X402Config.sol`
+## `src/AssayConfig.sol`
 
-Prover: `test/X402Config.admin.t.sol` — **17 tests as of the 2026-09-08 fix round**; the counts
+Prover: `test/AssayConfig.admin.t.sol` — **17 tests as of the 2026-09-08 fix round**; the counts
 quoted inside individual rows are the suite size at the time that row was measured and are left as
-measured rather than restated. Every row was applied to `src/X402Config.sol`,
-run with `forge test --match-contract X402ConfigAdminTest`, then restored; the file was diffed
+measured rather than restated. Every row was applied to `src/AssayConfig.sol`,
+run with `forge test --match-contract AssayConfigAdminTest`, then restored; the file was diffed
 against a pristine copy afterwards and the whole suite re-run from a wiped `out/` and `cache/`.
 
 Rows C1–C5 are the five the test plan names. C6 and C7 are two the test plan deferred to the **upgrade round**;
@@ -263,23 +263,23 @@ indistinguishable from a test that was never written.
 ### Config follow-up decisions (2026-09-08)
 
 **Decision A — `ParamSet`'s field order, pinned now rather than at the deposit round's layout gate.** As of
-the Config round, `ParamSet` is `X402Config._params`, a **storage** struct in slots 1-3 behind a UUPS proxy,
+the Config round, `ParamSet` is `AssayConfig._params`, a **storage** struct in slots 1-3 behind a UUPS proxy,
 so a reorder is a silent layout change, not a message change. `test_structsAbiEncodeInDeclarationOrder`
 in `test/Types.t.sol` was extended to cover it.
 
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
-| C17 | `ParamSet` field **order** | `minimumStake` ↔ `penaltyAmount` swapped in `src/Types.sol` (same type, so everything still compiles) | `test_structsAbiEncodeInDeclarationOrder` | **FAILED**, for the stated reason: `[FAIL: ParamSet field 3: 5 != 4]`. Suite-wide `55 passed; 1 failed` — **the entire `X402ConfigAdminTest` passes under it**, which is the gap this row closes: that suite builds named struct literals and reads named fields, so a transposition is invisible to it end to end. |
+| C17 | `ParamSet` field **order** | `minimumStake` ↔ `penaltyAmount` swapped in `src/Types.sol` (same type, so everything still compiles) | `test_structsAbiEncodeInDeclarationOrder` | **FAILED**, for the stated reason: `[FAIL: ParamSet field 3: 5 != 4]`. Suite-wide `55 passed; 1 failed` — **the entire `AssayConfigAdminTest` passes under it**, which is the gap this row closes: that suite builds named struct literals and reads named fields, so a transposition is invisible to it end to end. |
 | C18 | `ParamSet` field **order** | `treasury` ↔ `redeemer` swapped | `test_structsAbiEncodeInDeclarationOrder` | **FAILED**, for the stated reason: `[FAIL: ParamSet field 0: 0x…2222 != 0x…1111]`. Suite-wide `55 passed; 1 failed` — again the only failure. Two rows because the risk is two-sided: C17 is the "pack it better" edit, C18 the ordinary transposition of two adjacent same-type fields. |
 
 **What the `ParamSet` half of that test would still pass against.** It survives every change to
-`X402Config`, every validation mutation, and any change to the *values* in `ParamSet`. It sees
+`AssayConfig`, every validation mutation, and any change to the *values* in `ParamSet`. It sees
 exactly one thing: position. It does **not** see a retype that keeps the width (`uint64` → `int64`
 would decode identically), and it does not see the storage layout directly — only the declaration
 order the layout is derived from.
 
 **Decision B — `slashProviderBps()`**, ported from `state.rs:127-131`, on the contract that owns the
-parameters rather than derived again at X402Stake's use site.
+parameters rather than derived again at AssayStake's use site.
 
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
@@ -306,7 +306,7 @@ note under Decision A above.)
 
 ---
 
-## `src/X402Config.sol` follow-up round — four review findings (2026-09-08)
+## `src/AssayConfig.sol` follow-up round — four review findings (2026-09-08)
 
 Four rows the earlier passes did not have. Three of them are the same shape as C11 and as the five
 before it: **a test that relates or bounds where it must pin**, and in every case the survivor was
@@ -315,7 +315,7 @@ found by mutation rather than by reading.
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
 | C23 | `setPaused`'s **assignment** — `set_paused.rs:41` is `config.paused = paused;` | `paused = value;` → `paused = !paused;` (a toggle) | `test_setPausedAssignsItsArgumentAndIsIdempotent` | **FAILED**: `[FAIL: setPaused(false) on an unpaused config leaves it unpaused]`, suite `58 passed; 1 failed`. **`test_wrongSigner_onlyAdminPauses` still PASSES under it** — measured, run alone: `[PASS]`. Its `false -> true -> false` walk is exactly the sequence a toggle satisfies. DC3 caught "latch true" and stopped there, so the whole class of argument-ignoring writes was still open. Under the toggle an operator hitting pause twice **un-pauses the system**, during the incident that made them hit it twice. The kill comes from the two legs a walk cannot contain: `setPaused(false)` on an unpaused config and `setPaused(true)` on a paused one. |
-| C24 | `ParamSet`'s field **widths** | `uint64 minimumStake` → `uint128` | `test_paramSetCarriesItsDeclaredWidthsAndOrder` | **FAILED**: `[FAIL: ParamSet canonical ABI tuple: order AND width: (address,address,uint64,uint128,…) != (address,address,uint64,uint64,…)]`, suite `58 passed; 1 failed`. **Before this test existed the same mutation left 56 of 56 green**, C17/C18 included: `abi.encode` pads every field to a 32-byte word, so a positional decode is blind to width. It is not a cosmetic blindness — `forge inspect X402Config storageLayout` under the mutation shows `_params` at **128 bytes** and `__gap` at **slot 5**, against 96 bytes and slot 4 unmutated. Behind a live UUPS proxy that is the layout break decision A existed to prevent, arriving through the one property the pin could not see. |
+| C24 | `ParamSet`'s field **widths** | `uint64 minimumStake` → `uint128` | `test_paramSetCarriesItsDeclaredWidthsAndOrder` | **FAILED**: `[FAIL: ParamSet canonical ABI tuple: order AND width: (address,address,uint64,uint128,…) != (address,address,uint64,uint64,…)]`, suite `58 passed; 1 failed`. **Before this test existed the same mutation left 56 of 56 green**, C17/C18 included: `abi.encode` pads every field to a 32-byte word, so a positional decode is blind to width. It is not a cosmetic blindness — `forge inspect AssayConfig storageLayout` under the mutation shows `_params` at **128 bytes** and `__gap` at **slot 5**, against 96 bytes and slot 4 unmutated. Behind a live UUPS proxy that is the layout break decision A existed to prevent, arriving through the one property the pin could not see. |
 | C25 | `ParamSet`'s field **widths**, the other direction | `uint64 verifierDailyCap` → `uint32` | `test_paramSetCarriesItsDeclaredWidthsAndOrder` | **FAILED**: `[FAIL: … (…,uint64,uint64,uint64,uint32,uint16,…) != (…,uint64,uint64,uint64,uint64,uint16,…)]`, suite `58 passed; 1 failed`. Run because C24 only proves the gate sees a field getting *bigger*; a narrowing repacks the struct just as thoroughly, and a "these values never exceed 2^32" argument is exactly the plausible edit. |
 | C26 | `ParamSet`'s **order across a width boundary** | `verifierDailyCap` (`uint64`) moved after `takeRateBps` (`uint16`) | `test_paramSetCarriesItsDeclaredWidthsAndOrder` **and** `test_structsAbiEncodeInDeclarationOrder` | **FAILED**, both: `[FAIL: … (…,uint64,uint16,uint64,uint16,…) != …]` and `[FAIL: ParamSet field 5: 7 != 6]`, suite `57 passed; 2 failed`. Recorded to show the two assertions are **complementary, not redundant**: C17's swap of two `uint64`s does not change the tuple string at all (the width gate cannot see it), and C24's widen does not change any position (the order gate cannot see it). Each catches what the other is blind to; only a cross-width reorder trips both. |
 | C27 | `_validate`'s **check order** — `state.rs:134-164` then `state.rs:168-191` | all nine checks reversed end to end | `test_theCheckOrderMatchesAnchorWhenTwoBoundsAreViolatedAtOnce` | **FAILED**: `[FAIL: Error != expected error: MissingRedeemer() != MissingBeneficiary()]`, suite `58 passed; 1 failed`. **Before this test existed the same mutation left 56 of 56 green** — every other refusal test violates exactly one bound, and a singly-invalid set names the same error under any ordering, *by construction*. Order is only observable on a doubly-invalid set. |
@@ -344,7 +344,7 @@ under some mutation, only that each is reachable when the ones before it hold.
 - `test_paramSetCarriesItsDeclaredWidthsAndOrder` — kills C24, C25, C26. **Survives C17 and C18**,
   the two same-type reorders, which is why the positional test stays. It reads solc's own ABI, so
   it cannot be satisfied by a hand-written string that drifted. It still cannot see `__gap`'s size
-  or a field inserted into `X402Config` **before** `_params`: both move the layout without touching
+  or a field inserted into `AssayConfig` **before** `_params`: both move the layout without touching
   this struct, and only a layout snapshot catches them (the deposit round).
 - `test_theCheckOrderMatchesAnchorWhenTwoBoundsAreViolatedAtOnce` — kills C27, C28, C29. Survives
   every mutation that changes *whether* a bound refuses rather than *when* it is reached; the
@@ -353,10 +353,10 @@ under some mutation, only that each is reachable when the ones before it hold.
 
 ---
 
-## `X402Config.updateConfig` (`update_config.rs`, ported one-for-one)
+## `AssayConfig.updateConfig` (`update_config.rs`, ported one-for-one)
 
 Four guards, one derived-value coupling, and two mutations that **survive on purpose**. Every row
-below was applied to `src/X402Config.sol`, run, and restored; the "Observed" column is verbatim
+below was applied to `src/AssayConfig.sol`, run, and restored; the "Observed" column is verbatim
 `forge test` output.
 
 The door is five lines. What makes it worth thirteen rows is that three of its properties are
@@ -409,7 +409,7 @@ pushed `slashAgentBps = 60_000, slashPlatformBps = 10_000` through `updateConfig
 That is the coupling stated as a measurement rather than an argument: C22/C42's unreachability is a
 property of **both** writers of `_params`, and the moment either one stops validating, the belt
 becomes the only thing between an operator error and a permanently reverting view on the contract
-X402Stake reads its split from. A future writer of `_params` that skips `_validate` is the defect;
+AssayStake reads its split from. A future writer of `_params` that skips `_validate` is the defect;
 the saturation is not.
 
 ### What each `updateConfig` test would still pass against
@@ -513,18 +513,18 @@ things, and each was added only after a mutation proved the others could not see
 
 ---
 
-## The verifier registry in `src/X402Config.sol`
+## The verifier registry in `src/AssayConfig.sol`
 
 **Rewritten wholesale in fix round 1 (2026-09-08), not patched.** The first version of this section
 recorded whole-suite counts against a 20-test suite that had already grown to 21 (review nit Q6) and
 under-reported V22's failures (Q5), and its guards no longer exist in the shape it described — the
 `revokedAt != 0` sentinel is now a stored `revoked` flag. Every row below is a fresh run against the
-the tree at that revision, `forge test --match-contract X402ConfigVerifierTest`, suite size **25**.
+the tree at that revision, `forge test --match-contract AssayConfigVerifierTest`, suite size **25**.
 Hand-adjusting counts in a stale log is worse than re-running it.
 
 ### What forced the rewrite: a degenerate registry that passed 21 of 21
 
-The the verifier-registry round review wrote the most degenerate registry that still compiles behind `IX402Config` and it
+The the verifier-registry round review wrote the most degenerate registry that still compiles behind `IAssayConfig` and it
 passed the whole suite on the first try. Five substitutions, none of which any test could see:
 
 - **D1** `registeredAt` is a hard-coded `1_760_000_000`. Every registration whose stamp was asserted
@@ -532,7 +532,7 @@ passed the whole suite on the first try. Five substitutions, none of which any t
 - **D2** the one-shot rule keys on `expiresAt != 0 || revokedAt != 0`, never on `registered`.
 - **D3** `revokeVerifier`'s "never enrolled" refusal keys on the same two timestamps.
 - **D4** revocation **destroys** the rest of the record (`registeredAt = 0; expiresAt = 0`), which
-  makes `verifierExpiry(revokedKey)` return `0` — a function on `IX402Config` that the slash-exit round's
+  makes `verifierExpiry(revokedKey)` return `0` — a function on `IAssayConfig` that the slash-exit round's
   `expireSlash` reads.
 - **D5** with D4 in place, `canSign` needs no revocation check at all:
   `return k.expiresAt != 0 && block.timestamp <= k.expiresAt;`. Neither flag participates in any
@@ -699,11 +699,11 @@ announced. It does not, and cannot, prove that nothing else was enrolled.
 
 ---
 
-## `src/X402Escrow.sol` (storage, `deposit`, `depositFor`, `depositWithPermit2`) — Permit2 rows removed code
+## `src/AssayEscrow.sol` (storage, `deposit`, `depositFor`, `depositWithPermit2`) — Permit2 rows removed code
 
-Every row: the mutation applied to `src/X402Escrow.sol` alone, the *named* test run on its own
-(`forge test --match-contract X402EscrowDepositTest --match-test <name>`), the verbatim result, then
-`src/X402Escrow.sol` restored from a byte-exact `GOOD` copy and re-verified by SHA-256. The
+Every row: the mutation applied to `src/AssayEscrow.sol` alone, the *named* test run on its own
+(`forge test --match-contract AssayEscrowDepositTest --match-test <name>`), the verbatim result, then
+`src/AssayEscrow.sol` restored from a byte-exact `GOOD` copy and re-verified by SHA-256. The
 restore hash is asserted after every row and again at the end (`restored GOOD: True`).
 
 Where a mutation deletes a `revert`, the observed failure is `next call did not revert as expected`
@@ -732,14 +732,14 @@ the third column.
 | E18 | `_credit`: `e.totalFunded += amount;` | deleted | `test_happyPath_depositCreditsTheBuyerAndThePool` | **FAILED**: `[FAIL: assertion failed: 0 != 1000000]` |
 | E19 | `_authorizeUpgrade` reads `CONFIG.admin()` **live** | → `address(0xADAA)` (a cached/hard-coded admin) | `test_theUpgradeAuthorityFollowsConfigsAdmin` (`NotAdmin`) | **FAILED**: `[FAIL: next call did not revert as expected] (gas: 1339179)` — after `updateConfig` hands Config to a new admin, the OLD admin still upgrades the escrow. This is the row that proves "read live, never cached". |
 | E20 | `_credit`: `emit Deposited(buyer, msg.sender, …)` | → `emit Deposited(buyer, buyer, …)` | `test_happyPath_theEventNamesTheFunderNotTheBuyer` | **FAILED**: `[FAIL: log != expected log] (gas: 233518)` |
-| E21 | `initialize`: the `WITHDRAW_DELAY_SECONDS > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE` check | deleted | whole `X402EscrowDepositTest` (38 tests) | **SURVIVED** — `38 passed; 0 failed`. **Equivalent mutant, necessarily.** Every term is a compile-time constant, so the condition is folded to `false` by the optimiser and no input can reach it; `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher` is the assertion that goes red if the numbers ever change. The check exists so that such a change also produces a deployment that cannot be initialised. No test was written to pretend otherwise. |
+| E21 | `initialize`: the `WITHDRAW_DELAY_SECONDS > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE` check | deleted | whole `AssayEscrowDepositTest` (38 tests) | **SURVIVED** — `38 passed; 0 failed`. **Equivalent mutant, necessarily.** Every term is a compile-time constant, so the condition is folded to `false` by the optimiser and no input can reach it; `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher` is the assertion that goes red if the numbers ever change. The check exists so that such a change also produces a deployment that cannot be initialised. No test was written to pretend otherwise. |
 | E22 | constructor: `EIP712("x402 Settlement", "2")` | → `"3"` | `test_theDomainSeparatorIsTheProxysAndNamesAssaySettlement` | **FAILED**: `[FAIL: assertion failed: 0x305b68806b7a42f818a801dab9f7ca9004b7703c4c3d9d3d2e82fd0ce745fc09 != 0xd7b9716ac8a5e91f19e6961d69dec8565fb16cf93e7a9f48d0f8219f7915a5b9]` — the domain separator moved, which is every outstanding voucher dead (D-1/D-7) |
 
 ### The degenerates
 
 | # | Degenerate | Result |
 |---|---|---|
-| DE1 | Stores `mapping(address => uint128)` and `totalEscrowed` only; `escrowOf` synthesises an `Escrow` with `balance` and `totalFunded` set and the other ten fields zero; the four addresses declared in a different order; **no `__gap`**. Every guard E1-E20 kept. | Before `test_theStorageLayoutIsTheOneTheSnapshotCommitsTo` existed: **37 of 37 PASSED** — the whole suite. `script/check-layout.sh` refused it (`CONFIG moved: slot 3+0 -> 5+0`, `escrows was removed`, `struct X402Escrow.Escrow was removed`, `every contract must end with a __gap`), but nothing in `forge test` did. That is a gate a person has to run standing in for a test that runs itself, so the suite was hardened. After: **37 of 38**, failing `[FAIL: CONFIG at slot 3: 0x…0F4240 != 0xF62849…]`. |
+| DE1 | Stores `mapping(address => uint128)` and `totalEscrowed` only; `escrowOf` synthesises an `Escrow` with `balance` and `totalFunded` set and the other ten fields zero; the four addresses declared in a different order; **no `__gap`**. Every guard E1-E20 kept. | Before `test_theStorageLayoutIsTheOneTheSnapshotCommitsTo` existed: **37 of 37 PASSED** — the whole suite. `script/check-layout.sh` refused it (`CONFIG moved: slot 3+0 -> 5+0`, `escrows was removed`, `struct AssayEscrow.Escrow was removed`, `every contract must end with a __gap`), but nothing in `forge test` did. That is a gate a person has to run standing in for a test that runs itself, so the suite was hardened. After: **37 of 38**, failing `[FAIL: CONFIG at slot 3: 0x…0F4240 != 0xF62849…]`. |
 | DE2 | The real implementation with one line changed: `e.totalFunded += amount;` → `e.totalFunded = e.balance;` — an alias rather than a lifetime total. | **38 of 38 PASSED**, and `script/check-layout.sh` accepts it (the layout is identical). **The residual gap of this round, and it cannot be closed here**: `balance` and `totalFunded` diverge only after money leaves, and no path in the deposit round takes money out. **The redeem round (`redeemVoucher`) is the first path in this project that lowers `escrows[buyer].balance`, so the redeem round owes** an assertion that `totalFunded` did *not* move when the balance fell; `withdraw()` (the `withdraw()` round) owes the same on its own path. (the limits-and-withdraw-request round is `setLimitsBySig`/`requestWithdraw` and moves no money.) |
 
 ### What each deposit test actually proves
@@ -791,7 +791,7 @@ added in answer; the suite is now 42 tests.
 | E23 | `depositWithPermit2`: `nonReentrant` | deleted | `test_wrongState_aReentrantPermit2CannotRecurseIntoDepositWithPermit2` (`ReentrancyGuardReentrantCall`) | **FAILED**: `[FAIL: Error != expected error: TransferAmountMismatch() != ReentrancyGuardReentrantCall()] (gas: 613778)`. Before this row and its test, deleting the modifier failed **nothing at all** (measured in review: 38/38). Read the observed error exactly as E4's: `ReentrantPermit2` funds its own nested deposit, the nested deposit succeeds, and the outer delta assertion then refuses `amount + reenterAmount`. The two funding doors are alike in this, and the same warning applies — what the modifier is load-bearing *for* is the redeem, batch and `withdraw()` rounds. |
 | E24 | `_pullExact`: `ASSET.safeTransferFrom(...)` | → `ASSET.transferFrom(...)`, boolean discarded | `test_happyPath_aTokenThatReturnsNoDataIsAccepted` and `test_wrongState_aTokenThatReturnsFalseStopsTheDeposit` | **FAILED, both**: `[FAIL: EvmError: Revert] test_happyPath_aTokenThatReturnsNoDataIsAccepted() (gas: 441487)` — the bare call cannot ABI-decode a `bool` out of a USDT-shaped token's empty returndata, so the deposit that *must* work does not; and `[FAIL: Error != expected error: TransferAmountMismatch() != SafeERC20FailedOperation(0x1d14…)] test_wrongState_aTokenThatReturnsFalseStopsTheDeposit()` — a refusing token is diagnosed as a fee-on-transfer surprise. Against `MockUSDG` alone this substitution survived the whole suite, because a mock that can only return `true` cannot test the return convention. |
 | E26 | the `Escrow` struct's member ORDER (a layout guard, not a code guard) | swap `seqHigh` and `authNonce` — same slot, different offsets, struct still 128 bytes | `test_theTwelveEscrowFieldsDecodeFromTheFourSlotsTheSnapshotCommitsTo` | **FAILED**: `[FAIL: seqHigh: slot 0, offset 16: 333000000000003 != 222000000000002] (gas: 20608)`. The D-4 size assertion in `check-layout.sh` passes on this mutation (128 bytes either way) and so did every test before this one existed. |
-| E27 | `IX402StakeView public STAKE` — the *type* of the getter, not its value | → `address public STAKE` (with `STAKE = address(stake)` in `initialize`) | `test_happyPath_initializeStoresTheFourAddresses` | **FAILED to COMPILE**, which is the loudest available failure: `Error (9582): Member "bondedOf" not found or not visible after argument-dependent lookup in address.` The test calls `escrow.STAKE().bondedOf(provider)` rather than `address(escrow.STAKE())`, so the declared interface types are pinned by the compiler. `address(...)` accepts a plain `address` just as happily, which is why the earlier assertions did not see this. |
+| E27 | `IAssayStakeView public STAKE` — the *type* of the getter, not its value | → `address public STAKE` (with `STAKE = address(stake)` in `initialize`) | `test_happyPath_initializeStoresTheFourAddresses` | **FAILED to COMPILE**, which is the loudest available failure: `Error (9582): Member "bondedOf" not found or not visible after argument-dependent lookup in address.` The test calls `escrow.STAKE().bondedOf(provider)` rather than `address(escrow.STAKE())`, so the declared interface types are pinned by the compiler. `address(...)` accepts a plain `address` just as happily, which is why the earlier assertions did not see this. |
 
 **Re-runs against the fixed source.** E1, E2, E3, E4 and E21 were re-run after the fix round (E21's
 guard was re-spelled to name `Constants.MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`, so its row had to be
@@ -832,21 +832,21 @@ exits non-zero.
 | I — a variable appended **after** `__gap`, gap left at 50 (F6) | REFUSED | **REFUSED** | `new variable afterTheGap sits at slot 59, at or AFTER the new gap at 9 -- __gap must remain the LAST declaration…` (previously classified APPEND) |
 | J — `uint256[50] __gap` → `bytes32[50]` (F7) | REFUSED | **REFUSED** | `__gap in the new layout is bytes32[50]; it must stay uint256[N]` (previously classified APPEND) |
 | K — the gap shrinks by 40 with no new field | REFUSED | **REFUSED** | `the gap shrank by 40 slots but the new fields consumed 0; they must be equal` |
-| F4a — an illegal reorder **plus `--update`** | the snapshot must NOT be written | **REFUSED**, snapshot byte-identical afterwards (`shasum -c` OK) | `X402Escrow: --update REFUSED — this is not an append, and --update will not launder one.` |
-| F4b — the same reorder through `--redeploy-not-an-upgrade "<reason>"` | written, loudly, still non-zero | **written**, `exit=1` | the snapshot gained `_redeploy: {reason, at, refusedBecause:[…], note:"…must be REDEPLOYED; upgrading one to this layout corrupts its storage."}`, and the next plain check printed `X402Escrow: layout unchanged — snapshot carries a REDEPLOY note: <reason>` |
+| F4a — an illegal reorder **plus `--update`** | the snapshot must NOT be written | **REFUSED**, snapshot byte-identical afterwards (`shasum -c` OK) | `AssayEscrow: --update REFUSED — this is not an append, and --update will not launder one.` |
+| F4b — the same reorder through `--redeploy-not-an-upgrade "<reason>"` | written, loudly, still non-zero | **written**, `exit=1` | the snapshot gained `_redeploy: {reason, at, refusedBecause:[…], note:"…must be REDEPLOYED; upgrading one to this layout corrupts its storage."}`, and the next plain check printed `AssayEscrow: layout unchanged — snapshot carries a REDEPLOY note: <reason>` |
 
 Controls A-H from the first round were re-run unchanged against the fixed classifier and all eight
 still give their recorded verdicts (`controls exit=0`, `restored GOOD: True`).
 
 ---
 
-## `src/libraries/Voucher712.sol` and `X402Escrow.recoverVoucherSigner` / `_recover` — `recoverVoucherSigner` is removed code
+## `src/libraries/Voucher712.sol` and `AssayEscrow.recoverVoucherSigner` / `_recover` — `recoverVoucherSigner` is removed code
 
 Every row: the mutation applied to one source file, the *named* test run on its own
-(`forge test --match-contract X402EscrowDomainTest --match-test <name>`), the verbatim result, then
+(`forge test --match-contract AssayEscrowDomainTest --match-test <name>`), the verbatim result, then
 the file restored from a byte-exact `GOOD` copy and re-verified by SHA-256. Each mutation
 is checked to match exactly one occurrence, and asserts the restore hash at the end (`restored GOOD: True`). Rows whose "named
-test" column says WHOLE SUITE were run against `X402EscrowDomainTest` entire, because the property
+test" column says WHOLE SUITE were run against `AssayEscrowDomainTest` entire, because the property
 they break is not one test's.
 
 ### What this round found before it found anything else: the test plan's own encoder test was inert
@@ -892,12 +892,12 @@ the first one is the finding.
 | S2b | the same guard | `>` → `>=` | `test_theLowSCeilingIsHalfNItselfAndTheGuardIsStrictlyAboveIt` | **FAILED**: `[FAIL: half n itself is legal] (gas: 29418)` — `SECP256K1_HALF_N` is the last **accepted** value under EIP-2 (`0 < s <= n/2`), not the first refused one. The boundary is read off the operator: −1 legal, exactly legal, +1 refused. |
 | S3 | `_recover`: `if (v != 27 && v != 28) revert BadSignatureV();` | deleted | `test_wrongSigner_vOutsideTwentySevenAndTwentyEightIsRefused` (`BadSignatureV`) | **FAILED**: `[FAIL: Error != expected error: InvalidSignature() != custom error 0xd38922ec] (gas: 29300)` (`0xd38922ec` is `BadSignatureV()`) — `ecrecover` returns `address(0)` for `v = 29`, so the revert becomes `InvalidSignature`. Only the expected-selector assertion catches this. |
 | S3b | the same guard | `v != 27 && v != 28` → `v > 28` | `test_vIsAcceptedAtTwentySevenAndTwentyEightAndRefusedEitherSideOfThem` | **FAILED**: `[FAIL: 26 is outside the set: 0x8baa579f… != 0xd38922ec…] (gas: 30138)` — `0x8baa579f` is forge-std's `assertTrue` failure, i.e. `v = 26` was not refused with `BadSignatureV`. A one-sided guard admits the 0/1 encoding some libraries emit, which `ecrecover` then answers with `address(0)`. |
-| S4 | `_recover`: guard 4, the `signer == address(0)` **disjunct only** | `err != NoError \|\| signer == address(0)` → `err != NoError` | whole `X402EscrowDomainTest` | **SURVIVED** — `17 passed; 0 failed`. **Equivalent mutant, provably.** After guards 1-3, the only two states `ECDSA.tryRecover(hash, v, r, s)` can return are `NoError` with a non-zero signer and `InvalidSignature` with `address(0)` (`ECDSA.sol:143-153`; its third state, `InvalidSignatureS`, is unreachable here because guard 2 fired first, and `InvalidSignatureLength` belongs to the `bytes`-taking overload we do not call). So `signer == address(0)` and `err != NoError` are the *same predicate*, and no input can distinguish them. The test plan anticipated this and asked for "a hand-built `(v, r, s)` that recovers to zero without an OZ error" — **no such input exists**, so no test was written to pretend otherwise. |
-| S5 | `_recover`: guard 4, the `err != NoError` **disjunct only** | → `signer == address(0)` | whole `X402EscrowDomainTest` | **SURVIVED** — `17 passed; 0 failed`. The other half of S4's equivalence, run in the other direction so the claim is symmetric rather than asserted. |
+| S4 | `_recover`: guard 4, the `signer == address(0)` **disjunct only** | `err != NoError \|\| signer == address(0)` → `err != NoError` | whole `AssayEscrowDomainTest` | **SURVIVED** — `17 passed; 0 failed`. **Equivalent mutant, provably.** After guards 1-3, the only two states `ECDSA.tryRecover(hash, v, r, s)` can return are `NoError` with a non-zero signer and `InvalidSignature` with `address(0)` (`ECDSA.sol:143-153`; its third state, `InvalidSignatureS`, is unreachable here because guard 2 fired first, and `InvalidSignatureLength` belongs to the `bytes`-taking overload we do not call). So `signer == address(0)` and `err != NoError` are the *same predicate*, and no input can distinguish them. The test plan anticipated this and asked for "a hand-built `(v, r, s)` that recovers to zero without an OZ error" — **no such input exists**, so no test was written to pretend otherwise. |
+| S5 | `_recover`: guard 4, the `err != NoError` **disjunct only** | → `signer == address(0)` | whole `AssayEscrowDomainTest` | **SURVIVED** — `17 passed; 0 failed`. The other half of S4's equivalence, run in the other direction so the claim is symmetric rather than asserted. |
 | S6 | `_recover`: guard 4 **entirely** | deleted | `test_wrongSigner_pureGarbageDoesNotRecoverToTheZeroAddress` (`InvalidSignature`) | **FAILED**: `[FAIL: next call did not revert as expected] (gas: 24739)` — `(r = 0, s = 1, v = 27)` "recovers" to `address(0)` and is handed back to the caller as a signer. S4/S5 say the two disjuncts are interchangeable; this says the pair is not optional. |
-| S7 | `recoverVoucherSigner`: `_hashTypedDataV4(...)` | replaced with the bare struct hash | whole `X402EscrowDomainTest` | **FAILED**: `Suite result: FAILED. 12 passed; 5 failed`, including both replay tests — `[FAIL: assertion failed: 0x937a9bfd… != 0x5Aa2337f…] test_aVoucherSignedForOneChainDoesNotVerifyOnAnother()` and `[FAIL: assertion failed: 0x88b4D835… != 0x5Aa2337f…] test_aVoucherSignedForOneDeploymentDoesNotVerifyOnAnother()`, plus `test_happyPath_recoversThePayer`, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey` and the fuzz test. One mutation, two replay properties, which is why both tests exist. |
-| S8 | `_recover`: guards 2 and 3 | order swapped — `v` checked before low-s | whole `X402EscrowDomainTest` | **SURVIVED** — `17 passed; 0 failed`. **Not an equivalent mutant**: the two orders disagree on a signature that is *both* high-s and `v ∉ {27,28}`, which gets `MalleableSignature` one way and `BadSignatureV` the other. Nothing in the suite submits one, because neither answer is wrong — both name a real defect in the same bytes, and the caller's behaviour (revert) is identical. Recorded as surviving with its reason rather than given a test that would pin an arbitrary tie-break. It is also degenerate W1 below. |
-| E1 | `hashVoucher`: `VOUCHER_TYPEHASH` | → `SET_LIMITS_TYPEHASH` | whole `X402EscrowDomainTest` | **FAILED**: `Suite result: FAILED. 11 passed; 6 failed` — `test_theVoucherStructHashIsTheTypehashAndTheEightFieldsInDeclarationOrder` (`[FAIL: assertion failed: 0xa624973d… != 0x5393b0a5…]`), `test_happyPath_recoversThePayer`, both replay tests, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey` and the fuzz test. The distinct typehash per kind is what closes cross-kind replay; this is the row that proves it is actually in the preimage. |
+| S7 | `recoverVoucherSigner`: `_hashTypedDataV4(...)` | replaced with the bare struct hash | whole `AssayEscrowDomainTest` | **FAILED**: `Suite result: FAILED. 12 passed; 5 failed`, including both replay tests — `[FAIL: assertion failed: 0x937a9bfd… != 0x5Aa2337f…] test_aVoucherSignedForOneChainDoesNotVerifyOnAnother()` and `[FAIL: assertion failed: 0x88b4D835… != 0x5Aa2337f…] test_aVoucherSignedForOneDeploymentDoesNotVerifyOnAnother()`, plus `test_happyPath_recoversThePayer`, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey` and the fuzz test. One mutation, two replay properties, which is why both tests exist. |
+| S8 | `_recover`: guards 2 and 3 | order swapped — `v` checked before low-s | whole `AssayEscrowDomainTest` | **SURVIVED** — `17 passed; 0 failed`. **Not an equivalent mutant**: the two orders disagree on a signature that is *both* high-s and `v ∉ {27,28}`, which gets `MalleableSignature` one way and `BadSignatureV` the other. Nothing in the suite submits one, because neither answer is wrong — both name a real defect in the same bytes, and the caller's behaviour (revert) is identical. Recorded as surviving with its reason rather than given a test that would pin an arbitrary tie-break. It is also degenerate W1 below. |
+| E1 | `hashVoucher`: `VOUCHER_TYPEHASH` | → `SET_LIMITS_TYPEHASH` | whole `AssayEscrowDomainTest` | **FAILED**: `Suite result: FAILED. 11 passed; 6 failed` — `test_theVoucherStructHashIsTheTypehashAndTheEightFieldsInDeclarationOrder` (`[FAIL: assertion failed: 0xa624973d… != 0x5393b0a5…]`), `test_happyPath_recoversThePayer`, both replay tests, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey` and the fuzz test. The distinct typehash per kind is what closes cross-kind replay; this is the row that proves it is actually in the preimage. |
 
 **The eight field rows.** Each replaces one member of `hashVoucher`'s `abi.encode` with the literal
 value that member has in the test's base voucher — arity unchanged, so the *base* voucher still
@@ -920,7 +920,7 @@ flip test. All eight are run against the FIXED test.
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
 | E9 | `hashVoucher`: `v.seq` | **dropped** from `abi.encode` entirely | `test_flippingAnySingleSignedFieldChangesTheRecoveredSigner` | **SURVIVED**: `1 passed; 0 failed` — see the correction below |
-| E9b | the same deletion | | whole `X402EscrowDomainTest` | **FAILED**: `Suite result: FAILED. 11 passed; 6 failed` — `test_happyPath_recoversThePayer` (`[FAIL: assertion failed: 0xE645e002… != 0x5Aa2337f…]`), both replay tests, the struct-hash test, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey` and the fuzz test |
+| E9b | the same deletion | | whole `AssayEscrowDomainTest` | **FAILED**: `Suite result: FAILED. 11 passed; 6 failed` — `test_happyPath_recoversThePayer` (`[FAIL: assertion failed: 0xE645e002… != 0x5Aa2337f…]`), both replay tests, the struct-hash test, `test_wrongSigner_anotherKeysSignatureRecoversToThatOtherKey` and the fuzz test |
 | E10 | `hashVoucher`: `v.issuedAt` / `v.expiresAt` | transposed | `test_theVoucherStructHashIsTheTypehashAndTheEightFieldsInDeclarationOrder` | **FAILED**: `[FAIL: assertion failed: 0x1a585c34… != 0x5393b0a5…] (gas: 2.30ms)`. This is exactly the Anchor F-13 hazard (`attestation.rs:437-450`: "transposing the pair still yields 239 bytes and still passes every length assert, and both fields are `i64`") in its EIP-712 form — both members are `uint64`, so nothing but this assertion distinguishes the two orders. |
 | E11 | `hashSetLimits`: `nonce` / `deadline` | transposed | `test_theSetLimitsAndRequestWithdrawHashesEncodeTheirArgumentsInOrder` | **FAILED**: `[FAIL: assertion failed: 0xa2316da9… != 0x56a71bb9…]` |
 | E12 | `hashRequestWithdraw`: `nonce` / `deadline` | transposed | the same | **FAILED**: `[FAIL: assertion failed: 0x4e709078… != 0xc6c233b5…]` |
@@ -983,8 +983,8 @@ Five tests were added (22 in the file now, 162 in the repo). The procedure is th
 | F4 | `hashRequestWithdraw`: all three `uint64` arguments → the vector's literals (555/666/777) | `testFuzz_theRequestWithdrawHashReadsAllFourOfItsArguments` | **FAILED**: `[FAIL: assertion failed: 0x91760291… != 0xf2b6ea41…; counterexample: …]` |
 | F5 | the TEST regressed to the aliasing form `mutated[i] = base` (the review's CTRL-1) | `test_flippingAnySingleSignedFieldChangesTheRecoveredSigner` | **FAILED**: `[FAIL: base must be untouched by the writes above: 0x…dEaD != 0x5Aa2337f…]` |
 | F5b | the same regression **with anti-aliasing assertions 1-3 deleted** — does the fourth carry it alone? | the same | **FAILED**: `[FAIL: and voucher 7 does not carry voucher 5's: 2 != 1] (gas: 28720)`. Before this fix round the fourth assertion compared `mutated[7].seq` against `base.seq`, which under aliasing are the same object and the same number — inert. It now compares against `pristine`, a third allocation, and this row is the proof that it is no longer inert. |
-| F6 | a second recovery call site in ANOTHER `src/` file (`X402Config.sneak` calling `ecrecover`) | `test_recoveryHappensAtExactlyOneCallSiteInSrc` | **FAILED**: `[FAIL: recovery outside the file that owns it: …/evm/src/X402Config.sol] (gas: 30054537)` |
-| F7 | a second recovery call site in the **same** file (`X402Escrow.sneak` calling `ECDSA.tryRecover`) | the same | **FAILED**: `[FAIL: there must be exactly one recovery call site in src/: 2 != 1] (gas: 56130506)`. This is why the gate **counts** rather than checking location only — `check-vendor.sh`'s header makes the same argument in the other direction. |
+| F6 | a second recovery call site in ANOTHER `src/` file (`AssayConfig.sneak` calling `ecrecover`) | `test_recoveryHappensAtExactlyOneCallSiteInSrc` | **FAILED**: `[FAIL: recovery outside the file that owns it: …/evm/src/AssayConfig.sol] (gas: 30054537)` |
+| F7 | a second recovery call site in the **same** file (`AssayEscrow.sneak` calling `ECDSA.tryRecover`) | the same | **FAILED**: `[FAIL: there must be exactly one recovery call site in src/: 2 != 1] (gas: 56130506)`. This is why the gate **counts** rather than checking location only — `check-vendor.sh`'s header makes the same argument in the other direction. |
 | F8 | **the residual degenerate** — the review's, minus the backdoor and the two auxiliary-hash substitutions | whole repo suite | **SURVIVES**: `162 tests passed, 0 failed`. The new weakest survivor; its source is not reproduced here. |
 
 **The gate found the rule was written down wrong.** `test_recoveryHappensAtExactlyOneCallSiteInSrc`
@@ -1019,10 +1019,10 @@ Three corrections the review is right about, made in place rather than argued wi
 
 ---
 
-## `src/X402Escrow.sol`: `redeemVoucher`, `_redeem`, `setLimits`
+## `src/AssayEscrow.sol`: `redeemVoucher`, `_redeem`, `setLimits`
 
 The first path that pays money out. Every guard on it is broken one at a time, the *named* test is
-run alone, and the file is restored from a byte-exact `X402Escrow.sol.t10GOOD` copy whose SHA-256
+run alone, and the file is restored from a byte-exact `AssayEscrow.sol.t10GOOD` copy whose SHA-256
 is compared after the restore — `restored GOOD: True` on every row below.
 
 **How these rows were run, and why that is worth stating.** The build machine was heavily loaded,
@@ -1079,7 +1079,7 @@ silently revert another's source file while the suite stayed green.
 | R25 | `_setLimits`: the `EscrowLimitsUnchanged` guard | branch deleted | `test_wrongState_setLimitsRefusesAWriteThatChangesNothing` | **FAILED**: `[FAIL: next call did not revert as expected] … (gas: 25183)` |
 | R26 | `_credit`: `e.totalFunded += amount;` (**named degenerate 5 — the debt the deposit round left**) | → `e.totalFunded = e.balance;` | `test_totalFundedIsALifetimeSumOfDepositsAndNeverFollowsTheBalanceDown` | **FAILED**: `[FAIL: totalFunded is the SUM of deposits, not a restatement of the balance: 10150000 != 10400000] … (gas: 280635)`. **This is the row the deposit round could not have.** With nothing spending, the alias is exact on every reachable path and it passed all 162 the voucher-signature round tests. Killing it takes THREE steps, not two — deposit, redeem, **deposit again** — because after a redemption alone the aliased counter still holds the value it was assigned before the spend, and an assertion made there passes against the alias too |
 | R34 | `if (fee > 0)` on the treasury transfer | guard deleted | `test_aBlocklistedTreasuryOwedNothingDoesNotHaltThePayout` | **FAILED**: `[FAIL: Blocked(0x0000000000000000000000000000000000007EA5)] … (gas: 198971)`. Without that test the mutation is invisible: `MockUSDG` accepts a zero-value transfer happily, and only its Paxos-style blocklist makes `safeTransfer(treasury, 0)` a call that can fail. At a 0% take rate a blocklisted treasury would otherwise halt every payout in the system |
-| R35 | `if (providerAmount > 0)` on the provider transfer | guard deleted | the whole `X402EscrowRedeemTest` contract | **SURVIVED**: `Suite result: ok. 30 passed; 0 failed`. **Recorded as unreachable rather than dressed up.** `providerAmount == 0` requires `fee == amount`, i.e. `takeRateBps == 10_000`, and `X402Config._validate` caps it at `MAX_TAKE_RATE_BPS = 3_000`. No configuration this contract will accept can reach the branch. It mirrors `redeem_voucher.rs:170` and is kept for that symmetry, not for safety |
+| R35 | `if (providerAmount > 0)` on the provider transfer | guard deleted | the whole `AssayEscrowRedeemTest` contract | **SURVIVED**: `Suite result: ok. 30 passed; 0 failed`. **Recorded as unreachable rather than dressed up.** `providerAmount == 0` requires `fee == amount`, i.e. `takeRateBps == 10_000`, and `AssayConfig._validate` caps it at `MAX_TAKE_RATE_BPS = 3_000`. No configuration this contract will accept can reach the branch. It mirrors `redeem_voucher.rs:170` and is kept for that symmetry, not for safety |
 
 ### Order — the rows that are the only cover the check LIST has
 
@@ -1105,7 +1105,7 @@ both, and therefore no test that can order them. Said here rather than left as a
 | # | Mutation | Named test | Observed |
 |---|---|---|---|
 | R31 | `nonReentrant` deleted from `redeemVoucher`, **effects left where they are** | `test_wrongState_aReentrantAssetCannotRecurseIntoRedeemVoucher` | **FAILED**: `[FAIL: Error != expected error: VoucherSeqNotIncreasing() != ReentrancyGuardReentrantCall()] … (gas: 1276846)`. **Read the observed error.** With the effects written first, the nested redemption is refused by the SEQ guard, not by the modifier — the money never moves. The two defences overlap, and this row says so instead of letting the modifier take credit for the seq rule's work |
-| R33 | `nonReentrant` deleted **AND** the interactions moved above the effects | scratch probe `X402EscrowT10ReentrancyProbe.t.sol` (never committed), asserting the DOUBLE payment | **PROBE PASSED — the double spend is real**: `[PASS] test_probe_theSameVoucherPaysTwice() (gas: 1288699)`, i.e. `evil.balanceOf(provider) == 450_000`, `evil.balanceOf(treasury) == 50_000` and `seqHigh == 1` for one 250_000 voucher. This is the half R31 cannot show, and it is why the ordering is a rule rather than a style preference |
+| R33 | `nonReentrant` deleted **AND** the interactions moved above the effects | scratch probe `AssayEscrowT10ReentrancyProbe.t.sol` (never committed), asserting the DOUBLE payment | **PROBE PASSED — the double spend is real**: `[PASS] test_probe_theSameVoucherPaysTwice() (gas: 1288699)`, i.e. `evil.balanceOf(provider) == 450_000`, `evil.balanceOf(treasury) == 50_000` and `seqHigh == 1` for one 250_000 voucher. This is the half R31 cannot show, and it is why the ordering is a rule rather than a style preference |
 
 The adversary is `RedeemReentrantUSDG` in `test/helpers/MockUSDG.sol` — a token that re-enters from
 `transfer` (the payout) rather than from `transferFrom` (the funding), which is what makes it able
@@ -1166,7 +1166,7 @@ six disjoint copies of `evm/` plus three standalone ones, `*.t10GOOD` restores S
 | X3 | **the (clock-skew, redeem-grace) transposition** — the review's N2, the one adjacent pair in the check list nothing ordered | whole suite | **NOW DIES**: `Suite result: FAILED. 35 passed; 1 failed; 0 skipped` — `[FAIL: Error != expected error: panic: arithmetic underflow or overflow (0x11) != VoucherNotYetValid()] test_boundary_theVoucherClockWindowIsBoundedAtBothEnds() (gas: 403470)`. It was `193 passed, 0 failed` before. The new case is `issuedAt = type(uint64).max - 400`, which is **leg two** of the argument that `v.expiresAt + REDEEM_GRACE_SECONDS` cannot overflow; leg one (`expiresAt = type(uint64).max`) was already pinned |
 | X5b | **the two transfers moved ABOVE the six effects**, `nonReentrant` untouched | `test_everyEffectIsWrittenBeforeTheFirstTransfer` | **DIES**: `[FAIL: balance not yet debited at payout time: 10000000 != 9750000] test_everyEffectIsWrittenBeforeTheFirstTransfer() (gas: 1034608)`. **This is the row that makes R33 committable.** R31 proved only that *some* guard refuses a re-entrant redemption (measured: the seq rule, not the modifier) and R33 needed mutated source to show the double payment. `RedeemObserverUSDG` re-enters a **view** from inside the payout and records the six effects; the outer call succeeds, so the mock's storage survives to be asserted. Nothing needs mutating and the batch round's batch inherits the guard |
 | X5 | the two transfers **deleted** (a mis-specified first attempt at X5b, kept because it measures something else) | the same test | **DIES**: `[FAIL: the observer never ran, so nothing below is asserting anything] … (gas: 932283)`. The `observed` flag is what stops the four value assertions being vacuously true against a contract that never pays anybody |
-| X4 | **`Cast.toUint64`'s guard deleted** — the extracted shared narrowing | whole suite | **DIES** in `test/Fee.t.sol`: `[FAIL: next call did not revert as expected] test_splitFeeRevertsMathOverflowWhenTheNarrowingWouldLoseABit() (gas: 8530)` and `[FAIL: next call did not revert as expected] test_bpsOfRevertsMathOverflowWhenTheNarrowingWouldLoseABit() (gas: 10293)`; `X402EscrowRedeemTest` itself stays `ok. 36 passed`. The redeem path cannot reach the check (see below) — `Fee.t.sol` is what proves the shared guard is real, and it proved it before this round too, for `Fee.narrow` |
+| X4 | **`Cast.toUint64`'s guard deleted** — the extracted shared narrowing | whole suite | **DIES** in `test/Fee.t.sol`: `[FAIL: next call did not revert as expected] test_splitFeeRevertsMathOverflowWhenTheNarrowingWouldLoseABit() (gas: 8530)` and `[FAIL: next call did not revert as expected] test_bpsOfRevertsMathOverflowWhenTheNarrowingWouldLoseABit() (gas: 10293)`; `AssayEscrowRedeemTest` itself stays `ok. 36 passed`. The redeem path cannot reach the check (see below) — `Fee.t.sol` is what proves the shared guard is real, and it proved it before this round too, for `Fee.narrow` |
 
 **Row W4 is superseded and this is where it went.** `Window.narrow`'s guard was recorded above as a
 necessary survivor — unreachable by construction, kept for consistency with the `Fee` design choice. Its
@@ -1198,9 +1198,9 @@ three now die on more tests than before.
 
 ## `redeemVoucherBatch`
 
-Thirty-three tests were added (`test/X402Escrow.batch.t.sol`; 231 in the repo, up from 198). Every
+Thirty-three tests were added (`test/AssayEscrow.batch.t.sol`; 231 in the repo, up from 198). Every
 row below ran in its OWN disjoint copy of `evm/` in a scratch directory, five at a time,
-with `lib/` symlinked and everything else copied; a byte-exact `X402Escrow.<NAME>.GOOD` was diffed
+with `lib/` symlinked and everything else copied; a byte-exact `AssayEscrow.<NAME>.GOOD` was diffed
 against the shipped source before each mutation and restored and SHA-256 verified after it. Every
 row's restore hash is `61ca1b53…a614b822`, identical to upstream. **Baseline before every row:
 `231 tests passed, 0 failed`.**
@@ -1242,11 +1242,11 @@ so a mutation that silently changed nothing cannot be reported here as a survivo
 
 ## `setLimitsBySig`, `requestWithdraw`, `requestWithdrawBySig`
 
-Twenty tests were added (`test/X402Escrow.bysig.t.sol`; **251** in the repo, up from 231). Every
+Twenty tests were added (`test/AssayEscrow.bysig.t.sol`; **251** in the repo, up from 231). Every
 row below was applied to the working tree by a script that asserts its anchor
 text appears **exactly once** — so a mutation that silently changed nothing cannot be reported
 here as a survivor (row T10 was refused on its first spelling, which matched three sites, and had
-to be re-anchored). A byte-exact `X402Escrow.T12GOOD.sol` was diffed against the tree *before*
+to be re-anchored). A byte-exact `AssayEscrow.T12GOOD.sol` was diffed against the tree *before*
 every mutation and restored and SHA-256 verified after it; every restore hash is `ae1f89df…`, and
 `Voucher712.T12GOOD.sol` is `2d598f65…`. **Baseline before every row: `251 tests passed, 0
 failed`.**
@@ -1282,9 +1282,9 @@ failed`.**
 
 ## `withdraw()`
 
-Seventeen tests were added (`test/X402Escrow.withdraw.t.sol`; **268** in the repo, up from 251).
+Seventeen tests were added (`test/AssayEscrow.withdraw.t.sol`; **268** in the repo, up from 251).
 Same harness as the limits-and-withdraw-request round: each anchor is asserted to appear exactly once, a
-byte-exact `X402Escrow.T13GOOD.sol` was diffed against the tree before every row and restored and
+byte-exact `AssayEscrow.T13GOOD.sol` was diffed against the tree before every row and restored and
 SHA-256 verified after it, and every restore hash is `85b4feb1…`. **Baseline before every row:
 `268 tests passed, 0 failed`.**
 
@@ -1313,7 +1313,7 @@ SHA-256 verified after it, and every restore hash is `85b4feb1…`. **Baseline b
 |---|---|---|
 | DG3 | **`withdraw()` ignores the 1-hour delay** — the `withdrawAvailableAt` branch deleted (row W2) | **DIES**: `267 passed; 1 failed` — `[FAIL: next call did not revert as expected] test_boundary_withdrawIsRefusedOneSecondEarlyAndAdmittedOnTheInstant`. Only the `-1` half sees it; the exact-instant half passes under the degenerate, which is why the boundary is tested at two points and not one |
 | DG4 | **`withdraw()` pays a stored destination rather than `msg.sender`** — a `withdrawTo` mapping and a `setWithdrawTo(address)` setter, with `dest = withdrawTo[msg.sender] == address(0) ? msg.sender : withdrawTo[msg.sender]` and `ASSET.safeTransfer(dest, amount)` | **DIES on exactly ONE test, and it is not a behavioural one**: `267 passed; 1 failed` — `[FAIL: the withdrawal recipient is not the exact msg.sender expression this test pins: 0 != 1] test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`. **Measured against the test plan's eight tests selected by name: `8 passed; 0 failed`.** Nothing behavioural can see it — the default branch makes it byte-equivalent on every fixture, and it becomes a redirect only once somebody calls the setter. This is the degenerate that justifies the gate, and it is the shape a compromised console would add |
-| DG4b | the same hole under a name no source gate greps for — `function rescue(address to, uint64 amount) external { ASSET.safeTransfer(to, amount); }`, an unrestricted drain that nothing calls | **DIES**: `267 passed; 1 failed` — `[FAIL: X402Escrow's external surface changed size: 24 != 23]`. Run to prove the ABI half of that gate has teeth of its own: the source-text half passes this one completely (the pinned recipient line is untouched, `function withdraw` is still one, `function withdrawBySig` is still zero). The gate reads `methodIdentifiers` out of the compiled artifact, so a door added through an inherited contract is caught too |
+| DG4b | the same hole under a name no source gate greps for — `function rescue(address to, uint64 amount) external { ASSET.safeTransfer(to, amount); }`, an unrestricted drain that nothing calls | **DIES**: `267 passed; 1 failed` — `[FAIL: AssayEscrow's external surface changed size: 24 != 23]`. Run to prove the ABI half of that gate has teeth of its own: the source-text half passes this one completely (the pinned recipient line is untouched, `function withdraw` is still one, `function withdrawBySig` is still zero). The gate reads `methodIdentifiers` out of the compiled artifact, so a door added through an inherited contract is caught too |
 
 ### The weakest survivor
 
@@ -1323,12 +1323,12 @@ SHA-256 verified after it, and every restore hash is `85b4feb1…`. **Baseline b
 
 ---
 
-## `X402Stake`: collateral in, unbonding, collateral out
+## `AssayStake`: collateral in, unbonding, collateral out
 
-Nineteen tests were added (`test/X402Stake.stake.t.sol`; **287** in the repo, up from 268, of
+Nineteen tests were added (`test/AssayStake.stake.t.sol`; **287** in the repo, up from 268, of
 which 268 are the pre-existing suites running unchanged against the REAL stake contract in place
 of `StakeStub`). Same harness as the limits-and-withdraw-request and `withdraw()` rounds: each anchor is asserted to appear
-**exactly once** before replacing it, a byte-exact `X402Stake.T14GOOD.sol` was diffed against the
+**exactly once** before replacing it, a byte-exact `AssayStake.T14GOOD.sol` was diffed against the
 tree before every row and restored and SHA-256 verified after it, and every restore hash is
 `98d8dbbe…`. **Baseline before every row: `287 tests passed, 0 failed`** (rows K1–K14 were first
 measured at 285, before the two re-entrancy tests were added; K11 and K14 were re-measured at 287
@@ -1352,8 +1352,8 @@ and their entries below are the re-measurement).
 | K12 | `withdrawStake`: `totalStaked -= amount;` | line deleted | `test_theAccountingIdentityHolds` | **DIES on 5 tests**: `280 passed; 5 failed` — `[FAIL: assertion failed: 1000000000 != 600000000]` on the identity and the boundary, `[FAIL: assertion failed: 35000000 != 0]` on the address sweep, plus the observer and the fuzz. The pooled counter would drift above the sum of the ledger by every withdrawal ever made |
 | K13 | `withdrawStake`: `if (amount > s.unbonding) revert InsufficientUnbondingStake();` | branch deleted | `test_wrongState_anAmountBeyondUnbondingIsDiagnosedBeforeTheClock` | **DIES**: `284 passed; 1 failed` — `[FAIL: Error != expected error: UnbondingPeriodNotElapsed() != InsufficientUnbondingStake()]`. It is a DIAGNOSIS row and the test had to be written for it: at every matured instant `withdrawableOf`'s `min` subsumes this check exactly, so the two spellings differ only BEFORE maturity — where the mutation tells a provider to come back later for money that will not be there |
 | K14 | `nonReentrant` on `depositStakeFor` | modifier deleted | `test_wrongState_aReentrantAssetCannotRecurseIntoDepositStakeFor` | **DIES**: `286 passed; 1 failed` — `[FAIL: Error != expected error: TransferAmountMismatch() != ReentrancyGuardReentrantCall()]`. Rows E4 and E23 exactly: the token funds its own nested deposit, the nested deposit succeeds, and the OUTER delta then sees `amount + reenterAmount` and refuses. **What holds the money on this path is K5's delta**, not the modifier. Measured at 285 before the test existed: it **survived** |
-| K15 | `struct ProviderStake` gains a `uint256 __gap2` member | member appended | `script/check-layout.sh`'s new `check_struct_size` line | **DIES**: `struct X402Stake.ProviderStake is 160 bytes, expected 128 (four slots — the designed packing)`, `LAYOUT_EXIT=1`. A script gate, not a `forge test` row |
-| K15b | the same idea with a `uint64 __gap2` | member appended | the same | **SURVIVES the size gate, and this is the finding**: a `uint64` packs into the 16 spare bytes of slot 3 beside `totalSlashed`, so the struct is still 128 bytes and `check_struct_size` says nothing. What caught it was the append-only CLASSIFIER (`X402Stake: APPEND-ONLY change, allowed. Regenerate the snapshot with --update IN THIS COMMIT.`, `LAYOUT_EXIT=1`). The two halves of this gate catch different things and neither subsumes the other — measured, after the first attempt at K15 was written with a `uint64` and passed |
+| K15 | `struct ProviderStake` gains a `uint256 __gap2` member | member appended | `script/check-layout.sh`'s new `check_struct_size` line | **DIES**: `struct AssayStake.ProviderStake is 160 bytes, expected 128 (four slots — the designed packing)`, `LAYOUT_EXIT=1`. A script gate, not a `forge test` row |
+| K15b | the same idea with a `uint64 __gap2` | member appended | the same | **SURVIVES the size gate, and this is the finding**: a `uint64` packs into the 16 spare bytes of slot 3 beside `totalSlashed`, so the struct is still 128 bytes and `check_struct_size` says nothing. What caught it was the append-only CLASSIFIER (`AssayStake: APPEND-ONLY change, allowed. Regenerate the snapshot with --update IN THIS COMMIT.`, `LAYOUT_EXIT=1`). The two halves of this gate catch different things and neither subsumes the other — measured, after the first attempt at K15 was written with a `uint64` and passed |
 
 ### The named degenerate
 
@@ -1365,9 +1365,9 @@ and their entries below are the re-measurement).
 
 ## `proposeSlash`, phase one
 
-Eighteen tests were added (`test/X402Stake.slash.t.sol`; **305** in the repo, up from 287). Same
+Eighteen tests were added (`test/AssayStake.slash.t.sol`; **305** in the repo, up from 287). Same
 harness: each anchor is asserted to appear **exactly once** before replacing it, a
-byte-exact `X402Stake.T15GOOD.sol` (and `Attestation712.T15GOOD.sol` for P10) was diffed against
+byte-exact `AssayStake.T15GOOD.sol` (and `Attestation712.T15GOOD.sol` for P10) was diffed against
 the tree before every row and restored and SHA-256 verified after it. **Baseline before every
 row: `305 tests passed, 0 failed`.**
 
@@ -1401,7 +1401,7 @@ written the test plan's way would have been red on correct code and green on not
 | P14 | `if (capAllowance == 0) revert SlashCapExceeded();` | branch deleted | `test_wrongState_aCapAllowanceThatRoundsToZeroIsRefused` | **DIES**: `304 passed; 1 failed` — `[FAIL: Error != expected error: NothingToSlash() != custom error 0xc7300280]`. Diagnosis again: a stake so small that 10% of it floors to zero |
 | P15 | `s.pendingSlash += reserved;` | line deleted | `test_happyPath_aProposalReservesCollateralAndWaits` | **DIES on 6 tests**: `299 passed; 6 failed` — `[FAIL: assertion failed: 0 != 1000000]` and five more. Without it a proposal shields nothing and `withdrawStake` outruns every judgement in flight |
 | P16 | `rec.executableAt = nowTs + Constants.SLASH_DELAY_SECONDS;` | → `nowTs` | the same test | **DIES**: `304 passed; 1 failed` — `[FAIL: assertion failed: 1760000000 != 1760259200]`. **The 72 hours are the whole point of phase one**, and this is the row that pins them to the constant rather than to a literal |
-| P17 | `nonReentrant` on `proposeSlash` | modifier deleted | — | **SURVIVES**: `305 tests passed, 0 failed`, and **necessarily**. `proposeSlash` moves no token and calls nothing but `X402Config`, which holds none, so there is no point from which anything could re-enter. Row T13 recorded the same thing about the limits-and-withdraw-request round's four doors. The modifier is belt with no brace; the way that stops being true is somebody adding a transfer |
+| P17 | `nonReentrant` on `proposeSlash` | modifier deleted | — | **SURVIVES**: `305 tests passed, 0 failed`, and **necessarily**. `proposeSlash` moves no token and calls nothing but `AssayConfig`, which holds none, so there is no point from which anything could re-enter. Row T13 recorded the same thing about the limits-and-withdraw-request round's four doors. The modifier is belt with no brace; the way that stops being true is somebody adding a transfer |
 
 ### The named degenerate
 
@@ -1413,8 +1413,8 @@ written the test plan's way would have been red on correct code and green on not
 
 ## `executeSlash`, `cancelSlash`, `expireSlash`: the three exits from `Pending`
 
-Twenty-one tests were added (`test/X402Stake.slash.t.sol`; **326** in the repo, up from 305).
-Same harness; the byte-exact copy is `X402Stake.T16GOOD.sol`, SHA-256 `0b0f41eb…`, diffed before
+Twenty-one tests were added (`test/AssayStake.slash.t.sol`; **326** in the repo, up from 305).
+Same harness; the byte-exact copy is `AssayStake.T16GOOD.sol`, SHA-256 `0b0f41eb…`, diffed before
 every row and restored and re-hashed after it. **Baseline before every row: `326 tests passed,
 0 failed`.** Eighteen rows, **eighteen kills, no survivors.**
 
@@ -1454,7 +1454,7 @@ every row and restored and re-hashed after it. **Baseline before every row: `326
 ## The upgrade door, the initializer discipline and the domain separator
 
 Eleven tests were added (`test/Upgrade.t.sol`; **336** in the repo, up from 326). Byte-exact
-copies: `X402Stake.T17GOOD.sol`, SHA-256 `0b0f41eb…`; `Upgrade.T17GOOD.sol`, SHA-256 `3a50c2c3…`.
+copies: `AssayStake.T17GOOD.sol`, SHA-256 `0b0f41eb…`; `Upgrade.T17GOOD.sol`, SHA-256 `3a50c2c3…`.
 Both diffed before every row and restored and re-hashed after it. **Baseline before every row:
 `336 tests passed, 0 failed`.** Three guard rows, two degenerates, and the layout gate's own
 refusals recorded verbatim below.
@@ -1465,27 +1465,27 @@ Four measured corrections.
 
 | Source | What it predicted | What is actually true |
 |---|---|---|
-| the test plan Step 4, rows 1, 2, 5 and 6 | the three `_authorizeUpgrade` guards and the three `_disableInitializers` calls are all proved here, "deferred from the Config, deposit and stake rounds" | **Four of the six were already proved and are rows C6, C7, E7, E8 and E19 above**, brought forward by the project's no-untested-guard rule. Duplicating them would be five new rows measuring nothing. **`X402Stake` had neither proof, and no upgrade test of any kind** — rows S1–S3 below are that gap, and they are the only new guard coverage this round adds. `test_theEarlierAuthorityProofsStillHold` re-asserts the earlier four so deleting one of those tests cannot silently drop the property. |
-| the test plan Step 1, `X402EscrowV2`'s header | the appended field "lands immediately after the last of them — **inside the space the parent's `__gap` reserved**" | **False, and measured.** `__gap` is `uint256[50]` starting at slot 9, so it occupies slots 9-58; a derived contract's first variable is laid out after *every* base variable, so `upgradedAt` sits at slot **59**, past the gap. `test_theAppendedFieldLandsPastTheParentsGapNotInsideIt` reads slot 59 and then walks slots 9-58 proving they are still zero. Both shapes are storage-safe, which is why the error was invisible; they differ in that appending in a derived contract is unbounded while shrinking the parent's gap is a budget. |
-| the test plan Step 2, the whole listing | the test bodies as written | **Five of the ten tests failed against CORRECT code.** `vm.prank` arms the *next call*, and the test plan puts a call in the argument list six times — `escrow.upgradeToAndCall(address(new X402EscrowV2()), "")` (the `new` is a CREATE) and `escrow.redeemVoucher(v, VoucherSigner.signVoucher(buyerKey, escrow.DOMAIN_SEPARATOR(), v))` (the getter). Observed: `[FAIL: NotAdmin()]` ×4 and `[FAIL: NotRedeemer()]` ×1, `5 passed; 5 failed`. `Fixture` and `X402Escrow.deposit.t.sol` both warn about exactly this and the test plan commits it anyway. Every argument is now hoisted above its prank. |
+| the test plan Step 4, rows 1, 2, 5 and 6 | the three `_authorizeUpgrade` guards and the three `_disableInitializers` calls are all proved here, "deferred from the Config, deposit and stake rounds" | **Four of the six were already proved and are rows C6, C7, E7, E8 and E19 above**, brought forward by the project's no-untested-guard rule. Duplicating them would be five new rows measuring nothing. **`AssayStake` had neither proof, and no upgrade test of any kind** — rows S1–S3 below are that gap, and they are the only new guard coverage this round adds. `test_theEarlierAuthorityProofsStillHold` re-asserts the earlier four so deleting one of those tests cannot silently drop the property. |
+| the test plan Step 1, `AssayEscrowV2`'s header | the appended field "lands immediately after the last of them — **inside the space the parent's `__gap` reserved**" | **False, and measured.** `__gap` is `uint256[50]` starting at slot 9, so it occupies slots 9-58; a derived contract's first variable is laid out after *every* base variable, so `upgradedAt` sits at slot **59**, past the gap. `test_theAppendedFieldLandsPastTheParentsGapNotInsideIt` reads slot 59 and then walks slots 9-58 proving they are still zero. Both shapes are storage-safe, which is why the error was invisible; they differ in that appending in a derived contract is unbounded while shrinking the parent's gap is a budget. |
+| the test plan Step 2, the whole listing | the test bodies as written | **Five of the ten tests failed against CORRECT code.** `vm.prank` arms the *next call*, and the test plan puts a call in the argument list six times — `escrow.upgradeToAndCall(address(new AssayEscrowV2()), "")` (the `new` is a CREATE) and `escrow.redeemVoucher(v, VoucherSigner.signVoucher(buyerKey, escrow.DOMAIN_SEPARATOR(), v))` (the getter). Observed: `[FAIL: NotAdmin()]` ×4 and `[FAIL: NotRedeemer()]` ×1, `5 passed; 5 failed`. `Fixture` and `AssayEscrow.deposit.t.sol` both warn about exactly this and the test plan commits it anyway. Every argument is now hoisted above its prank. |
 | the test plan Step 3 | "Expected: `8 passed; 0 failed`" | `11 passed; 0 failed`. Three tests the test plan does not have: the slot-59 measurement, the EIP-712 **name** half of (d) (the test plan only covers the version), and the silent-domain degenerate below. |
 
 ### The guards
 
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
-| S1 | `X402Stake._authorizeUpgrade`: `if (msg.sender != CONFIG.admin()) revert NotAdmin();` | body deleted | `test_wrongSigner_onlyTheAdminUpgradesStake` | **DIES on 2 tests**: `334 passed; 2 failed` — `[FAIL: next call did not revert as expected]` on the named test and on `test_theStakeUpgradeAuthorityFollowsTheConfigAdmin`. Anyone replaces the logic holding every provider's collateral, and the second failure is the one that matters for D-1: with the guard gone the "one key" claim cannot even be stated. **This contract had no upgrade test at all before the upgrade round** |
-| S2 | `X402Stake`'s constructor: `_disableInitializers();` | statement deleted | `test_wrongState_theStakeProxyAndItsImplementationCannotBeInitialised` | **DIES**: `335 passed; 1 failed` — `[FAIL: next call did not revert as expected]`. The attacker initialises the **implementation**, and because a UUPS implementation carries `upgradeToAndCall` in its own code it then answers to whoever did it |
-| S3 | `X402Stake.initialize`: the `initializer` modifier | modifier deleted | the same test | **DIES**: `335 passed; 1 failed` — `[FAIL: next call did not revert as expected]` at a quarter the gas (25,689 vs 100,224), i.e. it dies on the **proxy** half rather than the implementation half. A second call would re-point `CONFIG` and `ASSET` on a live, funded stake vault |
+| S1 | `AssayStake._authorizeUpgrade`: `if (msg.sender != CONFIG.admin()) revert NotAdmin();` | body deleted | `test_wrongSigner_onlyTheAdminUpgradesStake` | **DIES on 2 tests**: `334 passed; 2 failed` — `[FAIL: next call did not revert as expected]` on the named test and on `test_theStakeUpgradeAuthorityFollowsTheConfigAdmin`. Anyone replaces the logic holding every provider's collateral, and the second failure is the one that matters for D-1: with the guard gone the "one key" claim cannot even be stated. **This contract had no upgrade test at all before the upgrade round** |
+| S2 | `AssayStake`'s constructor: `_disableInitializers();` | statement deleted | `test_wrongState_theStakeProxyAndItsImplementationCannotBeInitialised` | **DIES**: `335 passed; 1 failed` — `[FAIL: next call did not revert as expected]`. The attacker initialises the **implementation**, and because a UUPS implementation carries `upgradeToAndCall` in its own code it then answers to whoever did it |
+| S3 | `AssayStake.initialize`: the `initializer` modifier | modifier deleted | the same test | **DIES**: `335 passed; 1 failed` — `[FAIL: next call did not revert as expected]` at a quarter the gas (25,689 vs 100,224), i.e. it dies on the **proxy** half rather than the implementation half. A second call would re-point `CONFIG` and `ASSET` on a live, funded stake vault |
 
 ### The named degenerates
 
 The degenerate the test plan names is *"an upgrade test that would pass against an implementation
 that silently changed the domain separator"*. It exists, it is measured, and its source is
-`test/helpers/X402EscrowSilentDomainV2.sol`, kept in the tree because a permanent test now uses
+`test/helpers/AssayEscrowSilentDomainV2.sol`, kept in the tree because a permanent test now uses
 it.
 
-The construction matters. `X402Escrow.DOMAIN_SEPARATOR()` is `external` and **not** `virtual`, so
+The construction matters. `AssayEscrow.DOMAIN_SEPARATOR()` is `external` and **not** `virtual`, so
 an implementation cannot change what that getter returns. `_hashTypedDataV4` **is** `internal view
 virtual` on OZ's `EIP712`, and it is what `redeemVoucher`, `setLimitsBySig` and
 `requestWithdrawBySig` build their digests from. Overriding only the second makes the *exported*
@@ -1493,7 +1493,7 @@ domain and the *enforced* domain disagree, with no external symptom at all.
 
 | # | Degenerate | Observed |
 |---|---|---|
-| DG-U1 | the real (c) test, `test_anUpgradePreservesEveryBalanceTheDomainAndAnOutstandingVoucher`, upgraded to `X402EscrowSilentDomainV2` instead of `X402EscrowV2` | **DIES**: `[FAIL: SignerIsNotPayer()] (gas: 2959198)`, `0 passed; 1 failed`. The pre-signed voucher no longer redeems — which is the whole parity claim, failing |
+| DG-U1 | the real (c) test, `test_anUpgradePreservesEveryBalanceTheDomainAndAnOutstandingVoucher`, upgraded to `AssayEscrowSilentDomainV2` instead of `AssayEscrowV2` | **DIES**: `[FAIL: SignerIsNotPayer()] (gas: 2959198)`, `0 passed; 1 failed`. The pre-signed voucher no longer redeems — which is the whole parity claim, failing |
 | DG-U2 | **the degenerate the follow-up names**: the same test against the same silent implementation, but **truncated after the state assertions** — every balance, every counter, the pool total and `assertEq(escrow.DOMAIN_SEPARATOR(), sepBefore)` kept; the pre-signed redemption deleted | **PASSES**: `[PASS] … (gas: 2897134)`, `1 passed; 0 failed`. **This is the shape the test plan's own test would have had if the last three lines were left off**, and it is green against an implementation that has killed every outstanding voucher. The separator assertion is not the proof; redeeming a voucher signed before the upgrade is |
 
 DG-U2 is now a permanent test in its own right —
@@ -1512,9 +1512,9 @@ assertion buys nothing. Output verbatim, `FORGE=forge`.
 **1. Green on the shipped layout.**
 
 ```
-X402Config: layout unchanged
-X402Escrow: layout unchanged
-X402Stake: layout unchanged
+AssayConfig: layout unchanged
+AssayEscrow: layout unchanged
+AssayStake: layout unchanged
 layout OK
 EXIT=0
 ```
@@ -1524,14 +1524,14 @@ EXIT=0
 Solana devnet deployment of the Anchor program, expressed in Solidity.
 
 ```
-X402Config: layout unchanged
-REFUSED: <tmpdir>/X402Escrow.json is not an append-only change to snapshots/X402Escrow.storage.json
+AssayConfig: layout unchanged
+REFUSED: <tmpdir>/AssayEscrow.json is not an append-only change to snapshots/AssayEscrow.storage.json
   - variable escrows moved: slot 7+0 -> 8+0
   - variable totalEscrowed moved: slot 8+0 -> 9+0
   - new variable inserted sits at slot 7, before the old gap at 9 -- appends go at the END, never in the middle
   - the gap shrank by 0 slots but the new fields consumed 1; they must be equal
-X402Escrow: REFUSED — this is a redeploy, not an upgrade
-X402Stake: layout unchanged
+AssayEscrow: REFUSED — this is a redeploy, not an upgrade
+AssayStake: layout unchanged
 EXIT=1
 ```
 
@@ -1539,11 +1539,11 @@ EXIT=1
 a refusal that `--update` could paper over is not a refusal.
 
 ```
-X402Config: snapshot refreshed (layout unchanged)
+AssayConfig: snapshot refreshed (layout unchanged)
 REFUSED: … (the same four lines)
-X402Escrow: --update REFUSED — this is not an append, and --update will not launder one.
+AssayEscrow: --update REFUSED — this is not an append, and --update will not launder one.
      If the redeploy is deliberate: ./script/check-layout.sh --redeploy-not-an-upgrade "<reason>"
-X402Stake: snapshot refreshed (layout unchanged)
+AssayStake: snapshot refreshed (layout unchanged)
 EXIT=1
 ```
 
@@ -1551,9 +1551,9 @@ EXIT=1
 shrunk to `uint256[49]`.
 
 ```
-X402Config: layout unchanged
-X402Escrow: APPEND-ONLY change, allowed. Regenerate the snapshot with --update IN THIS COMMIT.
-X402Stake: layout unchanged
+AssayConfig: layout unchanged
+AssayEscrow: APPEND-ONLY change, allowed. Regenerate the snapshot with --update IN THIS COMMIT.
+AssayStake: layout unchanged
 EXIT=1
 ```
 
@@ -1569,7 +1569,7 @@ review is the one the Solana side did not have.
 
 Thirty-six tests were added (`test/Boundaries.t.sol` 17, `test/Pause.t.sol` 11,
 `test/invariant/Invariants.t.sol` 8; **373** in the repo, up from 337). Byte-exact copies:
-`X402Escrow.T18GOOD.sol` SHA-256 `e796474e…`, `X402Stake.T18GOOD.sol` SHA-256 `0b0f41eb…`.
+`AssayEscrow.T18GOOD.sol` SHA-256 `e796474e…`, `AssayStake.T18GOOD.sol` SHA-256 `0b0f41eb…`.
 **Baseline before every row: `373 tests passed, 0 failed`.**
 
 ### Where measurement disagreed with the test plan
@@ -1590,9 +1590,9 @@ identity, each restored and re-hashed after.
 
 | # | Mutation | Named invariant | Observed |
 |---|---|---|---|
-| V1 | `X402Escrow.withdraw`: `totalEscrowed -= amount;` deleted | `invariant_escrowBalancesSumToTotalEscrowed` | **DIES on 3**: `5 passed; 3 failed` — `[FAIL: assertion failed: 1323695452 != 1323700349]` on the sum identity, `[FAIL: assertion failed: 1649065902 < 1670509991]` on `theContractHoldsAtLeastWhatItOwes` (the contract now claims to owe more than it holds), and `[FAIL: 740000000 != 750000000]` on the reachability test. The solvency counter would drift up by every withdrawal ever made |
-| V2 | `X402Stake._release`: `s.pendingSlash = s.pendingSlash > released ? s.pendingSlash - released : 0;` deleted | `invariant_pendingSlashEqualsTheSumOfPendingReservations` | **DIES on 2**: `6 passed; 2 failed` — `[FAIL: assertion failed: 1942784 != 1302319]`. The vault's hold and the handler's independent book diverge: a cancelled or reaped judgement leaves collateral held for ever. This is the invariant the handler's **own** bookkeeping earns — reading both sides off the contract would have compared `pendingSlash` with itself |
-| V3 | `X402Stake.executeSlash`: `totalSlashed += taken;` → `+= applied;` | `invariant_stakeAccountingIdentity` | **DIES on 2**: `6 passed; 2 failed` — `[FAIL: assertion failed: 5370932740 != 5370932738]`, a two-unit drift found over 16,384 calls. `applied` is the gross judged and `taken` is what actually left the vault; the provider keeps the difference by design, so metering the identity with the gross breaks it by exactly the provider's share |
+| V1 | `AssayEscrow.withdraw`: `totalEscrowed -= amount;` deleted | `invariant_escrowBalancesSumToTotalEscrowed` | **DIES on 3**: `5 passed; 3 failed` — `[FAIL: assertion failed: 1323695452 != 1323700349]` on the sum identity, `[FAIL: assertion failed: 1649065902 < 1670509991]` on `theContractHoldsAtLeastWhatItOwes` (the contract now claims to owe more than it holds), and `[FAIL: 740000000 != 750000000]` on the reachability test. The solvency counter would drift up by every withdrawal ever made |
+| V2 | `AssayStake._release`: `s.pendingSlash = s.pendingSlash > released ? s.pendingSlash - released : 0;` deleted | `invariant_pendingSlashEqualsTheSumOfPendingReservations` | **DIES on 2**: `6 passed; 2 failed` — `[FAIL: assertion failed: 1942784 != 1302319]`. The vault's hold and the handler's independent book diverge: a cancelled or reaped judgement leaves collateral held for ever. This is the invariant the handler's **own** bookkeeping earns — reading both sides off the contract would have compared `pendingSlash` with itself |
+| V3 | `AssayStake.executeSlash`: `totalSlashed += taken;` → `+= applied;` | `invariant_stakeAccountingIdentity` | **DIES on 2**: `6 passed; 2 failed` — `[FAIL: assertion failed: 5370932740 != 5370932738]`, a two-unit drift found over 16,384 calls. `applied` is the gross judged and `taken` is what actually left the vault; the provider keeps the difference by design, so metering the identity with the gross breaks it by exactly the provider's share |
 
 ### The named degenerate
 
@@ -1615,7 +1615,7 @@ so the campaign lands nothing at all.
 > were replaced by `test_pauseClosesTheBuyersExitAndControls`, `test_pauseClosesEveryStakeDoor`
 > and `test_aPausedExitReopensWithTheBalanceUntouched` (the pause still moves no money). The
 > release rows, the upgrade row and the new `test_pauseNeverClosesTheDelegateRevocation` /
-> `X402Stake.dispute.t.sol::test_pauseNeverClosesTheDispute` stand. The text below is the history.
+> `AssayStake.dispute.t.sol::test_pauseNeverClosesTheDispute` stand. The text below is the history.
 
 Not mutation rows — the `never` half of the matrix is proved by tests that would fail if a
 `whenNotPaused` were *added*, which is the opposite direction from a deleted guard. The rows that
@@ -1648,7 +1648,7 @@ failure and reading the output.
 | Source | What it predicted | What is actually true |
 |---|---|---|
 | the test plan Step 1, `Deploy.s.sol` | `require(address(stake.CONFIG()) == address(config), "stake config mismatch")` and six more | **Revert strings, which this repo does not have anywhere** — the global constraint outranks the test plan's sample code. Every one is now `if (!cond) revert NamedError();`, with the errors declared in the script file rather than `src/Errors.sol` so `check-errors.sh`'s accounting against the Anchor `error.rs` is not polluted with deploy-script conditions that have no Anchor counterpart. |
-| the test plan Step 8 / the runbook | the salt is `keccak256(abi.encodePacked("x402:", name, ":v2:", block.chainid))` | Correct — and **`block.chainid` is a `uint256`, so it contributes thirty-two big-endian bytes, not its decimal string.** The obvious shell spelling (`printf 'x402:%s:v2:%s' … \| cast from-utf8 \| cast keccak`) produces a different hash and would put a salt in the deployment record that the script never used, so the CREATE2 derivation an operator checks against it would fail for a reason no error message would explain. `test_theSaltFormulaMatchesTheOneTheShellScriptComputes` pins the two spellings against each other at three literals. |
+| the test plan Step 8 / the runbook | the salt is `keccak256(abi.encodePacked("assay:", name, ":v2:", block.chainid))` | Correct — and **`block.chainid` is a `uint256`, so it contributes thirty-two big-endian bytes, not its decimal string.** The obvious shell spelling (`printf 'assay:%s:v2:%s' … \| cast from-utf8 \| cast keccak`) produces a different hash and would put a salt in the deployment record that the script never used, so the CREATE2 derivation an operator checks against it would fail for a reason no error message would explain. `test_theSaltFormulaMatchesTheOneTheShellScriptComputes` pins the two spellings against each other at three literals. |
 | the extras list, item 3 | "`MAX_REDEEM_BATCH = 64` is not derived from anything measured … either measure the limit with a read-only `cast` call or state the cap as unvalidated" | **Measured, and the first measurement is a trap.** `cast block latest` reports `gasLimit 1125899906842624` on *both* chains — that is 2^50, the Arbitrum Orbit placeholder, and it is **not a limit**: Orbit does not meter per block. The real ceiling is per **transaction**, in the `ArbGasInfo` precompile at `0x…006C`: `getGasAccountingParams()` returns `(7000000, 32000000, 32000000)` — **`maxTxGasLimit = 32,000,000`**, identical on 4663 and 46630, both at `arbOSVersion 116`. So 64 is **validated**: the 5.18 M worst case is 16.2 % of the ceiling, a 6.18× margin, i.e. each of the 128 transfers may cost ~209,000 gas more before the cap binds. Recorded in `docs/chain-facts.md` §5. |
 | the extras list, item 2 | `EscrowLimitsRequireBuyer` has no producer; decide delete-vs-keep | **Five have no producer, not one** — `check-errors.sh` found `AmountExceedsUint64`, `DestinationIsVault`, `EscrowLimitsRequireBuyer`, `NotBuyer` and `SignerIsNotVerifier`. Decision **KEEP**, argued in `docs/divergences.md` § 2, with `AmountExceedsUint64` named as the weakest case and the change that should delete it. Note also that the test plan's row 23 calls `DestinationIsEscrowAta` a *fold* into `DestinationIsVault` — true, but the thing it folds into is a name nothing raises, so the condition is structurally absent rather than renamed. |
 
@@ -1695,10 +1695,10 @@ deployed, so no record is committed).
 
 `test_wrongState_theSplitFormIsFrontRunnable` is the third: it measures what a
 deploy-then-initialise script costs, with the attacker ending as `Config.admin` and therefore as
-the upgrade authority of all three contracts, and then upgrading `X402Config` to prove it.
+the upgrade authority of all three contracts, and then upgrading `AssayConfig` to prove it.
 `test_theDeployScriptUsesTheAtomicForm` is what stops a future edit reintroducing the split — a
 source-text scan over the **comment-stripped** file, because this file's own header names every
-pattern it counts (without the strip, `X402Escrow.initialize` counts 2).
+pattern it counts (without the strip, `AssayEscrow.initialize` counts 2).
 
 ---
 
@@ -1710,8 +1710,8 @@ against the 378-test tree and composed the survivors into one implementation tha
 such below; the other three are `executeSlash`'s metering block, and this section is the three
 tests that now hold them.
 
-Three tests were added (`test/X402Stake.slash.t.sol`; **381** in the repo, up from 378). Nothing
-in `src/` changed. The byte-exact copy is `X402Stake.sol.GOOD`, SHA-256
+Three tests were added (`test/AssayStake.slash.t.sol`; **381** in the repo, up from 378). Nothing
+in `src/` changed. The byte-exact copy is `AssayStake.sol.GOOD`, SHA-256
 `0b0f41eb463f9566f420e37231c57ebbbf3823e81c487653303681c059cd892a` — the same hash the review names
 as its scope — diffed before every row and restored and re-hashed after it. **Baseline before
 every row: `381 tests passed, 0 failed`.**
@@ -1721,7 +1721,7 @@ every row: `381 tests passed, 0 failed`.**
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
 | A1 | `executeSlash`: `vw.slashedInWindow = keyCarried + applied;` — the **verifier key's** rolling meter | → `vw.slashedInWindow = applied;` (the carry dropped) | `test_oneKeysDailyCapBindsAcrossThreeJudgements` | **DIES**: `[FAIL: r3 must be clamped by what r1+r2 already spent of the key's cap: 400000 != 200000]`, and `test_theVerifierKeysWindowAnchorNeverMovesBackwards` dies with it (`[FAIL: a stepped-back clock must not drain the key's meter: 400000 != 200000]`). **This is the review's one real coverage gap.** X17 above is the *provider's* half of the identical line and has been caught since the slash-exit round; this half survived because both pre-existing verifier-cap tests (`test_theVerifierDailyCapClampsAtExecution`, `test_wrongState_anExhaustedVerifierWindowRefusesTheNextJudgement`) execute exactly **two** records, and with two executions "accumulate" and "remember the last one" are indistinguishable — the second execution reads a meter the first wrote either way. The divergence first appears on the **third**, which is why the new test executes three. Under the mutant a key issuing repeated judgements of `cap/2` resets itself on every execution and never exhausts: `Config.verifierDailyCap` is the only bound on a leaked verifier key short of `revokeVerifier`, and it stops existing |
-| A2 | `executeSlash`: `s.slashWindowStartedAt = nowTs > s.slashWindowStartedAt ? nowTs : s.slashWindowStartedAt;` | → `= nowTs;` (unconditional) | `test_theProvidersSlashWindowAnchorNeverMovesBackwards` | **DIES**: `[FAIL: the anchor never moves back: 1760259200 != 1760269200]`. The anchor is read directly off `stakeOf(provider).slashWindowStartedAt`, the same shape as `X402Escrow.redeem.t.sol::test_theWindowAnchorNeverMovesBackwards` uses for the third anchor in this codebase |
+| A2 | `executeSlash`: `s.slashWindowStartedAt = nowTs > s.slashWindowStartedAt ? nowTs : s.slashWindowStartedAt;` | → `= nowTs;` (unconditional) | `test_theProvidersSlashWindowAnchorNeverMovesBackwards` | **DIES**: `[FAIL: the anchor never moves back: 1760259200 != 1760269200]`. The anchor is read directly off `stakeOf(provider).slashWindowStartedAt`, the same shape as `AssayEscrow.redeem.t.sol::test_theWindowAnchorNeverMovesBackwards` uses for the third anchor in this codebase |
 | A3 | `executeSlash`: `vw.windowStartedAt = nowTs > vw.windowStartedAt ? nowTs : vw.windowStartedAt;` | → `= nowTs;` (unconditional) | `test_theVerifierKeysWindowAnchorNeverMovesBackwards` | **DIES**: `[FAIL: a stepped-back clock must not drain the key's meter: 292592 != 200000]`. `VerifierWindow` is internal with no getter — deliberately, for `stakeOf`'s flattened-tuple reason, and the external surface is pinned — so the anchor is observed through what it does: a third execution back at the high instant, where a meter still anchored there has drained nothing and 200 000 of the 1 000 000 cap is left, while one re-anchored ten thousand seconds earlier reads a drain that never happened and hands back 92 592 base units of capacity a stepped-back clock created out of nothing |
 
 **On `block.timestamp` and whether A2/A3 are live.** On Arbitrum Orbit the timestamp is
@@ -1740,8 +1740,8 @@ than a coverage gap. Same discipline as W1a/W2a/W4, C41/C47 and S4/S5 above.
 
 | # | Line | Mutation | Observed | Why it is equivalent |
 |---|---|---|---|---|
-| A4 | `X402Stake.sol:132`, `bondedOf` | `return b > type(uint64).max ? type(uint64).max : Cast.toUint64(b);` → `return uint64(b);` | **SURVIVED** — `381 tests passed, 0 failed` | The two spellings differ only for `bonded > type(uint64).max`, i.e. more than 18.4 × 10¹² USDG bonded by one provider. `bonded` is a `uint128` sum of `uint64` deposits, so reaching it needs more than 2³² maximal deposits; no test can construct it and none should pretend to. The saturation is kept because the caller (`_redeem`'s stake floor) compares the result against a `uint64` minimum, where truncation would be a **silent under-report** and the clamp is the correct direction — the argument is in its NatSpec |
-| A5 | `X402Stake.sol:157`, `withdrawableOf` | `if (s.unbonding == 0) return 0;` deleted | **SURVIVED** — `381 tests passed, 0 failed` | With `unbonding == 0` the tail computes `capped = min(s.unbonding, free) = min(0, free) = 0` and returns the same `0` on every input, whichever side of the maturity branch the clock is on. The early return is a gas shortcut and a statement of intent, not a guard. It is **not** the maturity branch one line below it, which is held by K2/DG5 |
+| A4 | `AssayStake.sol:132`, `bondedOf` | `return b > type(uint64).max ? type(uint64).max : Cast.toUint64(b);` → `return uint64(b);` | **SURVIVED** — `381 tests passed, 0 failed` | The two spellings differ only for `bonded > type(uint64).max`, i.e. more than 18.4 × 10¹² USDG bonded by one provider. `bonded` is a `uint128` sum of `uint64` deposits, so reaching it needs more than 2³² maximal deposits; no test can construct it and none should pretend to. The saturation is kept because the caller (`_redeem`'s stake floor) compares the result against a `uint64` minimum, where truncation would be a **silent under-report** and the clamp is the correct direction — the argument is in its NatSpec |
+| A5 | `AssayStake.sol:157`, `withdrawableOf` | `if (s.unbonding == 0) return 0;` deleted | **SURVIVED** — `381 tests passed, 0 failed` | With `unbonding == 0` the tail computes `capped = min(s.unbonding, free) = min(0, free) = 0` and returns the same `0` on every input, whichever side of the maturity branch the clock is on. The early return is a gas shortcut and a statement of intent, not a guard. It is **not** the maturity branch one line below it, which is held by K2/DG5 |
 | A6 | `libraries/Sig.sol:40` | `err != NoError \|\| signer == address(0)` → `err != NoError` | **already recorded as S4** (and its mirror as S5), `17 passed; 0 failed` | `ECDSA.tryRecover(hash, v, r, s)` returns `address(0)` **iff** it returns `RecoverError.InvalidSignature`, so after guards 1–3 the two disjuncts are one predicate. The review re-derived this independently and confirms the authors' reasoning — **with the condition the authors state**: the equivalence holds only while `ECDSA.tryRecover` is the call below it. Anyone replacing it with a bare `ecrecover` owns both guards from that moment, and S6 (the pair deleted together) is the row that proves the pair is not optional |
 
 ---
@@ -1758,9 +1758,9 @@ well and the third gated on one contract only. Four tests were added (`test/Upgr
 
 | # | Degenerate | Observed |
 |---|---|---|
-| DG-A1 | `X402Escrow` gains `function sweep(address to) external { ASSET.safeTransfer(to, ASSET.balanceOf(address(this))); }` — an unguarded drain of every buyer's escrow | **DIES on the escrow's existing pin**: `[FAIL: X402Escrow's external surface changed size: 24 != 23] test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`. That pin has held since the `withdraw()` round and it is the one contract that had it |
-| DG-A2 | **`X402Config` gains `function setAdminUnchecked(address who) external { admin = who; }`** — any caller takes the admin key, and `_authorizeUpgrade` on all three contracts resolves `CONFIG.admin()` **live**, so it is also the upgrade authority of the escrow and the stake | **SURVIVED the whole suite: `382 tests passed, 0 failed`.** This is the finding. Nothing in 382 tests, no layout gate, no domain check and no bytecode gate could see a function that hands away every contract in the system. It now dies on `test_theConfigFunctionSurfaceIsPinnedByName`: `[FAIL: X402Config's external surface changed size: 17 != 16]` |
-| DG-A3 | `X402Config.slashProviderBps()` **renamed** to `providerSlashBps()` (the interface and the three call sites moved with it, so the count is unchanged at 16) | **DIES**: `[FAIL: an external function nobody pinned: providerSlashBps()]`. Run because DG-A2 only proves the count is held; a rename is the mutation a count cannot see, and the assertion is two-directional for exactly that reason. Note that a rename of a function the tests *call* is caught by the compiler first — `Error (9582): Member "slashProviderBps" not found` — so the surface pin is what covers the ones no test calls |
+| DG-A1 | `AssayEscrow` gains `function sweep(address to) external { ASSET.safeTransfer(to, ASSET.balanceOf(address(this))); }` — an unguarded drain of every buyer's escrow | **DIES on the escrow's existing pin**: `[FAIL: AssayEscrow's external surface changed size: 24 != 23] test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`. That pin has held since the `withdraw()` round and it is the one contract that had it |
+| DG-A2 | **`AssayConfig` gains `function setAdminUnchecked(address who) external { admin = who; }`** — any caller takes the admin key, and `_authorizeUpgrade` on all three contracts resolves `CONFIG.admin()` **live**, so it is also the upgrade authority of the escrow and the stake | **SURVIVED the whole suite: `382 tests passed, 0 failed`.** This is the finding. Nothing in 382 tests, no layout gate, no domain check and no bytecode gate could see a function that hands away every contract in the system. It now dies on `test_theConfigFunctionSurfaceIsPinnedByName`: `[FAIL: AssayConfig's external surface changed size: 17 != 16]` |
+| DG-A3 | `AssayConfig.slashProviderBps()` **renamed** to `providerSlashBps()` (the interface and the three call sites moved with it, so the count is unchanged at 16) | **DIES**: `[FAIL: an external function nobody pinned: providerSlashBps()]`. Run because DG-A2 only proves the count is held; a rename is the mutation a count cannot see, and the assertion is two-directional for exactly that reason. Note that a rename of a function the tests *call* is caught by the compiler first — `Error (9582): Member "slashProviderBps" not found` — so the surface pin is what covers the ones no test calls |
 
 ### The record-side gate, run end to end against 46630
 
@@ -1772,8 +1772,8 @@ always do at an upgrade, which is rewrite `implementationRuntimeKeccak`.
 | # | State | Observed |
 |---|---|---|
 | A7 | record fresh, tree unchanged | `verify-deployment.sh` passes check 0 (function surface) and fails at check 2 on the placeholder implementation address — i.e. the surface gate is green when the surface is unchanged, and does not mask the checks behind it |
-| A8 | `sweep(address)` added to `X402Escrow`, **`implementationRuntimeKeccak` rewritten to the new build** | `check-bytecode.sh`: bytecode comparison green, and `function surface drift in X402Escrow vs deployments/46630.json`, exit 1. `verify-deployment.sh` names it: `+ 01681a62 sweep(address)`. **This is the whole point** — the operator's own rewrite silences the bytecode gate and does not silence this one |
-| A9 | `setAdminUnchecked(address)` added to `X402Config`, its `implementationRuntimeKeccak` likewise rewritten | `+ 1e16a625 setAdminUnchecked(address)`, exit 1, on the contract where 382 green tests saw nothing |
+| A8 | `sweep(address)` added to `AssayEscrow`, **`implementationRuntimeKeccak` rewritten to the new build** | `check-bytecode.sh`: bytecode comparison green, and `function surface drift in AssayEscrow vs deployments/46630.json`, exit 1. `verify-deployment.sh` names it: `+ 01681a62 sweep(address)`. **This is the whole point** — the operator's own rewrite silences the bytecode gate and does not silence this one |
+| A9 | `setAdminUnchecked(address)` added to `AssayConfig`, its `implementationRuntimeKeccak` likewise rewritten | `+ 1e16a625 setAdminUnchecked(address)`, exit 1, on the contract where 382 green tests saw nothing |
 
 ### A gate that had never run
 
@@ -1785,9 +1785,9 @@ keccak)`. **That pipe form fails** — `Error: odd number of digits`, from the t
 and under `set -euo pipefail` it aborts the script before it compares anything:
 
 ```
-$ forge inspect X402Escrow deployedBytecode | cast keccak
+$ forge inspect AssayEscrow deployedBytecode | cast keccak
 Error: odd number of digits
-$ cast keccak "$(forge inspect X402Escrow deployedBytecode | tr -d '\n')"
+$ cast keccak "$(forge inspect AssayEscrow deployedBytecode | tr -d '\n')"
 0xbb482f8c3b72d8c3bfe4b0f52a185e6e918289f7f5ae19c21d5fa25a915a3edb
 ```
 
@@ -1808,26 +1808,26 @@ has since been removed; the runbook checks remain.)
 
 | # | State | Observed |
 |---|---|---|
-| A10 | `docs/gas.md` as the review found it — pinned to `61ca1b53…`, three commits behind | **FAILED**: `[FAIL: docs/gas.md does not pin the X402Escrow.sol in this tree. Re-measure the page and re-pin it, or the figures on it are about a file that no longer exists. Current sha256: e796474e6727698c7fd69ba91e71a965bee76b83ca6ef1ebec0e7b87de87df40]` — the digest in the message is the one `shasum -a 256` prints, so the fix is in the failure |
+| A10 | `docs/gas.md` as the review found it — pinned to `61ca1b53…`, three commits behind | **FAILED**: `[FAIL: docs/gas.md does not pin the AssayEscrow.sol in this tree. Re-measure the page and re-pin it, or the figures on it are about a file that no longer exists. Current sha256: e796474e6727698c7fd69ba91e71a965bee76b83ca6ef1ebec0e7b87de87df40]` — the digest in the message is the one `shasum -a 256` prints, so the fix is in the failure |
 | A11 | the page re-measured and re-pinned | **PASS** |
-| A12 | a **comment-only** edit to `X402Escrow.sol` (the natspec corrections in this same batch), against the first single-pin version of the gate | **FAILED** on the source hash — correctly, but demanding a *re-measurement* for a change that provably cannot move a gas figure. Measured: the runtime bytecode keccak was identical before and after the edit, and re-running `test_measure_*` gave figures byte-identical to the published table. **This is why the gate now carries two pins**: a gate that demands ceremony for a no-op is a gate that gets laundered with "just update the hash", which is precisely how the pin came to name a file three commits old |
-| A13 | the two-pin gate, runtime keccak removed from the page | **FAILED**: `[FAIL: docs/gas.md does not pin the X402Escrow RUNTIME BYTECODE in this tree. …]` — the red says *re-measure*, where the source-hash red says *update the pin line and stop* |
+| A12 | a **comment-only** edit to `AssayEscrow.sol` (the natspec corrections in this same batch), against the first single-pin version of the gate | **FAILED** on the source hash — correctly, but demanding a *re-measurement* for a change that provably cannot move a gas figure. Measured: the runtime bytecode keccak was identical before and after the edit, and re-running `test_measure_*` gave figures byte-identical to the published table. **This is why the gate now carries two pins**: a gate that demands ceremony for a no-op is a gate that gets laundered with "just update the hash", which is precisely how the pin came to name a file three commits old |
+| A13 | the two-pin gate, runtime keccak removed from the page | **FAILED**: `[FAIL: docs/gas.md does not pin the AssayEscrow RUNTIME BYTECODE in this tree. …]` — the red says *re-measure*, where the source-hash red says *update the pin line and stop* |
 
 ### The two natspec claims that outran the code
 
 No mutation; both are comment corrections, recorded because the log is where this repo keeps the
 things it has checked rather than assumed.
 
-- **`X402Escrow.initialize`'s `Constants` assertion** claimed to turn a future edit to `Constants`
+- **`AssayEscrow.initialize`'s `Constants` assertion** claimed to turn a future edit to `Constants`
   into "a deployment that cannot be initialised". Under UUPS `initialize` carries `initializer` and
   never runs again, so it guards the **first** implementation of a proxy and nothing after it. What
   actually holds the invariant for every implementation after the first is CI:
-  `X402Escrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest` (which
+  `AssayEscrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest` (which
   also asserts the check's presence by source text) and
   `Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`. Both exist and both are now
   named at the check.
-- **The pause line.** `X402Escrow.depositFor`'s natspec justified its pause gate with "money coming
-  *in* is on the other side of that line", a rule that predicts `X402Stake.depositStakeFor` should
+- **The pause line.** `AssayEscrow.depositFor`'s natspec justified its pause gate with "money coming
+  *in* is on the other side of that line", a rule that predicts `AssayStake.depositStakeFor` should
   be gated — and it deliberately is not. Both doors are tested
   (`Pause.t.sol::test_pauseClosesEveryDepositDoorOnTheEscrow`,
   `::test_pauseNeverClosesAProvidersOwnStakeTopUp`), so the *code* was right and one of the two
@@ -1845,19 +1845,19 @@ byte-exact. All eight die for the stated reason.
 
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
-| D1 | `_dispute`: `if (msg.sender != rec.provider) revert NotSlashedProvider();` | deleted | `X402Stake.dispute.t.sol::test_wrongSigner_onlyTheSlashedProviderMayDispute` | **DIES**: `[FAIL: next call did not revert as expected]` — anybody could freeze a provider's judgement |
+| D1 | `_dispute`: `if (msg.sender != rec.provider) revert NotSlashedProvider();` | deleted | `AssayStake.dispute.t.sol::test_wrongSigner_onlyTheSlashedProviderMayDispute` | **DIES**: `[FAIL: next call did not revert as expected]` — anybody could freeze a provider's judgement |
 | D2 | `_uphold`: `if (arb == rec.verifier) revert ArbiterIsVerifier();` | deleted | `test_wrongSigner_anArbiterThatIsTheRecordsVerifierCannotUphold` | **DIES**: `[FAIL: next call did not revert as expected]` |
 | D3 | `_dispute`: `block.timestamp >= rec.executableAt` | `>=` → `>` | `test_boundary_disputeClosesAtExecutableAt` | **DIES**: `[FAIL: next call did not revert as expected]` — the shared instant belongs to `executeSlash`, not to the dispute |
 | D4 | `expireSlash`: a `Disputed` record times out on `disputedAt + DISPUTE_TIMEOUT_SECONDS` | → `executableAt + SLASH_EXECUTION_GRACE_SECONDS` | `test_disputeThenThirtyDaysThenAnybodyExpires` | **DIES**: `[FAIL: next call did not revert as expected]` — the ordinary grace would release a dispute after ten days |
-| D5 | `setBlocked`: `msg.sender != admin && (!value \|\| msg.sender != arbiter)` | → `msg.sender != admin && msg.sender != arbiter` | `X402Config.arbiter.t.sol::test_theArbiterMayBlockButNeverUnblock` | **DIES**: `[FAIL: next call did not revert as expected]` — the arbiter could unblock |
+| D5 | `setBlocked`: `msg.sender != admin && (!value \|\| msg.sender != arbiter)` | → `msg.sender != admin && msg.sender != arbiter` | `AssayConfig.arbiter.t.sol::test_theArbiterMayBlockButNeverUnblock` | **DIES**: `[FAIL: next call did not revert as expected]` — the arbiter could unblock |
 | D6 | `assertActive`: `_blocked[a] \|\| _blocked[b] \|\| _blocked[c]` | third slot dropped | `AddressBlocklist.t.sol::test_redemptionRefusesABlockedPayerPayeeOrDelegate` | **DIES**: `[FAIL: next call did not revert as expected]` — a blocked delegate's voucher would redeem |
 | D7 | `_assertBatch`: `if (n > Constants.MAX_SLASH_BATCH) revert BatchTooLarge();` | deleted | `test_wrongArgs_anEmptyAndAnOversizeBatchAreRefused` | **DIES**: `[FAIL: Error != expected error: SlashNotPending() != BatchTooLarge()]` |
 | D8 | `_release`: accepts `Pending` **or** `Disputed` | `Disputed` dropped | `test_happyPath_theAdminCancelsADisputedRecord` | **DIES**: `[FAIL: SlashNotPending()]` — a disputed record could be released only by the 30-day timeout |
 
 ### Review round (security review of the dispute upgrade, F1, F2, I4)
 
-The reviewer's proof tests are now regressions in `X402Stake.dispute.t.sol` (`test_review_*`),
-`X402Config.arbiter.t.sol` and `AddressBlocklist.t.sol`, asserting the fixed behaviour (F1, F2,
+The reviewer's proof tests are now regressions in `AssayStake.dispute.t.sol` (`test_review_*`),
+`AssayConfig.arbiter.t.sol` and `AddressBlocklist.t.sol`, asserting the fixed behaviour (F1, F2,
 I4) or the documented scope (F3, F4, I1). D2 is now proved through an arbiter enrolled as a
 verifier AFTER its appointment, because `setArbiter` refuses a live verifier. All six die.
 
@@ -1867,12 +1867,12 @@ verifier AFTER its appointment, because `setArbiter` refuses a live verifier. Al
 | D10 | same | `>=` → `>` | `test_review_F1_theTimeoutInstantBelongsToExpireAlone` | **DIES**: `[FAIL: next call did not revert as expected]` — both doors open at the instant |
 | D11 | `_uphold`: `if (nowTs > rec.executableAt) rec.executableAt = nowTs;` | → unconditional `rec.executableAt = nowTs;` | `test_review_F2_upholdNeverPullsExecutionBeforeTheFrozenDelay` | **DIES**: `[FAIL: log != expected log]` — `SlashUpheld.executableAt` is now, not the frozen instant (the execute-before-frozen assertion below it would follow) |
 | D12 | `_dispute`: `if (rec.disputedAt != 0) revert AlreadyDisputed();` | deleted | same | **DIES**: `[FAIL: next call did not revert as expected]` — an upheld record still inside its frozen delay is disputed a second time |
-| D13 | `setArbiter`: `newArbiter == admin \|\| …` | admin term dropped | `X402Config.arbiter.t.sol::test_wrongArgs_setArbiterRefusesTheAdminAndALiveVerifier` | **DIES**: `[FAIL: next call did not revert as expected]` |
+| D13 | `setArbiter`: `newArbiter == admin \|\| …` | admin term dropped | `AssayConfig.arbiter.t.sol::test_wrongArgs_setArbiterRefusesTheAdminAndALiveVerifier` | **DIES**: `[FAIL: next call did not revert as expected]` |
 | D14 | `setArbiter`: `… \|\| (k.registered && !k.revoked)` | verifier term dropped | same | **DIES**: `[FAIL: next call did not revert as expected]` |
 
 ### Audit round (audits A, B, C and D of `a4f97ab`)
 
-The auditors' proofs are regressions in `test/X402Stake.audit.t.sol` and, for audit D, the
+The auditors' proofs are regressions in `test/AssayStake.audit.t.sol` and, for audit D, the
 adopted suite `test/invariant/audit-d/` (findings inverted to `test_regression_AD*`). Nine rows
 die; D17 is an equivalent mutant.
 
@@ -1942,7 +1942,7 @@ under a re-anchored meter). New invariant: `invariant_everyExecutedRecordWasPaid
 
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
-| G1 | `_validate`: `verifierDailyCap < 2 * penaltyAmount` → `InvalidVerifierDailyCap` | `2 *` dropped (back to one penalty) | `X402Stake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` — a cap of one penalty is admitted again |
+| G1 | `_validate`: `verifierDailyCap < 2 * penaltyAmount` → `InvalidVerifierDailyCap` | `2 *` dropped (back to one penalty) | `AssayStake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused` | **DIES**: `[FAIL: next call did not revert as expected]` — a cap of one penalty is admitted again |
 
 ### Review 2026-10-15 (R-1: two penalties per provider-day)
 
@@ -1956,6 +1956,6 @@ Not yet mutated; the expected killers:
 
 | # | Guard | Mutation | Named test | Observed |
 |---|---|---|---|---|
-| R1 | `_validate`: `minimumStake * slashCapBps / BPS < 2 * penaltyAmount` → `InvalidMinimumStake` | deleted | `X402Stake.audit.t.sol::test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused`, `X402Config.params.t.sol::test_wrongState_updateRefusesEveryBoundJustAsInitializeDoes` | not run |
+| R1 | `_validate`: `minimumStake * slashCapBps / BPS < 2 * penaltyAmount` → `InvalidMinimumStake` | deleted | `AssayStake.audit.t.sol::test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused`, `AssayConfig.params.t.sol::test_wrongState_updateRefusesEveryBoundJustAsInitializeDoes` | not run |
 | R2 | same | `2 *` dropped (back to one penalty) | `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 19` row) | not run |
-| R3 | same, the boundary | `<` → `<=` | `X402Config.params.t.sol::test_aMinimumStakeCapOfExactlyTwoPenaltiesIsAccepted`, `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 20` row) | not run |
+| R3 | same, the boundary | `<` → `<=` | `AssayConfig.params.t.sol::test_aMinimumStakeCapOfExactlyTwoPenaltiesIsAccepted`, `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 20` row) | not run |

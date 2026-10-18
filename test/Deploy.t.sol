@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Test, Vm} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {X402Config} from "../src/X402Config.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
 
@@ -13,7 +13,7 @@ import "../src/Errors.sol";
 ///
 /// A split deploy-then-initialise script leaves a live, uninitialised proxy in the mempool's view
 /// for one transaction. `initialize` cannot defend itself against that: whoever lands first
-/// becomes the admin of `X402Config`, and through it — because the two money contracts read
+/// becomes the admin of `AssayConfig`, and through it — because the two money contracts read
 /// `CONFIG.admin()` live (D-1) — the upgrade authority of all three. A half-guard in the contract
 /// (an `onlyDeployer` check, a stored expected caller) would be worse than none, because it would
 /// read as if the window were closed while a reordered pair of transactions still walked through
@@ -43,11 +43,11 @@ contract DeployTest is Test {
     /// The shipped form: initialised inside the creating transaction, and a second `initialize`
     /// from anybody — attacker or deployer — is already refused.
     function test_theAtomicFormLeavesNoWindow() public {
-        X402Config config = X402Config(
+        AssayConfig config = AssayConfig(
             address(
                 new ERC1967Proxy(
-                    address(new X402Config()),
-                    abi.encodeCall(X402Config.initialize, (_params(), ADMIN, address(0x0A1E)))
+                    address(new AssayConfig()),
+                    abi.encodeCall(AssayConfig.initialize, (_params(), ADMIN, address(0x0A1E)))
                 )
             )
         );
@@ -65,13 +65,13 @@ contract DeployTest is Test {
     ///
     /// The attacker here is not exotic: it is one address, one call, no value, no reordering
     /// trick beyond paying more gas. It ends holding `Config.admin`, which under D-1 is the
-    /// upgrade authority of `X402Escrow` and `X402Stake` as well, so the whole system is theirs
+    /// upgrade authority of `AssayEscrow` and `AssayStake` as well, so the whole system is theirs
     /// before the deployer's second transaction is mined.
     function test_wrongState_theSplitFormIsFrontRunnable() public {
-        address impl = address(new X402Config());
+        address impl = address(new AssayConfig());
 
         // Transaction 1 — the deployer creates the proxy, uninitialised.
-        X402Config config = X402Config(address(new ERC1967Proxy(impl, "")));
+        AssayConfig config = AssayConfig(address(new ERC1967Proxy(impl, "")));
         assertEq(config.admin(), address(0), "live, and nobody's");
 
         // Transaction 1.5 — the attacker's, in between.
@@ -85,7 +85,7 @@ contract DeployTest is Test {
         config.initialize(_params(), ADMIN, ADMIN);
 
         // And the consequence, spelled out: the attacker upgrades the parameter contract.
-        address next = address(new X402Config());
+        address next = address(new AssayConfig());
         vm.prank(ATTACKER);
         config.upgradeToAndCall(next, "");
         assertEq(
@@ -106,7 +106,7 @@ contract DeployTest is Test {
         // Comment lines are stripped first, exactly as
         // `test_recoveryHappensAtExactlyOneCallSiteInSrc` strips them: this file's own header
         // names every pattern below in prose, so a whole-file scan would be counting its own
-        // documentation. Measured — without the strip, `X402Escrow.initialize` counts 2.
+        // documentation. Measured — without the strip, `AssayEscrow.initialize` counts 2.
         bytes memory b = _codeOnly(bytes(src));
 
         assertEq(_count(b, "new ERC1967Proxy"), 3, "one proxy per contract, and no more");
@@ -114,10 +114,10 @@ contract DeployTest is Test {
         // qualified names rather than by `abi.encodeCall`, for two measured reasons: the header
         // names the pattern in prose (so the bare spelling counts 4, and the test would be a
         // comment-length check), and `forge fmt` wraps two of the three onto a following line at
-        // this file's 100-column width (so `abi.encodeCall(X402` counts 1).
-        assertEq(_count(b, "X402Config.initialize"), 1, "Config's initializer calldata");
-        assertEq(_count(b, "X402Stake.initialize"), 1, "Stake's initializer calldata");
-        assertEq(_count(b, "X402Escrow.initialize"), 1, "Escrow's initializer calldata");
+        // this file's 100-column width (so `abi.encodeCall(Assay` counts 1).
+        assertEq(_count(b, "AssayConfig.initialize"), 1, "Config's initializer calldata");
+        assertEq(_count(b, "AssayStake.initialize"), 1, "Stake's initializer calldata");
+        assertEq(_count(b, "AssayEscrow.initialize"), 1, "Escrow's initializer calldata");
         assertEq(_count(b, 'ERC1967Proxy{salt: _salt("'), 3, "and the salt is on the PROXY (D-7)");
 
         // The two spellings of the forbidden split, on any line.
@@ -138,12 +138,12 @@ contract DeployTest is Test {
     /// applied and step 7's last checklist item is skipped, and it is the only condition under
     /// which the live code and the recorded code differ.
     function test_theWeakVerifierCannotSeeAnUnrecordedUpgrade() public {
-        address recordedImpl = address(new X402Config());
-        X402Config config = X402Config(
+        address recordedImpl = address(new AssayConfig());
+        AssayConfig config = AssayConfig(
             address(
                 new ERC1967Proxy(
                     recordedImpl,
-                    abi.encodeCall(X402Config.initialize, (_params(), ADMIN, address(0x0A1E)))
+                    abi.encodeCall(AssayConfig.initialize, (_params(), ADMIN, address(0x0A1E)))
                 )
             )
         );
@@ -153,7 +153,7 @@ contract DeployTest is Test {
         assertTrue(_weakCheck(address(config)), "weak: green before");
 
         // An upgrade nobody wrote down.
-        address newImpl = address(new X402Config());
+        address newImpl = address(new AssayConfig());
         vm.prank(address(0x0A1E)); // the owner (D-17)
         config.upgradeToAndCall(newImpl, "");
 
@@ -212,30 +212,30 @@ contract DeployTest is Test {
     }
 
     /// **The salt formula, pinned against the shell.** `Deploy._salt` is
-    /// `keccak256(abi.encodePacked("x402:", name, ":v2:", block.chainid))`, and `block.chainid` is
+    /// `keccak256(abi.encodePacked("assay:", name, ":v2:", block.chainid))`, and `block.chainid` is
     /// a `uint256` — so it contributes thirty-two big-endian bytes, **not** the decimal string.
     /// `script/new-deployment-record.sh` has to reproduce that exactly or the `salt` field in a
     /// deployment record names an address nobody deployed, and the CREATE2 derivation an operator
     /// checks against it fails for a reason no error message would explain.
     ///
     /// The literals below came out of the shell spelling
-    /// (`cast keccak $(cast concat-hex $(cast from-utf8 "x402:Config:v2:") $(cast to-uint256 46630))`).
+    /// (`cast keccak $(cast concat-hex $(cast from-utf8 "assay:Config:v2:") $(cast to-uint256 46630))`).
     /// This test recomputes them in Solidity, which is the only way the two spellings can be shown
     /// to agree.
     function test_theSaltFormulaMatchesTheOneTheShellScriptComputes() public pure {
         assertEq(
-            keccak256(abi.encodePacked("x402:", "Config", ":v2:", uint256(46630))),
-            0xdd28db2fe87459f4b5e57a59948960ae1c0b67a86c815311aa5482da72bb2531,
+            keccak256(abi.encodePacked("assay:", "Config", ":v2:", uint256(46630))),
+            0x85b4459527d217abdbabc3705e5834bd72cf820f28fa6417987bb6c13348d2b0,
             "Config @ 46630"
         );
         assertEq(
-            keccak256(abi.encodePacked("x402:", "Stake", ":v2:", uint256(46630))),
-            0xd6642378f60892659ba6d8f33e6d55ca6621e2fdb3d6f6bde1b48ae5a6d50e32,
+            keccak256(abi.encodePacked("assay:", "Stake", ":v2:", uint256(46630))),
+            0xb5659e6413515724f72d45dd4b489029f03663aab6fdaf2cd644bf02aa041b8f,
             "Stake @ 46630"
         );
         assertEq(
-            keccak256(abi.encodePacked("x402:", "Escrow", ":v2:", uint256(46630))),
-            0xc091d2b479e3b306fdf03a61f83fd34a914799011dad1b3ebcfba613125c43ae,
+            keccak256(abi.encodePacked("assay:", "Escrow", ":v2:", uint256(46630))),
+            0xbacadea1c126f75d53c9f3a68dbcd3ef18d89508d0a503e5da8b088d1097386f,
             "Escrow @ 46630"
         );
 
@@ -243,8 +243,8 @@ contract DeployTest is Test {
         // backend pointed at the wrong RPC gets "no code at address" rather than a live contract
         // that answers plausibly.
         assertTrue(
-            keccak256(abi.encodePacked("x402:", "Escrow", ":v2:", uint256(4663)))
-                != keccak256(abi.encodePacked("x402:", "Escrow", ":v2:", uint256(46630))),
+            keccak256(abi.encodePacked("assay:", "Escrow", ":v2:", uint256(4663)))
+                != keccak256(abi.encodePacked("assay:", "Escrow", ":v2:", uint256(46630))),
             "mainnet and testnet must land on different addresses"
         );
     }

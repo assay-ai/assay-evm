@@ -6,8 +6,8 @@ import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {Voucher} from "../src/Types.sol";
 import "../src/Errors.sol";
 
-/// `X402Config.blocked`, at every door it closes and the two it deliberately leaves open
-/// (`revokeDelegate` and `disputeSlash`, the latter in `X402Stake.dispute.t.sol`).
+/// `AssayConfig.blocked`, at every door it closes and the two it deliberately leaves open
+/// (`revokeDelegate` and `disputeSlash`, the latter in `AssayStake.dispute.t.sol`).
 ///
 /// Not `test/fork/Blocklist.fork.t.sol`, which is about the USDG token's OWN blocklist.
 contract AddressBlocklistTest is Fixture {

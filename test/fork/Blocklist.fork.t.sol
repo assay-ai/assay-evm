@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Fixture} from "../helpers/Fixture.sol";
 import {BlockingUSDG} from "../helpers/BlockingUSDG.sol";
 import {VoucherSigner} from "../helpers/VoucherSigner.sol";
-import {X402Escrow} from "../../src/X402Escrow.sol";
+import {AssayEscrow} from "../../src/AssayEscrow.sol";
 import {Voucher} from "../../src/Types.sol";
 
 /// **What a payout transfer that reverts does to the escrow's accounting.**
@@ -23,7 +23,7 @@ import {Voucher} from "../../src/Types.sol";
 /// for a batch, one bad recipient takes the other 63 with it and debits none of their payers.
 ///
 /// That property is asserted **nowhere else**. The suite's one blocklist test
-/// (`X402Escrow.redeem.t.sol::test_aBlocklistedTreasuryOwedNothingDoesNotHaltThePayout`) is about
+/// (`AssayEscrow.redeem.t.sol::test_aBlocklistedTreasuryOwedNothingDoesNotHaltThePayout`) is about
 /// a treasury owed *nothing* not halting a payout — the opposite case — and it is one of the five
 /// that `mockTokenOnly` skips on the fork.
 ///
@@ -35,7 +35,7 @@ import {Voucher} from "../../src/Types.sol";
 /// already reaches a hostile asset (`_deployEscrow(address asset_)`).
 contract BlocklistAccountingForkTest is Fixture {
     BlockingUSDG internal token;
-    X402Escrow internal blocking;
+    AssayEscrow internal blocking;
     bytes32 internal ds;
 
     /// A provider that is NOT blocked, bonded on the shared stake contract.
@@ -83,12 +83,12 @@ contract BlocklistAccountingForkTest is Fixture {
 
     // --- helpers, deliberately local -------------------------------------------------------
     //
-    // Copied from the shapes in `X402Escrow.redeem.t.sol` and `X402Escrow.batch.t.sol` rather
+    // Copied from the shapes in `AssayEscrow.redeem.t.sol` and `AssayEscrow.batch.t.sol` rather
     // than exported from them: a helper shared between an escrow-behaviour suite and an
     // accounting-consistency suite drifts toward whichever it was last edited for.
 
     function _snapshot(address who) internal view returns (uint64 bal, uint64 seq, uint64 nonce) {
-        X402Escrow.Escrow memory e = blocking.escrowOf(who);
+        AssayEscrow.Escrow memory e = blocking.escrowOf(who);
         return (uint64(e.balance), e.seqHigh, e.authNonce);
     }
 

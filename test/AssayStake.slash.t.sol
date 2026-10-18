@@ -5,12 +5,12 @@ import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ReentrantStakeUSDG, StakeObserverUSDG} from "./helpers/MockUSDG.sol";
-import {X402Stake} from "../src/X402Stake.sol";
+import {AssayStake} from "../src/AssayStake.sol";
 import {SlashAttestation, ResponseClass, SlashStatus, ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
-contract X402StakeSlashTest is Fixture {
+contract AssayStakeSlashTest is Fixture {
     uint256 internal verifierKeyPk = 0x7E5717;
     address internal verifierAddr;
     address internal beneficiary = address(0xA6E7);
@@ -18,7 +18,7 @@ contract X402StakeSlashTest is Fixture {
 
     function setUp() public virtual override {
         super.setUp();
-        // This suite's own stake contract, for the reason `X402StakeTest.setUp` gives: the
+        // This suite's own stake contract, for the reason `AssayStakeTest.setUp` gives: the
         // fixture's is pre-funded to MINIMUM_STAKE for the escrow tests, and `capAllowance` is a
         // fraction of the provider's WHOLE stake, so that 100 USDG would move every figure here.
         stake = _deployStake(address(usdg));
@@ -130,7 +130,7 @@ contract X402StakeSlashTest is Fixture {
         _expect(a, verifierKeyPk, VerifierRevoked.selector);
     }
 
-    /// An attestation signed against X402Escrow's domain is not signed for this contract. Two
+    /// An attestation signed against AssayEscrow's domain is not signed for this contract. Two
     /// independent guards keep the two doors apart — the typehash and the `verifyingContract` —
     /// and this is the one that pins the domain half.
     function test_wrongSigner_anAttestationSignedForTheEscrowIsRefusedHere() public {
@@ -402,7 +402,7 @@ contract X402StakeSlashTest is Fixture {
 
     // ---- phase two ---------------------------------------------------------------------------
 
-    function _signFor(X402Stake st, SlashAttestation memory a, uint256 pk)
+    function _signFor(AssayStake st, SlashAttestation memory a, uint256 pk)
         internal
         view
         returns (bytes memory)
@@ -821,7 +821,7 @@ contract X402StakeSlashTest is Fixture {
     /// `executeSlash` writes both meters' anchors with `nowTs > anchor ? nowTs : anchor`, and the
     /// comment above them says "a clock that stepped back must not hand capacity to whoever
     /// noticed". This is the provider half. Same shape as
-    /// `X402Escrow.redeem.t.sol::test_theWindowAnchorNeverMovesBackwards`, which holds the third
+    /// `AssayEscrow.redeem.t.sol::test_theWindowAnchorNeverMovesBackwards`, which holds the third
     /// anchor of the three in this codebase; a review found that these two were the
     /// pair nothing held, and that replacing both with an unconditional `= nowTs` was invisible
     /// to the whole suite.
@@ -918,7 +918,7 @@ contract X402StakeSlashTest is Fixture {
     /// the FIRST payout and records what it sees.
     function test_everyEffectIsWrittenBeforeTheSlashTransfers() public {
         StakeObserverUSDG asset = new StakeObserverUSDG();
-        X402Stake st = _deployStake(address(asset));
+        AssayStake st = _deployStake(address(asset));
 
         asset.mint(address(this), BOND);
         asset.approve(address(st), BOND);
@@ -944,7 +944,7 @@ contract X402StakeSlashTest is Fixture {
     /// brace, and it is the row that would fire if a future edit reordered them.
     function test_wrongState_aReentrantAssetCannotRecurseIntoExecuteSlash() public {
         ReentrantStakeUSDG asset = new ReentrantStakeUSDG();
-        X402Stake st = _deployStake(address(asset));
+        AssayStake st = _deployStake(address(asset));
 
         asset.mint(address(this), BOND);
         asset.approve(address(st), BOND);
@@ -955,7 +955,7 @@ contract X402StakeSlashTest is Fixture {
         vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
 
         asset.arm(
-            address(st), abi.encodeCall(X402Stake.executeSlash, (bytes32("x1"))), 0, false, true
+            address(st), abi.encodeCall(AssayStake.executeSlash, (bytes32("x1"))), 0, false, true
         );
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         st.executeSlash(bytes32("x1"));

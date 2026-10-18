@@ -49,7 +49,7 @@ contract RequestWithdrawAbiProbe {
 }
 
 /// `ParamSet` is the odd one out: it is not an EIP-712 struct and no signature binds it. It has a
-/// probe because it is `X402Config._params`, a **storage** struct behind a UUPS
+/// probe because it is `AssayConfig._params`, a **storage** struct behind a UUPS
 /// proxy, so its declaration decides a storage layout that a later implementation has to agree
 /// with byte for byte.
 ///

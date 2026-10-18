@@ -3,10 +3,10 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
-import {X402Stake} from "../src/X402Stake.sol";
-import {X402Config as X402Config_} from "../src/X402Config.sol";
-import {X402EscrowV2} from "./helpers/X402EscrowV2.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayStake} from "../src/AssayStake.sol";
+import {AssayConfig as AssayConfig_} from "../src/AssayConfig.sol";
+import {AssayEscrowV2} from "./helpers/AssayEscrowV2.sol";
 import {Voucher, SlashAttestation, ResponseClass} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -22,16 +22,16 @@ import "../src/Errors.sol";
 ///
 /// | Function | Pause closes it? |
 /// |---|---|
-/// | `X402Escrow.deposit` / `depositFor` | **yes** |
-/// | `X402Escrow.redeemVoucher` / `redeemVoucherBatch` | **yes** |
-/// | `X402Escrow.withdraw` / `requestWithdraw` / `requestWithdrawBySig` | **yes** (since the dispute upgrade) |
-/// | `X402Escrow.setLimits` / `setLimitsBySig` | **yes** (since the dispute upgrade) |
-/// | `X402Escrow.authorizeDelegate` / `authorizeDelegateBySig` | **yes** (since the dispute upgrade) |
-/// | `X402Stake.depositStake` / `depositStakeFor` | **yes** (since the dispute upgrade) |
-/// | `X402Stake.requestUnstake` / `withdrawStake` | **yes** (since the dispute upgrade) |
-/// | `X402Stake.proposeSlash` / `executeSlash` | **yes** |
-/// | `X402Escrow.revokeDelegate` / `revokeDelegateBySig` | **never** |
-/// | `X402Stake.disputeSlash` / `upholdSlash` / `cancelSlash` / `expireSlash` | **never** |
+/// | `AssayEscrow.deposit` / `depositFor` | **yes** |
+/// | `AssayEscrow.redeemVoucher` / `redeemVoucherBatch` | **yes** |
+/// | `AssayEscrow.withdraw` / `requestWithdraw` / `requestWithdrawBySig` | **yes** (since the dispute upgrade) |
+/// | `AssayEscrow.setLimits` / `setLimitsBySig` | **yes** (since the dispute upgrade) |
+/// | `AssayEscrow.authorizeDelegate` / `authorizeDelegateBySig` | **yes** (since the dispute upgrade) |
+/// | `AssayStake.depositStake` / `depositStakeFor` | **yes** (since the dispute upgrade) |
+/// | `AssayStake.requestUnstake` / `withdrawStake` | **yes** (since the dispute upgrade) |
+/// | `AssayStake.proposeSlash` / `executeSlash` | **yes** |
+/// | `AssayEscrow.revokeDelegate` / `revokeDelegateBySig` | **never** |
+/// | `AssayStake.disputeSlash` / `upholdSlash` / `cancelSlash` / `expireSlash` | **never** |
 /// | the config roles' own calls, and `upgradeToAndCall` on any of the three proxies | **never** |
 ///
 /// **`upgradeToAndCall` is never paused.** Pause is the first half of an emergency and the
@@ -281,8 +281,8 @@ contract PauseTest is Fixture {
     function test_pauseNeverClosesTheUpgradeDoorOnAnyOfTheThree() public {
         _pause();
 
-        address escrowV2 = address(new X402EscrowV2());
-        address stakeV2 = address(new X402Stake());
+        address escrowV2 = address(new AssayEscrowV2());
+        address stakeV2 = address(new AssayStake());
 
         vm.prank(owner);
         escrow.upgradeToAndCall(escrowV2, "");
@@ -291,12 +291,12 @@ contract PauseTest is Fixture {
 
         // Config last: upgrading it is what an operator would reach for to change `paused`
         // itself, so a pause that closed this door would be unrecoverable without a redeploy.
-        address configV2 = address(new X402Config_());
+        address configV2 = address(new AssayConfig_());
         vm.prank(owner);
         config.upgradeToAndCall(configV2, "");
 
         assertTrue(config.paused(), "still paused, and all three moved");
-        assertEq(X402EscrowV2(address(escrow)).version2(), "v2");
+        assertEq(AssayEscrowV2(address(escrow)).version2(), "v2");
     }
 
     /// And `setPaused` itself is not self-locking: the admin can lift it. Trivially true, and

@@ -219,11 +219,11 @@ proxy**:
 
 ```sh
 # the implementation
-forge verify-contract <implementation> src/X402Escrow.sol:X402Escrow \
+forge verify-contract <implementation> src/AssayEscrow.sol:AssayEscrow \
   --chain-id 46630 --verifier blockscout \
   --verifier-url https://explorer.testnet.chain.robinhood.com/api/ \
   --compiler-version 0.8.24 \
-  --show-standard-json-input > verification/X402Escrow.impl.standard.json
+  --show-standard-json-input > verification/AssayEscrow.impl.standard.json
 
 # the proxy — its constructor args are (implementation, initializer calldata)
 forge verify-contract <proxy> \
@@ -232,7 +232,7 @@ forge verify-contract <proxy> \
   --verifier-url https://explorer.testnet.chain.robinhood.com/api/ \
   --compiler-version 0.8.24 \
   --constructor-args $(cast abi-encode "constructor(address,bytes)" <implementation> <initializerArgs>) \
-  --show-standard-json-input > verification/X402Escrow.proxy.standard.json
+  --show-standard-json-input > verification/AssayEscrow.proxy.standard.json
 ```
 
 Verification goes through **standard-JSON input**, which works whatever the metadata setting. Commit both emitted standard-JSONs beside the deployment record. Verifying the proxy is
@@ -259,7 +259,7 @@ backend is configured with, what a voucher names as `verifyingContract`, and wha
 `implementation` + `implementationRuntimeKeccak` are the **current logic**, and an upgrade rewrites
 exactly those two lines and nothing else — which is what makes the diff of this file a readable
 history of every upgrade the contract has had. `salt` is the proxy's CREATE2 salt (D-7), and it is
-`keccak256(abi.encodePacked("x402:", name, ":v2:", chainid))` where `chainid` is **32 big-endian
+`keccak256(abi.encodePacked("assay:", name, ":v2:", chainid))` where `chainid` is **32 big-endian
 bytes, not its decimal string** — `test_theSaltFormulaMatchesTheOneTheShellScriptComputes` pins the
 Solidity and the shell spellings against each other. `initializerArgs` is the ABI-encoded
 `initialize` call passed to the proxy constructor, which is what a verifier needs to reproduce the
@@ -275,7 +275,7 @@ own broadcast file:
 
 1. Each **implementation** is a plain `CREATE` from the signing EOA — `CREATE(from, nonce)`.
    `cast compute-address 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 --nonce 0` returns
-   `0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519`, which is exactly the X402Config implementation the
+   `0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519`, which is exactly the AssayConfig implementation the
    dry run produced.
 2. Each **proxy** is `CREATE2`, but **not from the EOA**. forge routes a salted creation to the
    deterministic deployer `0x4e59b44847b379578588920ca78fbf26c0b4956c` — transactionType `CREATE2`,
@@ -291,11 +291,11 @@ from where you would look for it:
 
 ```
 sender 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 nonce 0
-    X402Config impl   0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    X402Config proxy  0x8c8A794e48B23Cfd23a7eE6365f89E4EE0571e6f
+    AssayConfig impl   0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    AssayConfig proxy  0x8c8A794e48B23Cfd23a7eE6365f89E4EE0571e6f
 sender 0x1111111111111111111111111111111111111111 nonce 0
-    X402Config impl   0x8F7a45eBDe059392E46A46DCc14AB24681A961Ea
-    X402Config proxy  0x45a60b9e5647d2b976a28EEB702563e10e650da7
+    AssayConfig impl   0x8F7a45eBDe059392E46A46DCc14AB24681A961Ea
+    AssayConfig proxy  0x45a60b9e5647d2b976a28EEB702563e10e650da7
 ```
 
 **And the NONCE is in it too**, which is the sharper half: a dry run signs from nonce 0 and a real
@@ -332,7 +332,7 @@ backend's configuration is per-deployment, and never derivable from the chain id
    backend fails closed at its first vault-control check otherwise.
 6. **For a testnet run only**, `setCollectHold(600)` (admin) shortens the collect hold to 10
    minutes and `setSlashDelay(600)` the slash delay; production keeps the defaults (§6.5).
-7. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `X402Config`
+7. **Monitor:** page on every `ConfigUpdated` and `VerifierRegistered` from `AssayConfig`
    (`docs/risk-register.md` §4a — the admin's indirect reach over stake and fees).
 
 ### The slash lifecycle and who acts in it (D-19)
@@ -382,7 +382,7 @@ cast send <configProxy> "setSlashDelay(uint64)" <seconds> --rpc-url <rpc> --ledg
 
 - [ ] The slash delay applies to NEW proposals only. **Production keeps it at 72 h or more**; the
       10-minute minimum is for testing, and a short delay is a short dispute window.
-- [ ] Roles stay separate, enforced in one place (`X402Config._assertRolesDistinct`, run by
+- [ ] Roles stay separate, enforced in one place (`AssayConfig._assertRolesDistinct`, run by
       `setAdmin`, `setArbiter`, `registerVerifier` and `updateConfig`): the admin is not a live
       verifier (`InvalidAdmin`); the arbiter is not the admin, the redeemer or a live verifier
       (`InvalidArbiter`); `setArbiter` refuses `0x0`.
@@ -554,7 +554,7 @@ half is the last paragraph.
       Storage layout and the EIP-712 domain are two of the three variables that decide whether an
       upgrade is safe; **the set of exported functions is the third**, and until 2026-09-09 it had
       no gate at all. A new implementation could add a `sweep(address)` — or, measured, a
-      `setAdminUnchecked(address)` on `X402Config` that hands the admin key and with it the
+      `setAdminUnchecked(address)` on `AssayConfig` that hands the admin key and with it the
       upgrade authority of all three contracts to any caller — and every gate stayed green while
       **all 382 tests passed**, because the layout is unchanged, the domain is unchanged, and
       `implementationRuntimeKeccak` is rewritten by *you* as part of this very upgrade.
@@ -564,7 +564,7 @@ half is the last paragraph.
       signatures by name:
 
       ```
-      X402Escrow function surface differs from deployments/46630.json (0xfb35… != 0xdab6…)
+      AssayEscrow function surface differs from deployments/46630.json (0xfb35… != 0xdab6…)
         ADDED by this build, not in the record:
           + 01681a62 sweep(address)
         REMOVED by this build, present in the record:
@@ -575,7 +575,7 @@ half is the last paragraph.
       what was added and why it is safe to expose. `script/abi-surface.sh` states what the
       comparison can and cannot see.
 - [ ] **The new implementation's EIP-712 constructor is still `EIP712("Assay Settlement", "2")`.**
-      `grep -rn 'EIP712("' src/` must print exactly two lines, `X402Escrow.sol` and `X402Stake.sol`,
+      `grep -rn 'EIP712("' src/` must print exactly two lines, `AssayEscrow.sol` and `AssayStake.sol`,
       both with those two strings. See the warning below.
 
 ### The transaction
@@ -729,7 +729,7 @@ themselves (risk register §9, the mainnet blocker; the grant is bounded by a UN
 address, not by a rate limit).
 
 **Target ≤ 0.05 ETH.** A leaked relayer key costs exactly the float and nothing else: the key
-appears in no authorisation path in `X402Escrow`, every `*BySig` carries `escrow.authNonce` and a
+appears in no authorisation path in `AssayEscrow`, every `*BySig` carries `escrow.authNonce` and a
 deadline inside the signed struct, and `sendValue` has no calldata parameter — so it can never
 move USDG. That bound is the reason the float is small and the reason it is topped up rather than
 made large.

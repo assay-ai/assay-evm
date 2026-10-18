@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
@@ -33,8 +33,8 @@ contract InertAsset {
 /// The relayer key can never move USDG. `setLimits` gets a relayed variant because a buyer
 /// *lowering* a ceiling must not be blocked by not holding gas; `requestWithdraw` gets one
 /// because starting a clock moves no money. `withdraw` does not get one, ever (see
-/// `X402Escrow.withdraw.t.sol`).
-contract X402EscrowBySigTest is Fixture {
+/// `AssayEscrow.withdraw.t.sol`).
+contract AssayEscrowBySigTest is Fixture {
     address internal relayer = address(0x2E14);
 
     event WithdrawRequested(address indexed buyer, uint64 amount, uint64 availableAt);
@@ -468,7 +468,7 @@ contract X402EscrowBySigTest is Fixture {
     /// do not, and the way that silently stops being true is somebody adding a read of the asset.
     function test_theFourDoorsMakeNoExternalCallAtAll() public {
         InertAsset inert = new InertAsset();
-        X402Escrow e2 = _deployEscrow(address(inert));
+        AssayEscrow e2 = _deployEscrow(address(inert));
 
         vm.prank(buyer);
         e2.setLimits(1_000_000, 5_000_000);
@@ -517,7 +517,7 @@ contract X402EscrowBySigTest is Fixture {
         assertEq(derived, 2_220);
         assertGt(Constants.WITHDRAW_DELAY_SECONDS, derived, "3,600 > 2,220");
 
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Escrow.sol"));
+        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
         assertEq(
             _count(
                 src,

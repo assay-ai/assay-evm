@@ -9,7 +9,7 @@ import {Ownable2StepUpgradeable} from
 
 import {ParamSet} from "./Types.sol";
 import {Constants} from "./Constants.sol";
-import {IX402Config} from "./interfaces/IX402Config.sol";
+import {IAssayConfig} from "./interfaces/IAssayConfig.sol";
 import "./Errors.sol";
 
 /// Parameters, the three roles (owner, admin, arbiter), the pause flag, the verifier registry,
@@ -19,12 +19,12 @@ import "./Errors.sol";
 /// behind, and where it went:
 ///
 /// - `stake_mint` — on EVM the asset is an immutable of the contract that holds
-///   it, so the choice is made once at deployment of X402Stake / X402Escrow rather than stored
+///   it, so the choice is made once at deployment of AssayStake / AssayEscrow rather than stored
 ///   here. `initialize_config.rs` refuses Token-2022 for a reason that has an EVM analogue
 ///   (fee-on-transfer and hook tokens break `vault >= total_staked`); that refusal becomes a
 ///   decimals check and a measured-balance transfer in those contracts, not a field here.
 /// - `total_staked` / `total_deposited` / `total_withdrawn` / `total_slashed`
-///   — custody totals belong to the contract that holds the custody, which is X402Stake.
+///   — custody totals belong to the contract that holds the custody, which is AssayStake.
 /// - `bump` / `vault_bump` / `_reserved` — PDA artefacts. `_reserved`'s job
 ///   (room for a later field without a redeploy) is done here by `__gap` plus UUPS.
 ///
@@ -42,19 +42,19 @@ import "./Errors.sol";
 ///   `address(0)`. **It holds no door that moves a token**: no sweep, no rescue. Its one residual
 ///   power over user money is the upgrade itself.
 /// - **`admin`** — operational and used often: `updateConfig`, `setPaused`, the verifier registry,
-///   and `cancelSlash` on X402Stake. Every value it sets is bounded by `_validate`.
+///   and `cancelSlash` on AssayStake. Every value it sets is bounded by `_validate`.
 ///   It can neither upgrade anything nor appoint its successor. It appoints the arbiter
 ///   (`setArbiter`), sets the slash delay (`setSlashDelay`) and the escrow's collect hold
 ///   (`setCollectHold`), and blocks or unblocks addresses.
 /// - **`arbiter`** — a person's wallet (or a Safe), never the backend. It rules on a disputed
-///   slash (`X402Stake.upholdSlash`), cancels a pending or disputed one (`cancelSlash`, beside
+///   slash (`AssayStake.upholdSlash`), cancels a pending or disputed one (`cancelSlash`, beside
 ///   the admin) and may BLOCK an address — never unblock it. It reads `address(0)` only before
 ///   the first appointment; after that it is replaced, never unset. The admin, the arbiter, the
 ///   redeemer and the verifiers are distinct keys ([`_assertRolesDistinct`]).
 ///
 /// The owner's storage is ERC-7201 namespaced (`openzeppelin.storage.Ownable` and
 /// `openzeppelin.storage.Ownable2Step`), so adopting it appends no sequential slot.
-contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, IX402Config {
+contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, IAssayConfig {
     /// May change parameters, pause, enrol and revoke verifier keys, and cancel a
     /// pending judgement. **It is not the upgrade authority**: that is `owner()`, which is also
     /// what appoints this key (D-17).
@@ -75,7 +75,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     ///
     /// **Two Anchor fields are absent, both deliberately.**
     ///
-    /// `stake_mint` — on EVM the settlement asset is `X402Escrow.ASSET` / `X402Stake.ASSET`,
+    /// `stake_mint` — on EVM the settlement asset is `AssayEscrow.ASSET` / `AssayStake.ASSET`,
     /// an immutable fixed at each deployment rather than a parameter of `Config`. There is no
     /// mint for `Config` to announce, and adding one would create a second place the asset is
     /// named. Read the omission as the split, not as an oversight.
@@ -149,8 +149,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// Immediate, with no timelock (D-1); the authority is the owner (D-17).
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    /// `Ownable.owner()`, re-declared only because `IX402Config` names it as well.
-    function owner() public view override(OwnableUpgradeable, IX402Config) returns (address) {
+    /// `Ownable.owner()`, re-declared only because `IAssayConfig` names it as well.
+    function owner() public view override(OwnableUpgradeable, IAssayConfig) returns (address) {
         return super.owner();
     }
 
@@ -217,7 +217,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// against the holder of a hardware wallet."
     ///
     /// `unbondingPeriodSeconds` re-dates every unbonding already in flight, in both directions —
-    /// X402Stake's maturity check will read it live, as `ProviderStake::unbonding_matured` does.
+    /// AssayStake's maturity check will read it live, as `ProviderStake::unbonding_matured` does.
     /// Decide which you are doing before you sign.
     ///
     /// It never moves the admin: appointing the admin is the owner's `setAdmin` (D-17).
@@ -296,8 +296,8 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     ///   is that place. Storing it would cost a slot per key to serve a query `eth_getLogs`
     ///   already answers.
     /// - `slashed_in_window` / `slash_window_started_at` — **the per-key rolling daily cap, which
-    ///   lives in X402Stake** (D-3). It is a consequence of slashing, and putting it here
-    ///   would hand X402Stake write authority over this contract, which is the one property the
+    ///   lives in AssayStake** (D-3). It is a consequence of slashing, and putting it here
+    ///   would hand AssayStake write authority over this contract, which is the one property the
     ///   three-contract split exists to deny. Its absence is the design, not an omission.
     ///
     /// The two booleans are `state.rs`'s `status` plus the account existence Anchor gets for
@@ -384,7 +384,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
         // Not a port: on Solana a `Pubkey::default()` verifier would still get a PDA and would
         // simply be a key nobody can sign for. Here `address(0)` is the value every uninitialised
         // slot and every failed `ecrecover` produces, so enrolling it would make a recovery
-        // failure look like a registered verifier at the `X402Stake` call site.
+        // failure look like a registered verifier at the `AssayStake` call site.
         if (verifier == address(0)) revert ZeroAddress();
         if (verifiers[verifier].registered) revert VerifierAlreadyRegistered();
 
@@ -415,7 +415,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// for a suspected verifier key compromise.
     ///
     /// It is deliberately NOT timelocked and deliberately irreversible. **This is the single
-    /// control the two-phase slash exists to make usable**: `X402Stake.executeSlash` re-checks
+    /// control the two-phase slash exists to make usable**: `AssayStake.executeSlash` re-checks
     /// [`assertCanSign`] on the record's verifier at execution time, so revoking a key voids every
     /// judgement it signed that is still inside its slash delay — including ones already
     /// proposed. A revocation that could be undone, or one that had to wait out a delay of its
@@ -508,7 +508,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
     /// beneficiary or the treasury, not the admin or the arbiter, and **not the verifier**.
     /// Blocking a verifier address does not stop its signatures: a forging verifier is stopped
     /// only by `revokeVerifier`, which is admin-only. The arbiter's own tool against a forged
-    /// slash is `X402Stake.cancelSlash`.
+    /// slash is `AssayStake.cancelSlash`.
     mapping(address => bool) internal _blocked;
 
     event ArbiterSet(address indexed previousArbiter, address indexed newArbiter);
@@ -585,7 +585,7 @@ contract X402Config is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, 
 
     event CollectHoldSet(uint64 previous, uint64 next);
 
-    /// How long `X402Escrow` keeps a NEW redemption in `held` before the redeemer may collect it
+    /// How long `AssayEscrow` keeps a NEW redemption in `held` before the redeemer may collect it
     /// to the provider, and so how long a buyer dispute can still be refunded for certain. A
     /// record already held keeps the `collectableAt` frozen into it.
     ///

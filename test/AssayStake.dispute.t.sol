@@ -3,20 +3,20 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Stake} from "../src/X402Stake.sol";
+import {AssayStake} from "../src/AssayStake.sol";
 import {
     SlashAttestation, ResponseClass, SlashStatus, CancelReason, ParamSet
 } from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
-/// The dispute step and the arbiter role on X402Stake.
+/// The dispute step and the arbiter role on AssayStake.
 ///
 /// `Pending → Disputed` is the provider's (`disputeSlash`, inside the delay, never paused).
 /// `Disputed → Pending` is the arbiter's (`upholdSlash`, executable from now, the ordinary
 /// `executeSlash` re-checks still run). `Pending | Disputed → Cancelled` is the admin's or the
 /// arbiter's (`cancelSlash`) or anybody's once a condition holds (`expireSlash`).
-contract X402StakeDisputeTest is Fixture {
+contract AssayStakeDisputeTest is Fixture {
     uint256 internal verifierKeyPk = 0x7E5717;
     address internal verifierAddr;
     address internal beneficiary = address(0xA6E7);
@@ -97,7 +97,7 @@ contract X402StakeDisputeTest is Fixture {
         emit SlashDisputed(ID, provider, uint64(block.timestamp), executableAt);
         _dispute(ID);
 
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(ID);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(ID);
         assertEq(uint256(r.status), uint256(SlashStatus.Disputed));
         assertEq(r.disputedAt, uint64(block.timestamp));
         assertEq(r.executableAt, executableAt, "the dispute does not move executableAt");
@@ -208,7 +208,7 @@ contract X402StakeDisputeTest is Fixture {
         vm.prank(arbiter);
         stake.upholdSlash(ID);
 
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(ID);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(ID);
         assertEq(uint256(r.status), uint256(SlashStatus.Pending));
         assertEq(r.executableAt, uint64(block.timestamp), "executable from now");
         assertEq(r.reserved, 1_000_000, "the arbiter changes no amount");

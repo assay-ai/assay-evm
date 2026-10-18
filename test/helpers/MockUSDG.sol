@@ -73,7 +73,7 @@ contract MockUSDG {
 
 /// A second adversary, for exactly one guard: `nonReentrant` on the funding paths.
 ///
-/// It is a token whose `transferFrom` calls back into `X402Escrow.depositFor` before returning,
+/// It is a token whose `transferFrom` calls back into `AssayEscrow.depositFor` before returning,
 /// which is the shape a real ERC-777-style hook or a malicious upgradeable asset would have.
 /// Six decimals so `initialize` accepts it; everything else is the minimum an escrow touches.
 ///
@@ -257,7 +257,7 @@ contract RedeemReentrantUSDG {
     }
 }
 
-/// The scalar getters `X402Stake` exposes, for the two observers below. Only scalars, so this
+/// The scalar getters `AssayStake` exposes, for the two observers below. Only scalars, so this
 /// file needs no mirror of `ProviderStake` or `SlashRecord` that could silently drift from the
 /// structs it would be copying.
 interface IStakeObserved {
@@ -275,7 +275,7 @@ interface IStakeObserved {
 /// be asserted. That is what makes it a proof of the effects-before-interactions ORDERING rather
 /// than a proof of `nonReentrant`, which is a different guard doing a different job.
 ///
-/// It fires on the FIRST `transfer` only. `X402Stake.executeSlash` makes two, and the first is
+/// It fires on the FIRST `transfer` only. `AssayStake.executeSlash` makes two, and the first is
 /// the earliest moment an outsider can look.
 contract StakeObserverUSDG {
     uint8 public constant decimals = 6;
@@ -333,7 +333,7 @@ contract StakeObserverUSDG {
     }
 }
 
-/// The adversary for `nonReentrant` on `X402Stake`'s two token-moving doors: an asset that calls
+/// The adversary for `nonReentrant` on `AssayStake`'s two token-moving doors: an asset that calls
 /// back into the contract from inside `transferFrom` (the money-IN hook) or from inside
 /// `transfer` (the money-OUT hook), carrying raw calldata the test chooses.
 ///

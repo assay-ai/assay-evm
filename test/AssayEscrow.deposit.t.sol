@@ -9,9 +9,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {MockUSDG, ReentrantUSDG, FalseReturningUSDG, NoReturnUSDG} from "./helpers/MockUSDG.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
-import {IX402Config} from "../src/interfaces/IX402Config.sol";
-import {IX402StakeView} from "../src/interfaces/IX402StakeView.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {IAssayConfig} from "../src/interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "../src/interfaces/IAssayStakeView.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
 
@@ -23,7 +23,7 @@ contract EighteenDecimals {
     }
 }
 
-/// `X402Escrow`'s storage and its two funding doors.
+/// `AssayEscrow`'s storage and its two funding doors.
 ///
 /// Every assertion pins a *value* rather than relating two numbers the implementation produces,
 /// because the recurring defect in this suite is a test a degenerate satisfies: a credit that
@@ -31,7 +31,7 @@ contract EighteenDecimals {
 /// derived from the one balance just written. The amounts here are therefore all distinct and
 /// non-round, two deposits are made wherever one would do, and two buyers and two proxies are
 /// funded wherever one would do.
-contract X402EscrowDepositTest is Fixture {
+contract AssayEscrowDepositTest is Fixture {
     /// ERC-1967 implementation slot — `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`.
     bytes32 internal constant IMPL_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -52,8 +52,8 @@ contract X402EscrowDepositTest is Fixture {
         // compiler and not only by `address(...)`, which accepts a plain `address` just as well.
         // A getter retyped to `address` — the shape a reviewer's degenerate used — stops this
         // file compiling, which is the loudest failure available.
-        assertEq(escrow.STAKE().bondedOf(provider), MINIMUM_STAKE, "STAKE is IX402StakeView");
-        assertEq(escrow.CONFIG().admin(), admin, "CONFIG is IX402Config");
+        assertEq(escrow.STAKE().bondedOf(provider), MINIMUM_STAKE, "STAKE is IAssayStakeView");
+        assertEq(escrow.CONFIG().admin(), admin, "CONFIG is IAssayConfig");
         assertEq(escrow.ASSET().balanceOf(address(escrow)), 0, "ASSET is IERC20");
     }
 
@@ -61,7 +61,7 @@ contract X402EscrowDepositTest is Fixture {
     /// instances.
     function test_theStoredAddressesAreThisProxysOwn() public {
         MockUSDG other = new MockUSDG();
-        X402Escrow a = _deployEscrow(address(other));
+        AssayEscrow a = _deployEscrow(address(other));
         assertEq(address(a.ASSET()), address(other));
         assertEq(address(escrow.ASSET()), address(usdg), "the fixture's escrow is unchanged");
         assertEq(address(a.CONFIG()), address(config));
@@ -72,8 +72,7 @@ contract X402EscrowDepositTest is Fixture {
         new ERC1967Proxy(
             address(escrowImpl),
             abi.encodeCall(
-                X402Escrow.initialize,
-                (IX402Config(address(0)), stakeView, IERC20(address(usdg)))
+                AssayEscrow.initialize, (IAssayConfig(address(0)), stakeView, IERC20(address(usdg)))
             )
         );
 
@@ -81,8 +80,8 @@ contract X402EscrowDepositTest is Fixture {
         new ERC1967Proxy(
             address(escrowImpl),
             abi.encodeCall(
-                X402Escrow.initialize,
-                (IX402Config(address(config)), IX402StakeView(address(0)), IERC20(address(usdg)))
+                AssayEscrow.initialize,
+                (IAssayConfig(address(config)), IAssayStakeView(address(0)), IERC20(address(usdg)))
             )
         );
 
@@ -90,8 +89,8 @@ contract X402EscrowDepositTest is Fixture {
         new ERC1967Proxy(
             address(escrowImpl),
             abi.encodeCall(
-                X402Escrow.initialize,
-                (IX402Config(address(config)), stakeView, IERC20(address(0)))
+                AssayEscrow.initialize,
+                (IAssayConfig(address(config)), stakeView, IERC20(address(0)))
             )
         );
     }
@@ -106,14 +105,14 @@ contract X402EscrowDepositTest is Fixture {
 
     function test_wrongState_initializeRunsOnce() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        escrow.initialize(IX402Config(address(config)), stakeView, IERC20(address(usdg)));
+        escrow.initialize(IAssayConfig(address(config)), stakeView, IERC20(address(usdg)));
     }
 
     /// Without `_disableInitializers()` anybody may initialize the implementation, become the
     /// admin it reads and upgrade it out from under every proxy pointing at it.
     function test_wrongState_theImplementationCannotBeInitialised() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        escrowImpl.initialize(IX402Config(address(config)), stakeView, IERC20(address(usdg)));
+        escrowImpl.initialize(IAssayConfig(address(config)), stakeView, IERC20(address(usdg)));
     }
 
     /// The layout, asserted from inside the suite and not only by `script/check-layout.sh`.
@@ -124,7 +123,7 @@ contract X402EscrowDepositTest is Fixture {
     /// writer on the deposit path, and without this an implementation that stored nothing but a
     /// `mapping(address => uint128)` would satisfy every other assertion in this file.
     ///
-    /// The constants come from `snapshots/X402Escrow.storage.json`: `escrows` at slot 6,
+    /// The constants come from `snapshots/AssayEscrow.storage.json`: `escrows` at slot 6,
     /// `totalEscrowed` at slot 7, and the three addresses at 3, 4, 5.
     function test_theStorageLayoutIsTheOneTheSnapshotCommitsTo() public {
         _fund(buyer, 1_000_000);
@@ -212,7 +211,7 @@ contract X402EscrowDepositTest is Fixture {
             address(escrow), bytes32(base + 3), bytes32(uint256(TWDR_) | (uint256(TFUND_) << 128))
         );
 
-        X402Escrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, BAL_, "balance: slot 0, offset 0");
         assertEq(e.seqHigh, SEQ_, "seqHigh: slot 0, offset 16");
         assertEq(e.authNonce, NONCE_, "authNonce: slot 0, offset 24");
@@ -356,7 +355,7 @@ contract X402EscrowDepositTest is Fixture {
     /// Two proxies over one implementation share no storage. A degenerate holding its accounting
     /// anywhere but in the proxy's own slots fails here.
     function test_theBalancesAreThisProxysOwn() public {
-        X402Escrow other = _deployEscrow(address(usdg));
+        AssayEscrow other = _deployEscrow(address(usdg));
         _fund(buyer, 5_000_000);
         vm.startPrank(buyer);
         usdg.approve(address(escrow), 5_000_000);
@@ -388,7 +387,7 @@ contract X402EscrowDepositTest is Fixture {
     /// A fresh escrow is zero-valued, and zero limits mean REFUSE, not "unlimited".
     /// This is what replaces open_escrow: the EVM's default storage gives fail-closed free.
     function test_happyPath_aFreshEscrowHasZeroLimits() public view {
-        X402Escrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
+        AssayEscrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
         assertEq(e.maxVoucherAmount, 0);
         assertEq(e.maxPerWindow, 0);
         assertEq(e.seqHigh, 0);
@@ -398,7 +397,7 @@ contract X402EscrowDepositTest is Fixture {
     /// Every one of the twelve fields, so a later task cannot quietly change what "unopened"
     /// means. `open_escrow.rs` writes exactly these zeroes by hand on Solana.
     function test_happyPath_everyFieldOfAFreshEscrowIsZero() public view {
-        X402Escrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
+        AssayEscrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
         assertEq(e.balance, 0);
         assertEq(e.seqHigh, 0);
         assertEq(e.authNonce, 0);
@@ -540,7 +539,7 @@ contract X402EscrowDepositTest is Fixture {
     /// the only test that can distinguish `nonReentrant` from its absence.
     function test_wrongState_aReentrantAssetCannotRecurseIntoDepositFor() public {
         ReentrantUSDG bad = new ReentrantUSDG();
-        X402Escrow re = _deployEscrow(address(bad));
+        AssayEscrow re = _deployEscrow(address(bad));
         bad.setEscrow(address(re), 1);
         bad.mint(buyer, 1_000_000);
 
@@ -561,7 +560,7 @@ contract X402EscrowDepositTest is Fixture {
     /// the whole suite.
     function test_wrongState_aTokenThatReturnsFalseStopsTheDeposit() public {
         FalseReturningUSDG liar = new FalseReturningUSDG();
-        X402Escrow onLiar = _deployEscrow(address(liar));
+        AssayEscrow onLiar = _deployEscrow(address(liar));
         liar.mint(buyer, 1_000_000);
 
         vm.startPrank(buyer);
@@ -583,7 +582,7 @@ contract X402EscrowDepositTest is Fixture {
     /// must SUCCEED here, and only the correct one does.
     function test_happyPath_aTokenThatReturnsNoDataIsAccepted() public {
         NoReturnUSDG usdt = new NoReturnUSDG();
-        X402Escrow onUsdt = _deployEscrow(address(usdt));
+        AssayEscrow onUsdt = _deployEscrow(address(usdt));
         usdt.mint(buyer, 2_500_000);
 
         vm.startPrank(buyer);
@@ -603,7 +602,7 @@ contract X402EscrowDepositTest is Fixture {
     /// The authority is `CONFIG.owner()`, read live (D-17). Nobody else — not a stranger, not the
     /// admin — may move the implementation.
     function test_wrongSigner_onlyTheOwnerUpgradesEscrow() public {
-        X402Escrow next = new X402Escrow();
+        AssayEscrow next = new AssayEscrow();
 
         vm.prank(stranger);
         vm.expectRevert(NotOwner.selector);
@@ -626,7 +625,7 @@ contract X402EscrowDepositTest is Fixture {
     /// authority over in the same transaction — and the admin moving changes nothing here.
     function test_theUpgradeAuthorityFollowsConfigsOwner() public {
         address nextOwner = address(0xA11CE);
-        X402Escrow next = new X402Escrow();
+        AssayEscrow next = new AssayEscrow();
 
         vm.prank(owner);
         config.setAdmin(address(0xAD2));

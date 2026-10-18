@@ -23,7 +23,7 @@ Do not use these contracts to hold real funds.
 
 ## These contracts sit behind UUPS proxies
 
-The three contracts are **upgradeable**. The single upgrade authority is `X402Config.owner()`,
+The three contracts are **upgradeable**. The single upgrade authority is `AssayConfig.owner()`,
 a cold key (a Ledger, or a Safe in production) that moves in two steps and can never be renounced.
 A separate operational `admin` sets parameters, pauses and runs the verifier registry, and cannot
 upgrade (D-17). A narrow `arbiter` (a person's wallet or a Safe) rules on a provider's dispute of a
@@ -43,23 +43,23 @@ layout change that cannot be appended, which is exactly the case the layout gate
 ## The three contracts
 
 ```
-X402Config   parameters, the admin and arbiter, the pause flag, the verifier registry, the
+AssayConfig   parameters, the admin and arbiter, the pause flag, the verifier registry, the
              address blocklist, the slash delay.
              Holds no token and never gains a function that moves one.
                  ▲                    ▲
                  │ CONFIG.params()    │ CONFIG.admin(), CONFIG.arbiter()
                  │ assertActive()     │ assertActive(), slashDelaySeconds()
                  │                    │
-X402Escrow ──────┘                    └────── X402Stake
+AssayEscrow ──────┘                    └────── AssayStake
   buyer money, one pooled balance       provider collateral, the two-phase slash
         │                                        ▲
         └──────── STAKE.bondedOf(provider) ──────┘
                   a view, one direction only (D-2)
 ```
 
-`X402Escrow` and `X402Stake` each hold USDG. `X402Config` is read by both and **written by
+`AssayEscrow` and `AssayStake` each hold USDG. `AssayConfig` is read by both and **written by
 neither** (D-3), which is why the stake accounting totals and the verifier daily-cap counter live
-on `X402Stake` rather than on `X402Config`, where the Anchor program keeps them.
+on `AssayStake` rather than on `AssayConfig`, where the Anchor program keeps them.
 
 ## Quick start
 

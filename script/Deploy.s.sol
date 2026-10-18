@@ -5,11 +5,11 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {X402Config} from "../src/X402Config.sol";
-import {X402Stake} from "../src/X402Stake.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
-import {IX402Config} from "../src/interfaces/IX402Config.sol";
-import {IX402StakeView} from "../src/interfaces/IX402StakeView.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
+import {AssayStake} from "../src/AssayStake.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {IAssayConfig} from "../src/interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "../src/interfaces/IAssayStakeView.sol";
 import {IERC20Decimals} from "../src/interfaces/IERC20Decimals.sol";
 import {ParamSet} from "../src/Types.sol";
 
@@ -48,7 +48,7 @@ error ImplementationSlotMismatch();
 /// therefore initialised in the transaction that creates it, and there is no block in which a
 /// live, uninitialised proxy sits waiting for somebody's `initialize`. **A split
 /// deploy-then-initialise script is forbidden here.** `initialize` cannot defend itself against
-/// front-running — whoever lands first becomes the admin of `X402Config`, and through it the
+/// front-running — whoever lands first becomes the admin of `AssayConfig`, and through it the
 /// upgrade authority of all three — and a half-guard in the contract (an `onlyDeployer` check, a
 /// stored expected caller) would read as if it could. The atomic form removes the window instead
 /// of policing it.
@@ -66,7 +66,7 @@ contract Deploy is Script {
     uint256 internal constant MAINNET_CHAIN_ID = 4663;
 
     function _salt(string memory name) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked("x402:", name, ":v2:", block.chainid));
+        return keccak256(abi.encodePacked("assay:", name, ":v2:", block.chainid));
     }
 
     function run() external {
@@ -98,35 +98,39 @@ contract Deploy is Script {
 
         vm.startBroadcast();
 
-        address configImpl = address(new X402Config());
-        X402Config config = X402Config(
+        address configImpl = address(new AssayConfig());
+        AssayConfig config = AssayConfig(
             address(
                 new ERC1967Proxy{salt: _salt("Config")}(
-                    configImpl, abi.encodeCall(X402Config.initialize, (p, admin, owner))
+                    configImpl, abi.encodeCall(AssayConfig.initialize, (p, admin, owner))
                 )
             )
         );
 
-        address stakeImpl = address(new X402Stake());
-        X402Stake stake = X402Stake(
+        address stakeImpl = address(new AssayStake());
+        AssayStake stake = AssayStake(
             address(
                 new ERC1967Proxy{salt: _salt("Stake")}(
                     stakeImpl,
                     abi.encodeCall(
-                        X402Stake.initialize, (IX402Config(address(config)), IERC20(asset))
+                        AssayStake.initialize, (IAssayConfig(address(config)), IERC20(asset))
                     )
                 )
             )
         );
 
-        address escrowImpl = address(new X402Escrow());
-        X402Escrow escrow = X402Escrow(
+        address escrowImpl = address(new AssayEscrow());
+        AssayEscrow escrow = AssayEscrow(
             address(
                 new ERC1967Proxy{salt: _salt("Escrow")}(
                     escrowImpl,
                     abi.encodeCall(
-                        X402Escrow.initialize,
-                        (IX402Config(address(config)), IX402StakeView(address(stake)), IERC20(asset))
+                        AssayEscrow.initialize,
+                        (
+                            IAssayConfig(address(config)),
+                            IAssayStakeView(address(stake)),
+                            IERC20(asset)
+                        )
                     )
                 )
             )
@@ -159,12 +163,12 @@ contract Deploy is Script {
         }
 
         console2.log("chainId               ", block.chainid);
-        console2.log("X402Config  proxy     ", address(config));
-        console2.log("X402Config  impl      ", configImpl);
-        console2.log("X402Stake   proxy     ", address(stake));
-        console2.log("X402Stake   impl      ", stakeImpl);
-        console2.log("X402Escrow  proxy     ", address(escrow));
-        console2.log("X402Escrow  impl      ", escrowImpl);
+        console2.log("AssayConfig  proxy     ", address(config));
+        console2.log("AssayConfig  impl      ", configImpl);
+        console2.log("AssayStake   proxy     ", address(stake));
+        console2.log("AssayStake   impl      ", stakeImpl);
+        console2.log("AssayEscrow  proxy     ", address(escrow));
+        console2.log("AssayEscrow  impl      ", escrowImpl);
         console2.log("owner                 ", owner);
         console2.log("admin                 ", admin);
         console2.log("asset                 ", asset);
@@ -189,7 +193,7 @@ contract Deploy is Script {
     /// the failure it guards against is an operator pasting the testnet address into a mainnet
     /// deploy.
     ///
-    /// `X402Escrow.initialize` already refuses an asset whose `decimals()` is not 6, but a call to
+    /// `AssayEscrow.initialize` already refuses an asset whose `decimals()` is not 6, but a call to
     /// an address with no code does not revert on EVM — it returns empty, and the ABI decoder is
     /// what fails, with a message about decoding rather than about the address. The explicit
     /// `code.length` check is here so the refusal names what is actually wrong.

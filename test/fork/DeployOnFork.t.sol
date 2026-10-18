@@ -5,11 +5,11 @@ import {ForkFixture} from "./ForkFixture.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {X402Config} from "../../src/X402Config.sol";
-import {X402Stake} from "../../src/X402Stake.sol";
-import {X402Escrow} from "../../src/X402Escrow.sol";
-import {IX402Config} from "../../src/interfaces/IX402Config.sol";
-import {IX402StakeView} from "../../src/interfaces/IX402StakeView.sol";
+import {AssayConfig} from "../../src/AssayConfig.sol";
+import {AssayStake} from "../../src/AssayStake.sol";
+import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
 import {ParamSet} from "../../src/Types.sol";
 
 /// `Deploy.s.sol`'s sequence, executed against real 46630 state, with the runbook's own
@@ -38,9 +38,9 @@ contract DeployOnForkTest is ForkFixture {
     bytes32 internal constant IMPL_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
-    X402Config internal config;
-    X402Stake internal stake;
-    X402Escrow internal escrow;
+    AssayConfig internal config;
+    AssayStake internal stake;
+    AssayEscrow internal escrow;
     address internal configImpl;
     address internal stakeImpl;
     address internal escrowImpl;
@@ -61,36 +61,36 @@ contract DeployOnForkTest is ForkFixture {
             slashCapBps: 5_000
         });
 
-        configImpl = address(new X402Config());
-        config = X402Config(
+        configImpl = address(new AssayConfig());
+        config = AssayConfig(
             address(
                 new ERC1967Proxy(
-                    configImpl, abi.encodeCall(X402Config.initialize, (p, ADMIN, address(0x0A1E)))
+                    configImpl, abi.encodeCall(AssayConfig.initialize, (p, ADMIN, address(0x0A1E)))
                 )
             )
         );
-        stakeImpl = address(new X402Stake());
-        stake = X402Stake(
+        stakeImpl = address(new AssayStake());
+        stake = AssayStake(
             address(
                 new ERC1967Proxy(
                     stakeImpl,
                     abi.encodeCall(
-                        X402Stake.initialize,
-                        (IX402Config(address(config)), IERC20(RH_TESTNET_USDG))
+                        AssayStake.initialize,
+                        (IAssayConfig(address(config)), IERC20(RH_TESTNET_USDG))
                     )
                 )
             )
         );
-        escrowImpl = address(new X402Escrow());
-        escrow = X402Escrow(
+        escrowImpl = address(new AssayEscrow());
+        escrow = AssayEscrow(
             address(
                 new ERC1967Proxy(
                     escrowImpl,
                     abi.encodeCall(
-                        X402Escrow.initialize,
+                        AssayEscrow.initialize,
                         (
-                            IX402Config(address(config)),
-                            IX402StakeView(address(stake)),
+                            IAssayConfig(address(config)),
+                            IAssayStakeView(address(stake)),
                             IERC20(RH_TESTNET_USDG)
                         )
                     )
@@ -138,7 +138,7 @@ contract DeployOnForkTest is ForkFixture {
     function test_theImplementationsCannotBeInitialised() public {
         ParamSet memory p = config.params();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        X402Config(configImpl).initialize(p, address(0xB0B), address(0xB0B));
+        AssayConfig(configImpl).initialize(p, address(0xB0B), address(0xB0B));
     }
 
     /// The money path, end to end, against the real token: deposit, then the buyer's own exit.

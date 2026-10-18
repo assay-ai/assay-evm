@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 
 /// **No role has a door that transfers a token to itself (D-17).** The only ways a token leaves
-/// `X402Escrow` or `X402Stake` are a signed voucher's held payment (collected to its provider and
+/// `AssayEscrow` or `AssayStake` are a signed voucher's held payment (collected to its provider and
 /// the treasury), the buyer's `withdraw()`, the provider's
 /// `withdrawStake`, and the two-phase slash; there is no sweep, no rescue, no "excess" transfer,
 /// for any role and any token. The owner's power over that money is the upgrade.
@@ -49,37 +49,38 @@ contract NoTokenDoorsTest is Test {
     function _sites() internal pure returns (Site[8] memory s) {
         // buyer money: the measured-delta pull, the buyer's own exit, a held voucher's two payouts
         // (redeem into hold: `_redeem` itself moves no token)
-        s[0] =
-            Site("X402Escrow", "_pullExact", "ASSET.safeTransferFrom(from, address(this), amount);");
-        s[1] = Site("X402Escrow", "withdraw", "ASSET.safeTransfer(msg.sender, amount);");
+        s[0] = Site(
+            "AssayEscrow", "_pullExact", "ASSET.safeTransferFrom(from, address(this), amount);"
+        );
+        s[1] = Site("AssayEscrow", "withdraw", "ASSET.safeTransfer(msg.sender, amount);");
         s[2] = Site(
-            "X402Escrow",
+            "AssayEscrow",
             "_collectHeld",
             "if (providerAmount > 0) ASSET.safeTransfer(provider, providerAmount);"
         );
         s[3] =
-            Site("X402Escrow", "_collectHeld", "if (fee > 0) ASSET.safeTransfer(p.treasury, fee);");
+            Site("AssayEscrow", "_collectHeld", "if (fee > 0) ASSET.safeTransfer(p.treasury, fee);");
         // provider collateral: deposit, the provider's own exit, the executed slash's two payouts
         s[4] = Site(
-            "X402Stake",
+            "AssayStake",
             "depositStakeFor",
             "ASSET.safeTransferFrom(msg.sender, address(this), amount);"
         );
-        s[5] = Site("X402Stake", "withdrawStake", "ASSET.safeTransfer(msg.sender, amount);");
+        s[5] = Site("AssayStake", "withdrawStake", "ASSET.safeTransfer(msg.sender, amount);");
         s[6] = Site(
-            "X402Stake",
+            "AssayStake",
             "executeSlash",
             "if (agentAmount > 0) ASSET.safeTransfer(rec.beneficiary, agentAmount);"
         );
         s[7] = Site(
-            "X402Stake",
+            "AssayStake",
             "executeSlash",
             "if (platformAmount > 0) ASSET.safeTransfer(p.treasury, platformAmount);"
         );
     }
 
     function test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes() public view {
-        string[3] memory files = ["X402Escrow", "X402Stake", "X402Config"];
+        string[3] memory files = ["AssayEscrow", "AssayStake", "AssayConfig"];
         Site[8] memory pinned = _sites();
         uint256 matched;
 
@@ -118,12 +119,12 @@ contract NoTokenDoorsTest is Test {
     }
 
     /// The owner is read in the upgrade door of each money contract and nowhere else, and
-    /// `X402Config` gates exactly two doors on it: its own upgrade and `setAdmin`. Ownership
+    /// `AssayConfig` gates exactly two doors on it: its own upgrade and `setAdmin`. Ownership
     /// transfer itself is OpenZeppelin's `Ownable2Step`, which holds no token handle.
     function test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment() public view {
-        string memory escrow = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Escrow.sol"));
-        string memory stake = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Stake.sol"));
-        string memory config = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Config.sol"));
+        string memory escrow = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
+        string memory stake = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayStake.sol"));
+        string memory config = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayConfig.sol"));
 
         string memory door = "        if (msg.sender != CONFIG.owner()) revert NotOwner();\n";
         assertEq(_codeCount(escrow, "owner()"), 1, "the escrow reads the owner outside its upgrade");

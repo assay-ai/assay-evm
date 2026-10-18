@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-import {X402Config} from "../src/X402Config.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ParamSet} from "../src/Types.sol";
 import "../src/Errors.sol";
@@ -29,9 +29,9 @@ import "../src/Errors.sol";
 /// property**: a revert on the EVM rolls everything back whatever the implementation did first, so
 /// those assertions cannot fail for any implementation that reverts at all (mutation log C47).
 /// They are kept because they make a refusal row report *which* field moved if one ever does.
-contract X402ConfigParamsTest is Test {
-    X402Config internal config;
-    X402Config internal configImpl;
+contract AssayConfigParamsTest is Test {
+    AssayConfig internal config;
+    AssayConfig internal configImpl;
 
     address internal admin = address(0xADAA);
     address internal constant OWNER = address(0x0A1E);
@@ -93,13 +93,13 @@ contract X402ConfigParamsTest is Test {
 
     function setUp() public {
         vm.warp(1_760_000_000);
-        configImpl = new X402Config();
-        // Behind a proxy, like every X402Config in this suite (D-1).
-        config = X402Config(
+        configImpl = new AssayConfig();
+        // Behind a proxy, like every AssayConfig in this suite (D-1).
+        config = AssayConfig(
             address(
                 new ERC1967Proxy(
                     address(configImpl),
-                    abi.encodeCall(X402Config.initialize, (_valid(), admin, OWNER))
+                    abi.encodeCall(AssayConfig.initialize, (_valid(), admin, OWNER))
                 )
             )
         );
@@ -345,7 +345,7 @@ contract X402ConfigParamsTest is Test {
     /// The owner appoints the admin in one step; the old key is out at once, the new one in.
     function test_happyPath_theOwnerAppointsTheAdminInOneStep() public {
         vm.expectEmit(true, true, false, false, address(config));
-        emit X402Config.AdminSet(admin, next);
+        emit AssayConfig.AdminSet(admin, next);
         vm.prank(OWNER);
         config.setAdmin(next);
         assertEq(config.admin(), next, "the handover landed in this same call");
@@ -430,7 +430,7 @@ contract X402ConfigParamsTest is Test {
 
         // A daily cap smaller than a single penalty WAS accepted here; since audit C7 it is a
         // deliberate refusal (one judgement could never be paid in full), tested in
-        // `X402Stake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused`.
+        // `AssayStake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused`.
 
         // an unbonding period that is not a whole number of days.
         p = _valid();
@@ -465,7 +465,7 @@ contract X402ConfigParamsTest is Test {
     function test_updateEmitsConfigUpdatedCarryingThePostState() public {
         // no handover: the indexed admin is the unchanged one.
         vm.expectEmit(true, false, false, true, address(config));
-        emit X402Config.ConfigUpdated(admin, _other());
+        emit AssayConfig.ConfigUpdated(admin, _other());
         vm.prank(admin);
         config.updateConfig(_other());
 
@@ -473,7 +473,7 @@ contract X402ConfigParamsTest is Test {
         vm.prank(OWNER);
         config.setAdmin(next);
         vm.expectEmit(true, false, false, true, address(config));
-        emit X402Config.ConfigUpdated(next, _third());
+        emit AssayConfig.ConfigUpdated(next, _third());
         vm.prank(next);
         config.updateConfig(_third());
     }

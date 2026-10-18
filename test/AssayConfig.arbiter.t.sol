@@ -7,10 +7,10 @@ import {ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
-/// The three additions of the dispute upgrade to X402Config: the arbiter, the blocklist and the
-/// settable slash delay. Their consumers are tested in `X402Stake.dispute.t.sol`,
+/// The three additions of the dispute upgrade to AssayConfig: the arbiter, the blocklist and the
+/// settable slash delay. Their consumers are tested in `AssayStake.dispute.t.sol`,
 /// `Blocklist.t.sol` and `Pause.t.sol`.
-contract X402ConfigArbiterTest is Fixture {
+contract AssayConfigArbiterTest is Fixture {
     address internal arbiter = address(0xA4B1);
     address internal someone = address(0x5E1F);
 

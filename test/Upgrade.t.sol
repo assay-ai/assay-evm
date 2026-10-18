@@ -4,13 +4,13 @@ pragma solidity 0.8.24;
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402EscrowV2} from "./helpers/X402EscrowV2.sol";
-import {X402EscrowBadDomainV2} from "./helpers/X402EscrowBadDomainV2.sol";
-import {X402EscrowSilentDomainV2} from "./helpers/X402EscrowSilentDomainV2.sol";
-import {X402Config} from "../src/X402Config.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
-import {X402Stake} from "../src/X402Stake.sol";
-import {IX402Config} from "../src/interfaces/IX402Config.sol";
+import {AssayEscrowV2} from "./helpers/AssayEscrowV2.sol";
+import {AssayEscrowBadDomainV2} from "./helpers/AssayEscrowBadDomainV2.sol";
+import {AssayEscrowSilentDomainV2} from "./helpers/AssayEscrowSilentDomainV2.sol";
+import {AssayConfig} from "../src/AssayConfig.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayStake} from "../src/AssayStake.sol";
+import {IAssayConfig} from "../src/interfaces/IAssayConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Voucher, ParamSet} from "../src/Types.sol";
@@ -23,17 +23,17 @@ import "../src/Errors.sol";
 ///
 /// # What this file does NOT re-prove, and where those proofs live
 ///
-/// - `X402Config._authorizeUpgrade`'s `onlyOwner` — `X402Config.admin.t.sol`
+/// - `AssayConfig._authorizeUpgrade`'s `onlyOwner` — `AssayConfig.admin.t.sol`
 ///   `test_wrongSigner_onlyTheOwnerUpgradesConfig`, mutation row **C6**.
-/// - `X402Config`'s `_disableInitializers()` — same file,
+/// - `AssayConfig`'s `_disableInitializers()` — same file,
 ///   `test_wrongState_theImplementationCannotBeInitialised`, row **C7**.
-/// - `X402Escrow._authorizeUpgrade` and its `_disableInitializers()` —
-///   `X402Escrow.deposit.t.sol`, rows **E7**, **E8**, and **E19** for the live `CONFIG.owner()`
+/// - `AssayEscrow._authorizeUpgrade` and its `_disableInitializers()` —
+///   `AssayEscrow.deposit.t.sol`, rows **E7**, **E8**, and **E19** for the live `CONFIG.owner()`
 ///   read.
 ///
 /// `test_theEarlierAuthorityProofsStillHold` re-asserts those four in one place so that a reader
 /// of this file can see they hold without taking it on trust, and so deleting one of the earlier
-/// tests cannot silently remove the property. `X402Stake`'s three guards are proved here (rows
+/// tests cannot silently remove the property. `AssayStake`'s three guards are proved here (rows
 /// S1–S3 in `MUTATION-LOG.md`).
 contract UpgradeTest is Fixture {
     address internal attacker = address(0xBAD1);
@@ -48,11 +48,11 @@ contract UpgradeTest is Fixture {
 
     // --- (a) only the owner upgrades --------------------------------------------------------
 
-    /// **X402Stake's upgrade door, proved for the first time.** The other two are proved in
-    /// `X402Config.admin.t.sol` and the escrow suite; this one had no test at all, which is why the
+    /// **AssayStake's upgrade door, proved for the first time.** The other two are proved in
+    /// `AssayConfig.admin.t.sol` and the escrow suite; this one had no test at all, which is why the
     /// money contract holding every provider's collateral is the row this file actually adds.
     function test_wrongSigner_onlyTheOwnerUpgradesStake() public {
-        address v2 = address(new X402Stake());
+        address v2 = address(new AssayStake());
 
         vm.prank(attacker);
         vm.expectRevert(NotOwner.selector);
@@ -72,11 +72,11 @@ contract UpgradeTest is Fixture {
         assertEq(_implementationOf(address(stake)), v2, "the owner moved it");
     }
 
-    /// The three earlier proofs, re-asserted rather than restated. If `X402Config.admin.t.sol` or
-    /// `X402Escrow.deposit.t.sol` ever loses its upgrade test, this one still goes red.
+    /// The three earlier proofs, re-asserted rather than restated. If `AssayConfig.admin.t.sol` or
+    /// `AssayEscrow.deposit.t.sol` ever loses its upgrade test, this one still goes red.
     function test_theEarlierAuthorityProofsStillHold() public {
-        address escrowV2 = address(new X402EscrowV2());
-        address configV2 = address(new X402Config());
+        address escrowV2 = address(new AssayEscrowV2());
+        address configV2 = address(new AssayConfig());
 
         vm.prank(attacker);
         vm.expectRevert(NotOwner.selector);
@@ -100,7 +100,7 @@ contract UpgradeTest is Fixture {
 
         vm.prank(owner);
         escrow.upgradeToAndCall(escrowV2, "");
-        assertEq(X402EscrowV2(address(escrow)).version2(), "v2");
+        assertEq(AssayEscrowV2(address(escrow)).version2(), "v2");
 
         vm.prank(owner);
         config.upgradeToAndCall(configV2, "");
@@ -111,13 +111,13 @@ contract UpgradeTest is Fixture {
     /// two steps, therefore moves the upgrade authority of all three in the transaction that
     /// accepts it — and not one step earlier: a PROPOSED owner holds nothing until it accepts.
     ///
-    /// Proved on **X402Stake**; `X402Escrow.deposit.t.sol` proves it on the escrow.
+    /// Proved on **AssayStake**; `AssayEscrow.deposit.t.sol` proves it on the escrow.
     function test_theStakeUpgradeAuthorityFollowsTheConfigOwner() public {
         address newOwner = address(0xA11);
         vm.prank(owner);
         config.transferOwnership(newOwner);
 
-        address v2 = address(new X402Stake());
+        address v2 = address(new AssayStake());
         vm.prank(newOwner);
         vm.expectRevert(NotOwner.selector);
         stake.upgradeToAndCall(v2, "");
@@ -136,18 +136,18 @@ contract UpgradeTest is Fixture {
 
     // --- (b) initialize runs once, and never on an implementation ---------------------------
 
-    /// **X402Stake's `initializer` modifier and its `_disableInitializers()`, both new.** Without
+    /// **AssayStake's `initializer` modifier and its `_disableInitializers()`, both new.** Without
     /// the first, a second call re-points `CONFIG` and `ASSET` on a live, funded stake vault;
     /// without the second, anybody initialises the implementation and — because a UUPS
     /// implementation carries `upgradeToAndCall` in its own code — upgrades it to something with
     /// a `delegatecall`-to-`selfdestruct`, which historically bricked live proxies.
     function test_wrongState_theStakeProxyAndItsImplementationCannotBeInitialised() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        stake.initialize(IX402Config(address(config)), IERC20(address(usdg)));
+        stake.initialize(IAssayConfig(address(config)), IERC20(address(usdg)));
 
         vm.prank(attacker);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        stakeImpl.initialize(IX402Config(address(config)), IERC20(address(usdg)));
+        stakeImpl.initialize(IAssayConfig(address(config)), IERC20(address(usdg)));
 
         assertEq(address(stakeImpl.CONFIG()), address(0), "the implementation has no config, ever");
         assertEq(address(stake.CONFIG()), address(config), "and the proxy's is untouched");
@@ -199,7 +199,7 @@ contract UpgradeTest is Fixture {
         uint128 redeemedBefore = escrow.escrowOf(buyer).totalRedeemed;
 
         // The `new` is a CREATE, which is also a call, so it too must precede the prank.
-        address v2 = address(new X402EscrowV2());
+        address v2 = address(new AssayEscrowV2());
         vm.prank(owner);
         escrow.upgradeToAndCall(v2, "");
 
@@ -216,9 +216,9 @@ contract UpgradeTest is Fixture {
         assertEq(address(escrow.ASSET()), address(usdg), "ASSET");
 
         // The new code is live and its appended slot starts at zero, having overwritten nothing.
-        assertEq(X402EscrowV2(address(escrow)).upgradedAt(), 0);
-        X402EscrowV2(address(escrow)).markUpgraded();
-        assertEq(X402EscrowV2(address(escrow)).upgradedAt(), block.timestamp);
+        assertEq(AssayEscrowV2(address(escrow)).upgradedAt(), 0);
+        AssayEscrowV2(address(escrow)).markUpgraded();
+        assertEq(AssayEscrowV2(address(escrow)).upgradedAt(), block.timestamp);
         assertEq(escrow.escrowOf(buyer).balance, balanceBefore, "the append moved no money");
         assertEq(escrow.totalEscrowed(), totalBefore, "the append moved no pool total");
 
@@ -231,17 +231,17 @@ contract UpgradeTest is Fixture {
 
     /// The append lands at slot **59**, past the parent's `uint256[50] __gap` (slots 9-58), not
     /// inside it — a common assumption says the opposite and it is measurably wrong. Measured here
-    /// so the claim in `X402EscrowV2`'s header is a number rather than an assertion, and so that a
+    /// so the claim in `AssayEscrowV2`'s header is a number rather than an assertion, and so that a
     /// future reader does not conclude the gap is being consumed when it is not.
     ///
     /// Storage-safe either way, which is exactly why the error was invisible; the difference is
     /// that appending in a derived contract is an unbounded habit, while shrinking the parent's
     /// gap is a budget.
     function test_theAppendedFieldLandsPastTheParentsGapNotInsideIt() public {
-        address v2 = address(new X402EscrowV2());
+        address v2 = address(new AssayEscrowV2());
         vm.prank(owner);
         escrow.upgradeToAndCall(v2, "");
-        X402EscrowV2(address(escrow)).markUpgraded();
+        AssayEscrowV2(address(escrow)).markUpgraded();
 
         assertEq(uint256(vm.load(address(escrow), bytes32(uint256(59)))), block.timestamp, "59");
         for (uint256 slot = 9; slot <= 58; slot++) {
@@ -260,7 +260,7 @@ contract UpgradeTest is Fixture {
         uint128 stakedBefore = stake.totalStaked();
         uint128 bondedBefore = stake.stakeOf(provider).bonded;
 
-        address v2 = address(new X402Stake());
+        address v2 = address(new AssayStake());
         vm.prank(owner);
         stake.upgradeToAndCall(v2, "");
 
@@ -273,7 +273,7 @@ contract UpgradeTest is Fixture {
     /// does not evaporate mid-upgrade.
     function test_anUpgradePreservesTheParameterSetAndTheAdmin() public {
         ParamSet memory before = config.params();
-        address v2 = address(new X402Config());
+        address v2 = address(new AssayConfig());
         vm.prank(owner);
         config.upgradeToAndCall(v2, "");
         assertEq(abi.encode(config.params()), abi.encode(before), "params");
@@ -307,11 +307,11 @@ contract UpgradeTest is Fixture {
             VoucherSigner.recoverVoucher(sepBefore, v, sigBefore), buyer, "good before the upgrade"
         );
 
-        address bad = address(new X402EscrowBadDomainV2());
+        address bad = address(new AssayEscrowBadDomainV2());
         vm.prank(owner);
         escrow.upgradeToAndCall(bad, "");
 
-        bytes32 sepAfter = X402EscrowBadDomainV2(address(escrow)).DOMAIN_SEPARATOR();
+        bytes32 sepAfter = AssayEscrowBadDomainV2(address(escrow)).DOMAIN_SEPARATOR();
         assertTrue(sepAfter != sepBefore, "version 2 -> 3 must move the separator");
 
         // And the concrete consequence: the pre-upgrade signature no longer recovers to the buyer
@@ -324,7 +324,7 @@ contract UpgradeTest is Fixture {
     }
 
     /// The same failure reached from the other side: the **name**, not the version. Kept separate
-    /// because an operator changing "Assay Settlement" to "X402 Settlement" while tidying a string
+    /// because an operator changing "Assay Settlement" to "assay Settlement" while tidying a string
     /// is a more plausible mistake than bumping a version deliberately, and because one test
     /// proving one of the two fields would leave the other unmeasured.
     ///
@@ -349,17 +349,17 @@ contract UpgradeTest is Fixture {
         bytes32 renamed = keccak256(
             abi.encode(
                 typeHash,
-                keccak256("X402 Settlement"), // one capital letter
+                keccak256("assay Settlement"), // one letter's case
                 keccak256("2"),
                 block.chainid,
                 address(escrow)
             )
         );
-        assertTrue(renamed != live, "one capital letter kills every outstanding voucher");
+        assertTrue(renamed != live, "one letter's case kills every outstanding voucher");
     }
 
     /// The same failure with the alarm disconnected, and the reason (c) does not stop at the
-    /// getter. `X402EscrowSilentDomainV2` leaves `DOMAIN_SEPARATOR()` returning the old value —
+    /// getter. `AssayEscrowSilentDomainV2` leaves `DOMAIN_SEPARATOR()` returning the old value —
     /// it is `external` and non-`virtual`, so an implementation cannot change it even if it
     /// wanted to — and moves only `_hashTypedDataV4`, which is what every signature check
     /// actually uses. The exported domain and the enforced domain then disagree.
@@ -382,7 +382,7 @@ contract UpgradeTest is Fixture {
         bytes32 sepBefore = escrow.DOMAIN_SEPARATOR();
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, sepBefore, v);
 
-        address silent = address(new X402EscrowSilentDomainV2());
+        address silent = address(new AssayEscrowSilentDomainV2());
         vm.prank(owner);
         escrow.upgradeToAndCall(silent, "");
 
@@ -412,10 +412,10 @@ contract UpgradeTest is Fixture {
     /// Three things decide whether an upgrade is safe: the storage layout, the EIP-712 domain,
     /// and the set of functions the new implementation exports. The first two are gated —
     /// `script/check-layout.sh` and the runbook's `DOMAIN_SEPARATOR()` comparison plus its
-    /// redeem-a-real-voucher check. **The third was gated on `X402Escrow` alone**, by
-    /// `X402Escrow.withdraw.t.sol::test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`.
+    /// redeem-a-real-voucher check. **The third was gated on `AssayEscrow` alone**, by
+    /// `AssayEscrow.withdraw.t.sol::test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`.
     ///
-    /// Measured: adding `setAdminUnchecked(address)` to `X402Config` — a function that hands the
+    /// Measured: adding `setAdminUnchecked(address)` to `AssayConfig` — a function that hands the
     /// admin key, and with it the upgrade authority of all three contracts, to any caller — left
     /// **all 382 tests passing**. These two tests are the escrow pin's missing halves.
     ///
@@ -457,7 +457,7 @@ contract UpgradeTest is Fixture {
             "verifierKey(address)",
             "" // the 30th slot is deliberately empty: a 30th function makes this test red
         ];
-        _assertSurface("X402Config", 29, _dyn30(expected));
+        _assertSurface("AssayConfig", 29, _dyn30(expected));
     }
 
     function test_theStakeFunctionSurfaceIsPinnedByName() public view {
@@ -493,7 +493,7 @@ contract UpgradeTest is Fixture {
             "withdrawableOf(address)",
             "" // the 30th slot is deliberately empty: a 30th function makes this test red
         ];
-        _assertSurface("X402Stake", 29, _dyn30(expected));
+        _assertSurface("AssayStake", 29, _dyn30(expected));
     }
 
     /// Both directions, as the escrow's pin does them: nothing exported that is not on the list,

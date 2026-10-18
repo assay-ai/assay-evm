@@ -4,8 +4,8 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {Fixture} from "../../helpers/Fixture.sol";
 import {VoucherSigner} from "../../helpers/VoucherSigner.sol";
-import {X402Stake} from "../../../src/X402Stake.sol";
-import {X402Escrow} from "../../../src/X402Escrow.sol";
+import {AssayStake} from "../../../src/AssayStake.sol";
+import {AssayEscrow} from "../../../src/AssayEscrow.sol";
 import {Fee} from "../../../src/libraries/Fee.sol";
 import {Window} from "../../../src/libraries/Window.sol";
 import {Constants} from "../../../src/Constants.sol";
@@ -178,7 +178,7 @@ contract AuditDSlashEdgesTest is Fixture {
             return;
         }
         stake.proposeSlash(a, sig);
-        X402Stake.SlashRecord memory r = stake.slashRecordOf("edge");
+        AssayStake.SlashRecord memory r = stake.slashRecordOf("edge");
         assertEq(r.capAllowance, capAllowance);
         assertLe(r.reserved, r.capAllowance);
         assertLe(r.reserved, bond);
@@ -195,7 +195,7 @@ contract AuditDSlashEdgesTest is Fixture {
         }
         stake.executeSlash("edge");
         r = stake.slashRecordOf("edge");
-        X402Stake.ProviderStake memory s = stake.stakeOf(p2);
+        AssayStake.ProviderStake memory s = stake.stakeOf(p2);
         uint256 out = vaultBefore - usdg.balanceOf(address(stake));
         assertEq(out, taken, "vault outflow != agent + platform");
         assertEq(uint256(s.bonded) + s.unbonding, uint256(bond) - taken, "stake debit");

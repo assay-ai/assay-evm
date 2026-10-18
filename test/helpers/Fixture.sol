@@ -3,11 +3,11 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {X402Config} from "../../src/X402Config.sol";
-import {X402Escrow} from "../../src/X402Escrow.sol";
-import {X402Stake} from "../../src/X402Stake.sol";
-import {IX402Config} from "../../src/interfaces/IX402Config.sol";
-import {IX402StakeView} from "../../src/interfaces/IX402StakeView.sol";
+import {AssayConfig} from "../../src/AssayConfig.sol";
+import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {AssayStake} from "../../src/AssayStake.sol";
+import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ParamSet} from "../../src/Types.sol";
 import {MockUSDG} from "./MockUSDG.sol";
@@ -35,15 +35,15 @@ abstract contract Fixture is Test {
 
     address internal constant RH_TESTNET_USDG = 0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec;
     uint256 internal constant RH_TESTNET_CHAIN_ID = 46630;
-    X402Config internal config;
-    X402Escrow internal escrow;
-    X402Stake internal stake;
-    IX402StakeView internal stakeView;
+    AssayConfig internal config;
+    AssayEscrow internal escrow;
+    AssayStake internal stake;
+    IAssayStakeView internal stakeView;
 
     /// The implementations, kept so a test can name one (`Upgrade.t.sol` upgrades against them).
-    X402Config internal configImpl;
-    X402Escrow internal escrowImpl;
-    X402Stake internal stakeImpl;
+    AssayConfig internal configImpl;
+    AssayEscrow internal escrowImpl;
+    AssayStake internal stakeImpl;
 
     address internal admin = address(0xADAA);
     /// D-17: the upgrade authority, and the key that appoints `admin`. Not `admin`.
@@ -91,22 +91,22 @@ abstract contract Fixture is Test {
             slashCapBps: 1_000
         });
 
-        configImpl = new X402Config();
-        config = X402Config(
+        configImpl = new AssayConfig();
+        config = AssayConfig(
             address(
                 new ERC1967Proxy(
-                    address(configImpl), abi.encodeCall(X402Config.initialize, (p, admin, owner))
+                    address(configImpl), abi.encodeCall(AssayConfig.initialize, (p, admin, owner))
                 )
             )
         );
 
-        stakeImpl = new X402Stake();
+        stakeImpl = new AssayStake();
         stake = _deployStake(address(usdg));
 
         // `_deployEscrow` reads this.
-        stakeView = IX402StakeView(address(stake));
+        stakeView = IAssayStakeView(address(stake));
 
-        escrowImpl = new X402Escrow();
+        escrowImpl = new AssayEscrow();
         escrow = _deployEscrow(address(usdg));
 
         // Every escrow test needs a provider that clears the minimum. It arrives through the
@@ -118,13 +118,13 @@ abstract contract Fixture is Test {
     /// sharing this fixture's instance, because that one is pre-funded for the escrow tests and
     /// the accounting totals are contract-wide — a shared instance would make
     /// `totalStaked == DEPOSIT` an assertion about the fixture rather than about the deposit.
-    function _deployStake(address asset_) internal returns (X402Stake) {
-        return X402Stake(
+    function _deployStake(address asset_) internal returns (AssayStake) {
+        return AssayStake(
             address(
                 new ERC1967Proxy(
                     address(stakeImpl),
                     abi.encodeCall(
-                        X402Stake.initialize, (IX402Config(address(config)), IERC20(asset_))
+                        AssayStake.initialize, (IAssayConfig(address(config)), IERC20(asset_))
                     )
                 )
             )
@@ -156,14 +156,14 @@ abstract contract Fixture is Test {
     /// calls an implementation directly and accidentally proves something about a contract nobody
     /// deploys; the tests that need an asset that is not `usdg` (the re-entrancy prover, the
     /// decimals check) do not reach for a bare implementation to get one.
-    function _deployEscrow(address asset_) internal returns (X402Escrow) {
-        return X402Escrow(
+    function _deployEscrow(address asset_) internal returns (AssayEscrow) {
+        return AssayEscrow(
             address(
                 new ERC1967Proxy(
                     address(escrowImpl),
                     abi.encodeCall(
-                        X402Escrow.initialize,
-                        (IX402Config(address(config)), stakeView, IERC20(asset_))
+                        AssayEscrow.initialize,
+                        (IAssayConfig(address(config)), stakeView, IERC20(asset_))
                     )
                 )
             )
@@ -177,7 +177,7 @@ abstract contract Fixture is Test {
     /// optimiser may re-read TIMESTAMP after the `vm.warp`, and the warp back would then restore
     /// the warped time.
 
-    function _collect(X402Escrow escrow_, address payer, uint64 seq) internal {
+    function _collect(AssayEscrow escrow_, address payer, uint64 seq) internal {
         uint256 back = vm.getBlockTimestamp();
         uint64 at = escrow_.held(payer, seq).collectableAt;
         if (back < at) vm.warp(at);

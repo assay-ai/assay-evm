@@ -4,11 +4,11 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {X402Config} from "../../../src/X402Config.sol";
-import {X402Escrow} from "../../../src/X402Escrow.sol";
-import {X402Stake} from "../../../src/X402Stake.sol";
-import {IX402Config} from "../../../src/interfaces/IX402Config.sol";
-import {IX402StakeView} from "../../../src/interfaces/IX402StakeView.sol";
+import {AssayConfig} from "../../../src/AssayConfig.sol";
+import {AssayEscrow} from "../../../src/AssayEscrow.sol";
+import {AssayStake} from "../../../src/AssayStake.sol";
+import {IAssayConfig} from "../../../src/interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "../../../src/interfaces/IAssayStakeView.sol";
 import {
     Voucher, SlashAttestation, ResponseClass, SlashStatus, ParamSet
 } from "../../../src/Types.sol";
@@ -31,9 +31,9 @@ import {VoucherSigner} from "../../helpers/VoucherSigner.sol";
 /// executableAt monotonicity, uphold deadline) and every blocked subject's balances.
 contract SystemHandler is Test {
     MockUSDG public usdg;
-    X402Config public config;
-    X402Stake public stake;
-    X402Escrow public escrow;
+    AssayConfig public config;
+    AssayStake public stake;
+    AssayEscrow public escrow;
 
     address public constant OWNER = address(0x0A1E);
     address public constant ADMIN0 = address(0xADAA);
@@ -127,33 +127,34 @@ contract SystemHandler is Test {
             slashPlatformBps: 3_000,
             slashCapBps: 1_000
         });
-        config = X402Config(
+        config = AssayConfig(
             address(
                 new ERC1967Proxy(
-                    address(new X402Config()),
-                    abi.encodeCall(X402Config.initialize, (p, ADMIN0, OWNER))
+                    address(new AssayConfig()),
+                    abi.encodeCall(AssayConfig.initialize, (p, ADMIN0, OWNER))
                 )
             )
         );
-        stake = X402Stake(
+        stake = AssayStake(
             address(
                 new ERC1967Proxy(
-                    address(new X402Stake()),
+                    address(new AssayStake()),
                     abi.encodeCall(
-                        X402Stake.initialize, (IX402Config(address(config)), IERC20(address(usdg)))
+                        AssayStake.initialize,
+                        (IAssayConfig(address(config)), IERC20(address(usdg)))
                     )
                 )
             )
         );
-        escrow = X402Escrow(
+        escrow = AssayEscrow(
             address(
                 new ERC1967Proxy(
-                    address(new X402Escrow()),
+                    address(new AssayEscrow()),
                     abi.encodeCall(
-                        X402Escrow.initialize,
+                        AssayEscrow.initialize,
                         (
-                            IX402Config(address(config)),
-                            IX402StakeView(address(stake)),
+                            IAssayConfig(address(config)),
+                            IAssayStakeView(address(stake)),
                             IERC20(address(usdg))
                         )
                     )
@@ -238,7 +239,7 @@ contract SystemHandler is Test {
         for (uint256 i = 0; i < 3; i++) {
             preBuyerBal[i] = escrow.escrowOf(buyers[i]).balance;
             preBuyerBlocked[i] = config.blocked(buyers[i]);
-            X402Stake.ProviderStake memory s = stake.stakeOf(providers[i]);
+            AssayStake.ProviderStake memory s = stake.stakeOf(providers[i]);
             preProvAtRisk[i] = s.bonded + s.unbonding;
             preProvBlocked[i] = config.blocked(providers[i]);
         }
@@ -247,20 +248,20 @@ contract SystemHandler is Test {
     function _post() internal {
         // seqHigh and authNonce are high-water marks; the delegate list agrees with positions.
         for (uint256 i = 0; i < 3; i++) {
-            X402Escrow.Escrow memory e = escrow.escrowOf(buyers[i]);
+            AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[i]);
             if (e.seqHigh < seenSeqHigh[i]) _violate("monotonic", "seqHigh went backwards");
             if (e.authNonce < seenAuthNonce[i]) _violate("monotonic", "authNonce went backwards");
             seenSeqHigh[i] = e.seqHigh;
             seenAuthNonce[i] = e.authNonce;
             address[] memory list = escrow.delegatesOf(buyers[i]);
             for (uint256 k = 0; k < list.length; k++) {
-                X402Escrow.Delegation memory d = escrow.delegationOf(buyers[i], list[k]);
+                AssayEscrow.Delegation memory d = escrow.delegationOf(buyers[i], list[k]);
                 if (d.listPosition != k + 1 || d.revoked) {
                     _violate("delegateList", "listed delegate has a wrong position or is revoked");
                 }
             }
             for (uint256 k = 0; k < 3; k++) {
-                X402Escrow.Delegation memory d = escrow.delegationOf(buyers[i], delegates[k]);
+                AssayEscrow.Delegation memory d = escrow.delegationOf(buyers[i], delegates[k]);
                 if (d.listPosition > list.length) {
                     _violate("delegateList", "position past the list");
                 }
@@ -282,7 +283,7 @@ contract SystemHandler is Test {
             if (
                 preProvBlocked[i] && config.blocked(providers[i]) && currentAction != "executeSlash"
             ) {
-                X402Stake.ProviderStake memory s = stake.stakeOf(providers[i]);
+                AssayStake.ProviderStake memory s = stake.stakeOf(providers[i]);
                 if (s.bonded + s.unbonding < preProvAtRisk[i]) {
                     _violate("blockedBalance", "a blocked provider's stake decreased");
                 }
@@ -294,7 +295,7 @@ contract SystemHandler is Test {
         for (uint256 k = 0; k < ids.length; k++) {
             bytes32 id = ids[k];
             Snap memory o = snap[id];
-            X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+            AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
             if (
                 r.provider != o.provider || r.verifier != o.verifier
                     || r.beneficiary != o.beneficiary || r.penalty != o.penalty
@@ -425,8 +426,8 @@ contract SystemHandler is Test {
         bool paused = config.paused();
         bool blk = config.blocked(buyer) || config.blocked(funder);
         bool s = funder == buyer
-            ? _call(funder, address(escrow), abi.encodeCall(X402Escrow.deposit, (amount)))
-            : _call(funder, address(escrow), abi.encodeCall(X402Escrow.depositFor, (buyer, amount)));
+            ? _call(funder, address(escrow), abi.encodeCall(AssayEscrow.deposit, (amount)))
+            : _call(funder, address(escrow), abi.encodeCall(AssayEscrow.depositFor, (buyer, amount)));
         if (s && paused) _violate("pause", "deposit while paused");
         if (s && blk) _violate("block", "deposit by/for a blocked party");
     }
@@ -437,7 +438,7 @@ contract SystemHandler is Test {
         b = uint64(bound(b, 0, 600_000_000));
         bool paused = config.paused();
         bool blk = config.blocked(buyer);
-        bool s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.setLimits, (a, b)));
+        bool s = _call(buyer, address(escrow), abi.encodeCall(AssayEscrow.setLimits, (a, b)));
         if (s) _ghostSet(buyer, address(0), a, b, type(uint64).max);
         if (s && paused) _violate("pause", "setLimits while paused");
         if (s && blk) _violate("block", "setLimits by a blocked buyer");
@@ -472,7 +473,7 @@ contract SystemHandler is Test {
         bool s = _call(
             strangers[0],
             address(escrow),
-            abi.encodeCall(X402Escrow.setLimitsBySig, (buyer, a, b, nonce, deadline, sig))
+            abi.encodeCall(AssayEscrow.setLimitsBySig, (buyer, a, b, nonce, deadline, sig))
         );
         if (s) _ghostSet(buyer, address(0), a, b, type(uint64).max);
         if (s && paused) _violate("pause", "setLimitsBySig while paused");
@@ -499,11 +500,11 @@ contract SystemHandler is Test {
                 REDEEMER,
                 address(escrow),
                 abi.encodeCall(
-                    X402Escrow.requestWithdrawBySig, (buyer, amount, nonce, deadline, sig)
+                    AssayEscrow.requestWithdrawBySig, (buyer, amount, nonce, deadline, sig)
                 )
             );
         } else {
-            s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.requestWithdraw, (amount)));
+            s = _call(buyer, address(escrow), abi.encodeCall(AssayEscrow.requestWithdraw, (amount)));
         }
         if (s && paused) _violate("pause", "requestWithdraw while paused");
         if (s && blk) _violate("block", "requestWithdraw by a blocked buyer");
@@ -511,11 +512,11 @@ contract SystemHandler is Test {
 
     function withdraw(uint256 buyerSeed) external step("withdraw") {
         address buyer = buyers[buyerSeed % 3];
-        X402Escrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
         uint256 tokBefore = usdg.balanceOf(buyer);
         bool paused = config.paused();
         bool blk = config.blocked(buyer);
-        bool s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.withdraw, ()));
+        bool s = _call(buyer, address(escrow), abi.encodeCall(AssayEscrow.withdraw, ()));
         if (s) {
             if (paused) _violate("pause", "withdraw while paused");
             if (blk) _violate("block", "withdraw by a blocked buyer");
@@ -561,7 +562,7 @@ contract SystemHandler is Test {
                 strangers[1],
                 address(escrow),
                 abi.encodeCall(
-                    X402Escrow.authorizeDelegateBySig,
+                    AssayEscrow.authorizeDelegateBySig,
                     (buyer, del, a, b, validUntil, nonce, deadline, sig)
                 )
             );
@@ -569,7 +570,7 @@ contract SystemHandler is Test {
             s = _call(
                 buyer,
                 address(escrow),
-                abi.encodeCall(X402Escrow.authorizeDelegate, (del, a, b, validUntil))
+                abi.encodeCall(AssayEscrow.authorizeDelegate, (del, a, b, validUntil))
             );
         }
         if (s) _ghostSet(buyer, del, a, b, validUntil);
@@ -597,10 +598,10 @@ contract SystemHandler is Test {
             s = _call(
                 strangers[0],
                 address(escrow),
-                abi.encodeCall(X402Escrow.revokeDelegateBySig, (buyer, del, nonce, deadline, sig))
+                abi.encodeCall(AssayEscrow.revokeDelegateBySig, (buyer, del, nonce, deadline, sig))
             );
         } else {
-            s = _call(buyer, address(escrow), abi.encodeCall(X402Escrow.revokeDelegate, (del)));
+            s = _call(buyer, address(escrow), abi.encodeCall(AssayEscrow.revokeDelegate, (del)));
         }
         if (s) _ghostRevoke(buyer, del);
         if (listed && !s) _violate("revokeLiveness", "revokeDelegate refused a listed delegate");
@@ -648,7 +649,7 @@ contract SystemHandler is Test {
     {
         rp.signerIdx = seed % 2 == 0 ? 0 : 1 + (seed >> 1) % 3;
         rp.provider = seed % 13 == 12 ? strangers[0] : providers[(seed >> 4) % 3];
-        X402Escrow.Escrow memory e = escrow.escrowOf(buyers[buyerIdx]);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[buyerIdx]);
         uint64 ceil = e.maxVoucherAmount;
         if (e.balance < ceil) ceil = uint64(e.balance);
         if (ceil == 0) ceil = 1;
@@ -662,7 +663,7 @@ contract SystemHandler is Test {
     function redeem(uint256 buyerSeed, uint256 seed, uint64 amount) external step("redeem") {
         uint256 bi = buyerSeed % 3;
         RedeemPlan memory rp = _plan(seed, amount, bi);
-        X402Escrow.Escrow memory e = escrow.escrowOf(buyers[bi]);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[bi]);
         (Voucher memory v, bytes memory sig, address del) =
             _voucher(bi, rp, e.seqHigh + rp.seqDelta);
         address caller = seed % 17 == 16 ? strangers[1] : REDEEMER;
@@ -675,7 +676,7 @@ contract SystemHandler is Test {
             || (del != address(0) && config.blocked(del));
         uint16 take = config.params().takeRateBps;
         uint64 hold = config.collectHoldSeconds();
-        bool s = _call(caller, address(escrow), abi.encodeCall(X402Escrow.redeemVoucher, (v, sig)));
+        bool s = _call(caller, address(escrow), abi.encodeCall(AssayEscrow.redeemVoucher, (v, sig)));
         if (!s) return;
         if (caller != REDEEMER) _violate("role", "redeem by a non-redeemer");
         if (paused) _violate("pause", "redeem while paused");
@@ -684,9 +685,9 @@ contract SystemHandler is Test {
         // Redeem into hold: nobody is paid, the amount is held with the take rate and clock frozen.
         if (usdg.balanceOf(v.provider) != provBefore) _violate("payout", "provider paid at redeem");
         if (usdg.balanceOf(TREASURY) != treasBefore) _violate("payout", "treasury paid at redeem");
-        X402Escrow.HeldPayment memory hp = escrow.held(v.payer, v.seq);
+        AssayEscrow.HeldPayment memory hp = escrow.held(v.payer, v.seq);
         if (
-            hp.status != X402Escrow.HeldStatus.Held || hp.amount != v.amount
+            hp.status != AssayEscrow.HeldStatus.Held || hp.amount != v.amount
                 || hp.provider != v.provider || hp.takeRateBps != take
                 || hp.collectableAt != uint64(block.timestamp) + hold
         ) _violate("hold", "the held record is not the redemption");
@@ -707,7 +708,7 @@ contract SystemHandler is Test {
         uint64 back = uint64(seed % 4);
         if (high <= back) return;
         uint64 seq = high - back;
-        X402Escrow.HeldPayment memory hp = escrow.held(payer, seq);
+        AssayEscrow.HeldPayment memory hp = escrow.held(payer, seq);
         address caller = seed % 5 == 4 ? strangers[0] : REDEEMER;
         address treasury = config.params().treasury;
         uint256 provBefore = usdg.balanceOf(hp.provider);
@@ -717,9 +718,9 @@ contract SystemHandler is Test {
         uint256 opensAt = uint256(hp.collectableAt)
             + (caller == REDEEMER ? 0 : uint256(Constants.HELD_TIMEOUT_SECONDS));
         bool s =
-            _call(caller, address(escrow), abi.encodeCall(X402Escrow.collectHeld, (payer, seq)));
+            _call(caller, address(escrow), abi.encodeCall(AssayEscrow.collectHeld, (payer, seq)));
         if (!s) return;
-        if (hp.status != X402Escrow.HeldStatus.Held) _violate("hold", "collect of a non-Held");
+        if (hp.status != AssayEscrow.HeldStatus.Held) _violate("hold", "collect of a non-Held");
         if (block.timestamp < opensAt) _violate("hold", "collect before its time");
         if (paused) _violate("pause", "collect while paused");
         if (blk) _violate("block", "collect paid a blocked party");
@@ -732,7 +733,7 @@ contract SystemHandler is Test {
             if (usdg.balanceOf(hp.provider) - provBefore != net) _violate("payout", "collect net");
             if (usdg.balanceOf(treasury) - treasBefore != fee) _violate("payout", "collect fee");
         }
-        if (escrow.held(payer, seq).status != X402Escrow.HeldStatus.Collected) {
+        if (escrow.held(payer, seq).status != AssayEscrow.HeldStatus.Collected) {
             _violate("hold", "collected record not marked");
         }
     }
@@ -743,20 +744,21 @@ contract SystemHandler is Test {
     function refundHeld(uint256 buyerSeed, uint256 seed) external step("refundHeld") {
         uint256 bi = buyerSeed % 3;
         address payer = buyers[bi];
-        X402Escrow.Escrow memory e = escrow.escrowOf(payer);
+        AssayEscrow.Escrow memory e = escrow.escrowOf(payer);
         uint64 back = uint64(seed % 4);
         if (e.seqHigh <= back) return;
         uint64 seq = e.seqHigh - back;
-        X402Escrow.HeldPayment memory hp = escrow.held(payer, seq);
+        AssayEscrow.HeldPayment memory hp = escrow.held(payer, seq);
         address caller = seed % 7 == 6 ? strangers[1] : REDEEMER;
-        bool s = _call(caller, address(escrow), abi.encodeCall(X402Escrow.refundHeld, (payer, seq)));
+        bool s =
+            _call(caller, address(escrow), abi.encodeCall(AssayEscrow.refundHeld, (payer, seq)));
         if (!s) return;
         if (caller != REDEEMER) _violate("role", "refund by a non-redeemer");
-        if (hp.status != X402Escrow.HeldStatus.Held) _violate("hold", "refund of a non-Held");
+        if (hp.status != AssayEscrow.HeldStatus.Held) _violate("hold", "refund of a non-Held");
         if (block.timestamp >= uint256(hp.collectableAt) + Constants.HELD_TIMEOUT_SECONDS) {
             _violate("hold", "refund after the timeout");
         }
-        X402Escrow.Escrow memory a = escrow.escrowOf(payer);
+        AssayEscrow.Escrow memory a = escrow.escrowOf(payer);
         if (a.balance != e.balance + hp.amount) _violate("hold", "refund credit");
         if (a.spentInWindow != e.spentInWindow) _violate("hold", "refund restored the window");
     }
@@ -867,7 +869,7 @@ contract SystemHandler is Test {
         uint64[3] memory seqs;
         uint64[3] memory allowance;
         for (uint256 b = 0; b < 3; b++) {
-            X402Escrow.Escrow memory e = escrow.escrowOf(buyers[b]);
+            AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[b]);
             seqs[b] = e.seqHigh;
             allowance[b] = uint64(e.balance);
         }
@@ -886,7 +888,7 @@ contract SystemHandler is Test {
                 || (dels[k] != address(0) && config.blocked(dels[k]));
         }
         bool s = _call(
-            REDEEMER, address(escrow), abi.encodeCall(X402Escrow.redeemVoucherBatch, (vs, sigs))
+            REDEEMER, address(escrow), abi.encodeCall(AssayEscrow.redeemVoucherBatch, (vs, sigs))
         );
         if (!s) return;
         if (paused) _violate("pause", "redeemBatch while paused");
@@ -919,8 +921,9 @@ contract SystemHandler is Test {
         usdg.approve(address(stake), amount);
         bool paused = config.paused();
         bool blk = config.blocked(prov) || config.blocked(funder);
-        bool s =
-            _call(funder, address(stake), abi.encodeCall(X402Stake.depositStakeFor, (prov, amount)));
+        bool s = _call(
+            funder, address(stake), abi.encodeCall(AssayStake.depositStakeFor, (prov, amount))
+        );
         if (s && paused) _violate("pause", "depositStake while paused");
         if (s && blk) _violate("block", "depositStake with a blocked party");
     }
@@ -931,21 +934,21 @@ contract SystemHandler is Test {
         amount = uint64(bound(amount, 0, bonded + 1));
         bool paused = config.paused();
         bool blk = config.blocked(prov);
-        bool s = _call(prov, address(stake), abi.encodeCall(X402Stake.requestUnstake, (amount)));
+        bool s = _call(prov, address(stake), abi.encodeCall(AssayStake.requestUnstake, (amount)));
         if (s && paused) _violate("pause", "requestUnstake while paused");
         if (s && blk) _violate("block", "requestUnstake by a blocked provider");
     }
 
     function withdrawStake(uint256 provSeed, uint64 amount) external step("withdrawStake") {
         address prov = providers[provSeed % 3];
-        X402Stake.ProviderStake memory st = stake.stakeOf(prov);
+        AssayStake.ProviderStake memory st = stake.stakeOf(prov);
         uint64 free = stake.withdrawableOf(prov);
         amount = uint64(bound(amount, 0, uint256(st.unbonding) + 1));
         if (provSeed % 2 == 0 && free > 0) amount = uint64(bound(amount, 1, free));
         bool paused = config.paused();
         bool blk = config.blocked(prov);
         uint256 before = usdg.balanceOf(prov);
-        bool s = _call(prov, address(stake), abi.encodeCall(X402Stake.withdrawStake, (amount)));
+        bool s = _call(prov, address(stake), abi.encodeCall(AssayStake.withdrawStake, (amount)));
         if (!s) return;
         if (paused) _violate("pause", "withdrawStake while paused");
         if (blk) _violate("block", "withdrawStake by a blocked provider");
@@ -998,15 +1001,15 @@ contract SystemHandler is Test {
         bool canSign = config.canSign(signers[si]);
         uint64 delay = config.slashDelaySeconds();
         bool existed = stake.slashRecordOf(id).status != SlashStatus.None;
-        X402Stake.ProviderStake memory st = stake.stakeOf(a.provider);
+        AssayStake.ProviderStake memory st = stake.stakeOf(a.provider);
         uint16 capBps = config.params().slashCapBps;
         address caller = strangers[signerSeed % 2];
-        bool s = _call(caller, address(stake), abi.encodeCall(X402Stake.proposeSlash, (a, sig)));
+        bool s = _call(caller, address(stake), abi.encodeCall(AssayStake.proposeSlash, (a, sig)));
         if (!s) return;
         if (paused) _violate("pause", "proposeSlash while paused");
         if (!canSign) _violate("role", "proposeSlash by a non-signing key");
         if (existed) _violate("replay", "proposeSlash over an existing record");
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
         if (r.executableAt != nowTs + delay) _violate("delay", "executableAt != now + live delay");
         uint256 atRisk = uint256(st.bonded) + st.unbonding;
         if (r.capAllowance != (atRisk * capBps) / 10_000) _violate("caps", "capAllowance formula");
@@ -1038,15 +1041,15 @@ contract SystemHandler is Test {
 
     function executeSlash(uint256 idSeed) external step("executeSlash") {
         bytes32 id = _pickOpen(idSeed);
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
         bool paused = config.paused();
         bool canSign = config.canSign(r.verifier);
         ParamSet memory p = config.params();
-        X402Stake.ProviderStake memory st = stake.stakeOf(r.provider);
+        AssayStake.ProviderStake memory st = stake.stakeOf(r.provider);
         uint256 benBefore = usdg.balanceOf(r.beneficiary);
         uint256 treBefore = usdg.balanceOf(TREASURY);
         bool s = _call(
-            strangers[idSeed % 2], address(stake), abi.encodeCall(X402Stake.executeSlash, (id))
+            strangers[idSeed % 2], address(stake), abi.encodeCall(AssayStake.executeSlash, (id))
         );
         if (!s) return;
         if (paused) _violate("pause", "executeSlash while paused");
@@ -1054,8 +1057,8 @@ contract SystemHandler is Test {
         if (r.status != SlashStatus.Pending) {
             _violate("transition", "executed a non-Pending record");
         }
-        X402Stake.SlashRecord memory q = stake.slashRecordOf(id);
-        X402Stake.ProviderStake memory s2 = stake.stakeOf(r.provider);
+        AssayStake.SlashRecord memory q = stake.slashRecordOf(id);
+        AssayStake.ProviderStake memory s2 = stake.stakeOf(r.provider);
         (uint64 vUsed,) = _verifierWindow(r.verifier);
         // All or wait (D-20): an execution pays the whole reservation, never part of it.
         if (q.applied != r.reserved) _violate("caps", "applied != reserved");
@@ -1079,7 +1082,7 @@ contract SystemHandler is Test {
         bytes32 id = _pickOpen(idSeed);
         address caller = _anyCaller(callerSeed);
         bool want = _expectedCancelOk(caller, stake.slashRecordOf(id).status);
-        bool s = _call(caller, address(stake), abi.encodeCall(X402Stake.cancelSlash, (id)));
+        bool s = _call(caller, address(stake), abi.encodeCall(AssayStake.cancelSlash, (id)));
         if (s != want) _violate("role", "cancelSlash outcome != (admin|arbiter) && open");
     }
 
@@ -1098,25 +1101,25 @@ contract SystemHandler is Test {
             }
             want = want && _expectedCancelOk(caller, stake.slashRecordOf(list[k]).status);
         }
-        bool s = _call(caller, address(stake), abi.encodeCall(X402Stake.cancelSlashBatch, (list)));
+        bool s = _call(caller, address(stake), abi.encodeCall(AssayStake.cancelSlashBatch, (list)));
         if (s != want) _violate("role", "cancelSlashBatch outcome mismatch");
     }
 
     function expireSlash(uint256 idSeed) external step("expireSlash") {
         bytes32 id = _pickOpen(idSeed);
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
         bool timedOut = r.status == SlashStatus.Disputed
             ? block.timestamp >= uint256(r.disputedAt) + Constants.DISPUTE_TIMEOUT_SECONDS
             : block.timestamp >= uint256(r.executableAt) + Constants.SLASH_EXECUTION_GRACE_SECONDS;
         bool want = _open(r.status) && (!config.canSign(r.verifier) || timedOut);
-        bool s = _call(strangers[0], address(stake), abi.encodeCall(X402Stake.expireSlash, (id)));
+        bool s = _call(strangers[0], address(stake), abi.encodeCall(AssayStake.expireSlash, (id)));
         if (s != want) {
             _violate("expire", "expireSlash outcome != open && (unusable key || timed out)");
         }
     }
 
     function _disputable(bytes32 id) internal view returns (bool) {
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
         return
             r.status == SlashStatus.Pending && r.disputedAt == 0 && block.timestamp < r.executableAt;
     }
@@ -1125,10 +1128,10 @@ contract SystemHandler is Test {
     /// or blocked or not. Any other caller must be refused.
     function disputeSlash(uint256 idSeed, uint256 callerSeed) external step("disputeSlash") {
         bytes32 id = _pickOpen(idSeed);
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
         address caller = callerSeed % 4 == 0 ? _anyCaller(callerSeed >> 2) : r.provider;
         bool want = _disputable(id) && caller == r.provider;
-        bool s = _call(caller, address(stake), abi.encodeCall(X402Stake.disputeSlash, (id)));
+        bool s = _call(caller, address(stake), abi.encodeCall(AssayStake.disputeSlash, (id)));
         if (want && !s) {
             _violate("disputeLiveness", "provider could not dispute a disputable record");
         }
@@ -1153,13 +1156,13 @@ contract SystemHandler is Test {
         }
         if (dup) list[n] = tmp[0];
         bool want = n > 0 && !dup;
-        bool s = _call(prov, address(stake), abi.encodeCall(X402Stake.disputeSlashBatch, (list)));
+        bool s = _call(prov, address(stake), abi.encodeCall(AssayStake.disputeSlashBatch, (list)));
         if (want && !s) _violate("disputeLiveness", "disputeSlashBatch refused disputable records");
         if (!want && s) _violate("transition", "disputeSlashBatch landed a bad batch");
     }
 
     function _upholdable(bytes32 id, address caller) internal view returns (bool) {
-        X402Stake.SlashRecord memory r = stake.slashRecordOf(id);
+        AssayStake.SlashRecord memory r = stake.slashRecordOf(id);
         address arb = _arbiter();
         return caller == arb && r.status == SlashStatus.Disputed
             && block.timestamp < uint256(r.disputedAt) + Constants.DISPUTE_TIMEOUT_SECONDS
@@ -1172,7 +1175,7 @@ contract SystemHandler is Test {
         if (callerSeed % 3 != 0) caller = _arbiter();
         if (caller == address(0)) return; // no real transaction has msg.sender == 0
         bool want = _upholdable(id, caller);
-        bool s = _call(caller, address(stake), abi.encodeCall(X402Stake.upholdSlash, (id)));
+        bool s = _call(caller, address(stake), abi.encodeCall(AssayStake.upholdSlash, (id)));
         if (s != want) _violate("role", "upholdSlash outcome != arbiter && disputed && in time");
     }
 
@@ -1189,7 +1192,7 @@ contract SystemHandler is Test {
             }
             want = want && _upholdable(list[k], caller);
         }
-        bool s = _call(caller, address(stake), abi.encodeCall(X402Stake.upholdSlashBatch, (list)));
+        bool s = _call(caller, address(stake), abi.encodeCall(AssayStake.upholdSlashBatch, (list)));
         if (s != want) _violate("role", "upholdSlashBatch outcome mismatch");
     }
 
@@ -1201,7 +1204,7 @@ contract SystemHandler is Test {
         address caller = callerSeed % 3 == 0 ? _anyCaller(callerSeed >> 2) : _admin();
         if (value && callerSeed % 4 != 0) value = false; // pausing is rarer than unpausing
         bool want = caller == _admin();
-        bool s = _call(caller, address(config), abi.encodeCall(X402Config.setPaused, (value)));
+        bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.setPaused, (value)));
         if (s != want) _violate("role", "setPaused outcome != admin");
     }
 
@@ -1216,7 +1219,7 @@ contract SystemHandler is Test {
         bool want = (caller == _admin() || (value && caller == _arbiter() && caller != address(0)))
             && target != address(0);
         bool s =
-            _call(caller, address(config), abi.encodeCall(X402Config.setBlocked, (target, value)));
+            _call(caller, address(config), abi.encodeCall(AssayConfig.setBlocked, (target, value)));
         if (s != want) _violate("role", "setBlocked outcome mismatch");
         if (s && !value && caller != _admin()) _violate("role", "a non-admin unblocked");
     }
@@ -1228,7 +1231,7 @@ contract SystemHandler is Test {
         // Fixed bounds since audit F R3: no coupling to the unbonding period.
         bool want = caller == _admin() && d >= Constants.MIN_SLASH_DELAY_SECONDS
             && d <= Constants.MAX_SLASH_DELAY_SECONDS;
-        bool s = _call(caller, address(config), abi.encodeCall(X402Config.setSlashDelay, (d)));
+        bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.setSlashDelay, (d)));
         if (s != want) _violate("role", "setSlashDelay outcome mismatch");
     }
 
@@ -1242,10 +1245,10 @@ contract SystemHandler is Test {
         else if (c == 3) cand = _admin();
         else if (c == 4) cand = signers[(candSeed >> 3) % 3];
         else cand = strangers[0];
-        X402Config.VerifierKey memory k = config.verifierKey(cand);
+        AssayConfig.VerifierKey memory k = config.verifierKey(cand);
         bool want = caller == _admin() && cand != address(0) && cand != _admin()
             && cand != config.params().redeemer && !(k.registered && !k.revoked);
-        bool s = _call(caller, address(config), abi.encodeCall(X402Config.setArbiter, (cand)));
+        bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.setArbiter, (cand)));
         if (s != want) _violate("role", "setArbiter outcome mismatch");
     }
 
@@ -1262,7 +1265,7 @@ contract SystemHandler is Test {
         bool s = _call(
             caller,
             address(config),
-            abi.encodeCall(X402Config.registerVerifier, (v, bytes32("audit-d"), expiresAt))
+            abi.encodeCall(AssayConfig.registerVerifier, (v, bytes32("audit-d"), expiresAt))
         );
         if (s != want) _violate("role", "registerVerifier outcome mismatch");
     }
@@ -1271,9 +1274,9 @@ contract SystemHandler is Test {
         address caller = callerSeed % 4 == 0 ? _anyCaller(callerSeed >> 2) : _admin();
         if (vSeed % 3 != 0) return; // rarer, or the walk runs out of signing keys
         address v = signers[(vSeed / 3) % 5];
-        X402Config.VerifierKey memory k = config.verifierKey(v);
+        AssayConfig.VerifierKey memory k = config.verifierKey(v);
         bool want = caller == _admin() && k.registered && !k.revoked;
-        bool s = _call(caller, address(config), abi.encodeCall(X402Config.revokeVerifier, (v)));
+        bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.revokeVerifier, (v)));
         if (s != want) _violate("role", "revokeVerifier outcome mismatch");
     }
 
@@ -1299,8 +1302,7 @@ contract SystemHandler is Test {
         // Up to twice the opening minimum, so sets that satisfy the provider-day rule (review R-1)
         // stay reachable alongside the ones it refuses.
         p.minimumStake = uint64(bound(callerSeed >> 8, 0, 2_000_000_000));
-        bool s =
-            _call(caller, address(config), abi.encodeCall(X402Config.updateConfig, (p)));
+        bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.updateConfig, (p)));
         if (s && caller != _admin()) _violate("role", "updateConfig by a non-admin");
     }
 
@@ -1309,7 +1311,7 @@ contract SystemHandler is Test {
         uint256 c = candSeed % 4;
         address cand = c == 0 ? ADMIN0 : c == 1 ? ADMIN1 : c == 2 ? _arbiter() : address(0);
         bool want = caller == OWNER && cand != address(0) && cand != _arbiter();
-        bool s = _call(caller, address(config), abi.encodeCall(X402Config.setAdmin, (cand)));
+        bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.setAdmin, (cand)));
         if (s != want) _violate("role", "setAdmin outcome mismatch");
     }
 
@@ -1324,7 +1326,7 @@ contract SystemHandler is Test {
         uint256 target = nowTs + bound(small, 1, 4 * 86_400);
         int256 nudge = int256(uint256((choice >> 8) % 3)) - 1; // -1, 0, +1
         if (c >= 2 && c <= 7 && ids.length > 0) {
-            X402Stake.SlashRecord memory r = stake.slashRecordOf(_pickOpen(choice >> 16));
+            AssayStake.SlashRecord memory r = stake.slashRecordOf(_pickOpen(choice >> 16));
             uint256 base;
             if (c == 2 || c == 3) {
                 base = r.executableAt;
@@ -1342,13 +1344,13 @@ contract SystemHandler is Test {
                     + nudge
             );
         } else if (c == 9) {
-            X402Stake.ProviderStake memory st = stake.stakeOf(providers[(choice >> 16) % 3]);
+            AssayStake.ProviderStake memory st = stake.stakeOf(providers[(choice >> 16) % 3]);
             target = uint256(
                 int256(uint256(st.unbondingStartedAt) + config.params().unbondingPeriodSeconds)
                     + nudge
             );
         } else if (c == 10) {
-            X402Escrow.Escrow memory e = escrow.escrowOf(buyers[(choice >> 16) % 3]);
+            AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[(choice >> 16) % 3]);
             target =
                 uint256(int256(uint256(e.windowStartedAt) + Constants.SLASH_WINDOW_SECONDS) + nudge);
         } else if (c == 11) {

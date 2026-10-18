@@ -11,7 +11,7 @@ produced it, so any of it can be re-run and disagreed with.
   silently replacing these numbers.
 - **Build settings the numbers depend on:** solc 0.8.24, `evm_version = "shanghai"`, `via_ir = true`,
   optimizer on at 200 runs. A different optimizer setting is a different number.
-- **Source:** the figures were measured against `src/X402Escrow.sol` as it is in this repository.
+- **Source:** the figures were measured against `src/AssayEscrow.sol` as it is in this repository.
   Re-run the commands in each table to reproduce or dispute them.
 
 ---
@@ -96,7 +96,7 @@ outstanding-voucher state and pays `min(requested, balance)`; the redemption the
 
 The contract's own guarantee is the other half and it is real: a voucher signed **before** the
 request cannot outlive the delay, because `3,600 > 2,220`. That half is asserted at deployment and
-tested (`X402Escrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`,
+tested (`AssayEscrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`,
 `Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`). The half above cannot be:
 it would need an outstanding-voucher set the contract deliberately does not hold, and **Solana's
 `withdraw.rs` has no such check either**, so this is parity rather than a port defect.
@@ -169,7 +169,7 @@ commits between the two measurements moved `_redeem`'s call path, and the 816-ga
 premium is unchanged across them.
 
 ```sh
-forge test --match-contract X402EscrowBatchTest --match-test 'test_measure_' -vv
+forge test --match-contract AssayEscrowBatchTest --match-test 'test_measure_' -vv
 ```
 
 **On the single-transaction measurement loop.** `test_measure_batchGasAtOneEightAndSixtyFour` measures the
@@ -184,7 +184,7 @@ that the shape does not matter here.
 
 ### What `--gas-report` says, and why it is not the number to quote
 
-`forge test --gas-report` on the same tree reports, for `X402Escrow`:
+`forge test --gas-report` on the same tree reports, for `AssayEscrow`:
 
 | function | min | avg | median | max | calls |
 |---|---|---|---|---|---|
@@ -290,7 +290,7 @@ closest to a block limit.
 ## Re-measuring
 
 ```sh
-forge test --match-contract X402EscrowBatchTest --match-test 'test_measure_' -vv
+forge test --match-contract AssayEscrowBatchTest --match-test 'test_measure_' -vv
 forge snapshot                 # writes .gas-snapshot
 forge test --gas-report
 ```
@@ -312,7 +312,7 @@ not optional.
 
 ## The slash batches (D-19), at `MAX_SLASH_BATCH = 64`
 
-`test/X402Stake.dispute.t.sol::test_measure_slashBatchesAtSixtyFour` — 64 pending records of one
+`test/AssayStake.dispute.t.sol::test_measure_slashBatchesAtSixtyFour` — 64 pending records of one
 provider, each batch called once over all 64. **Cold** is `--isolate` (each call its own
 transaction, every slot cold — the figure a real transaction pays); **warm** is the same test in
 one test transaction, kept for comparison.
@@ -346,12 +346,12 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `X402Config` | 7,466 | 30.4% | 7,675 |
-| `X402Escrow` | 17,228 | 70.1% | 18,655 |
-| `X402Stake` | 14,791 | 60.2% | 16,218 |
+| `AssayConfig` | 7,466 | 30.4% | 7,675 |
+| `AssayEscrow` | 17,228 | 70.1% | 18,655 |
+| `AssayStake` | 14,791 | 60.2% | 16,218 |
 
-Re-measured for D-19 (the dispute upgrade); the commit before it measured X402Config 6,136,
-X402Escrow 16,202 and X402Stake 13,041.
+Re-measured for D-19 (the dispute upgrade); the commit before it measured AssayConfig 6,136,
+AssayEscrow 16,202 and AssayStake 13,041.
 
 The gate fires at **22,000**, leaving room for an auditor's remediation round and for the append a
 future upgrade adds. If a contract ever goes over it, **the gate does not move** — the contract

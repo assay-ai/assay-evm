@@ -5,7 +5,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Escrow} from "../src/X402Escrow.sol";
+import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -67,13 +67,13 @@ contract WithdrawObserverUSDG {
         if (armed) {
             armed = false;
             observed = true;
-            X402Escrow.Escrow memory e = X402Escrow(escrow).escrowOf(observedBuyer);
+            AssayEscrow.Escrow memory e = AssayEscrow(escrow).escrowOf(observedBuyer);
             seenBalance = e.balance;
             seenWithdrawRequested = e.withdrawRequested;
             seenWithdrawAvailableAt = e.withdrawAvailableAt;
             seenTotalWithdrawn = e.totalWithdrawn;
             seenTotalFunded = e.totalFunded;
-            seenTotalEscrowed = X402Escrow(escrow).totalEscrowed();
+            seenTotalEscrowed = AssayEscrow(escrow).totalEscrowed();
         }
         return true;
     }
@@ -133,7 +133,7 @@ contract WithdrawReentrantUSDG {
 
 /// `withdraw()` — the one door that is never relayed, takes no destination and is never
 /// pause-gated.
-contract X402EscrowWithdrawTest is Fixture {
+contract AssayEscrowWithdrawTest is Fixture {
     event EscrowWithdrawn(address indexed buyer, uint64 requested, uint64 amount);
 
     function setUp() public virtual override {
@@ -510,7 +510,7 @@ contract X402EscrowWithdrawTest is Fixture {
     /// substitute for the other.
     function test_wrongState_aReentrantAssetCannotRecurseIntoWithdraw() public {
         WithdrawReentrantUSDG evil = new WithdrawReentrantUSDG();
-        X402Escrow e2 = _deployEscrow(address(evil));
+        AssayEscrow e2 = _deployEscrow(address(evil));
 
         evil.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -538,7 +538,7 @@ contract X402EscrowWithdrawTest is Fixture {
     /// the outer call succeeds, and its storage survives to be asserted.
     function test_everyEffectIsWrittenBeforeTheWithdrawalTransfer() public {
         WithdrawObserverUSDG obs = new WithdrawObserverUSDG();
-        X402Escrow e2 = _deployEscrow(address(obs));
+        AssayEscrow e2 = _deployEscrow(address(obs));
 
         obs.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -575,7 +575,7 @@ contract X402EscrowWithdrawTest is Fixture {
     /// artifact rather than out of the source, so a function added through an inherited contract
     /// is caught too. A deliberate addition is a red test that asks the editor to say so here.
     function test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/X402Escrow.sol"));
+        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
         assertEq(
             _count(src, "        ASSET.safeTransfer(msg.sender, amount);\n"),
             1,
@@ -631,9 +631,9 @@ contract X402EscrowWithdrawTest is Fixture {
         ];
 
         string memory artifact =
-            vm.readFile(string.concat(vm.projectRoot(), "/out/X402Escrow.sol/X402Escrow.json"));
+            vm.readFile(string.concat(vm.projectRoot(), "/out/AssayEscrow.sol/AssayEscrow.json"));
         string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 33, "X402Escrow's external surface changed size");
+        assertEq(keys.length, 33, "AssayEscrow's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;

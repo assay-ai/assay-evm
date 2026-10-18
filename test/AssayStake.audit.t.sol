@@ -3,14 +3,14 @@ pragma solidity 0.8.24;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
-import {X402Stake} from "../src/X402Stake.sol";
+import {AssayStake} from "../src/AssayStake.sol";
 import {SlashAttestation, ResponseClass, SlashStatus, ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
 /// Regressions built from the three audits of `a4f97ab` (audit A adversarial, B business,
 /// C economics). Each test is the auditor's proof turned around to assert the fixed behaviour.
-contract X402StakeAuditTest is Fixture {
+contract AssayStakeAuditTest is Fixture {
     uint256 internal vPk = 0xA0D17;
     address internal vAddr;
     address internal beneficiary = address(0xBE4E);

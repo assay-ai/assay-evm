@@ -11,7 +11,7 @@
 # `cast code 0x915Ef7…03ec` on 4663 returns `0x` while the same call on 46630 returns code, so
 # the probe works and the absence is real. The mainnet address is an input this repo cannot
 # derive, and the specific mistake it guards is an operator pasting the testnet address into a
-# mainnet deploy. Nothing downstream would notice: `X402Escrow.initialize` calls `decimals()` on
+# mainnet deploy. Nothing downstream would notice: `AssayEscrow.initialize` calls `decimals()` on
 # it, a call to an address with no code returns empty rather than reverting, and the failure
 # surfaces as an ABI decode error naming neither the address nor the network.
 set -euo pipefail
@@ -68,13 +68,13 @@ kc() { cast keccak "$($FORGE inspect "$1" deployedBytecode | tr -d '\n')"; }
 # shellcheck source=script/abi-surface.sh
 . "$HERE/script/abi-surface.sh"
 
-# `Deploy._salt` is `keccak256(abi.encodePacked("x402:", name, ":v2:", block.chainid))`, and
+# `Deploy._salt` is `keccak256(abi.encodePacked("assay:", name, ":v2:", block.chainid))`, and
 # `block.chainid` is a `uint256` — so it contributes THIRTY-TWO BIG-ENDIAN BYTES, not the decimal
-# string. Spelling it as `printf 'x402:%s:v2:%s' "$name" "$CHAIN_ID" | cast from-utf8 | cast keccak`
+# string. Spelling it as `printf 'assay:%s:v2:%s' "$name" "$CHAIN_ID" | cast from-utf8 | cast keccak`
 # gives a different hash and would put a salt in the record that the script never used.
 # `test_theSaltFormulaMatchesTheOneTheShellScriptComputes` pins both spellings against each other.
 salt() {
-  cast keccak "$(cast concat-hex "$(cast from-utf8 "x402:$1:v2:")" "$(cast to-uint256 "$CHAIN_ID")")"
+  cast keccak "$(cast concat-hex "$(cast from-utf8 "assay:$1:v2:")" "$(cast to-uint256 "$CHAIN_ID")")"
 }
 
 # HERE is this repository's root. Resolving one directory higher would stamp the record with the
@@ -96,11 +96,11 @@ OUT="deployments/$CHAIN_ID.json"
 # is inside the initcode, so it is inside the initcode hash. Measured, same salt, no broadcast:
 #
 #   sender 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38 nonce 0
-#       X402Config impl 0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-#       X402Config proxy 0x8c8A794e48B23Cfd23a7eE6365f89E4EE0571e6f
+#       AssayConfig impl 0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+#       AssayConfig proxy 0x8c8A794e48B23Cfd23a7eE6365f89E4EE0571e6f
 #   sender 0x1111111111111111111111111111111111111111 nonce 0
-#       X402Config impl 0x8F7a45eBDe059392E46A46DCc14AB24681A961Ea
-#       X402Config proxy 0x45a60b9e5647d2b976a28EEB702563e10e650da7
+#       AssayConfig impl 0x8F7a45eBDe059392E46A46DCc14AB24681A961Ea
+#       AssayConfig proxy 0x45a60b9e5647d2b976a28EEB702563e10e650da7
 #
 # **So the address depends on the key AND ITS NONCE**, which is strictly more fragile than
 # "salt + deployer": the dry run signs from nonce 0 and a real key will not, so a dry run's
@@ -126,43 +126,43 @@ cat > "$OUT" <<JSON
   "deployer": "0x0000000000000000000000000000000000000000",
   "create2Deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
   "contracts": {
-    "X402Config": {
+    "AssayConfig": {
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
-      "implementationRuntimeKeccak": "$(kc X402Config)",
-      "abiKeccak": "$(abi_hash X402Config)",
+      "implementationRuntimeKeccak": "$(kc AssayConfig)",
+      "abiKeccak": "$(abi_hash AssayConfig)",
       "abiFunctions": [
-$(abi_json_entries X402Config)
+$(abi_json_entries AssayConfig)
       ],
       "salt": "$(salt Config)",
       "initializerArgs": "0x"
     },
-    "X402Stake": {
+    "AssayStake": {
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
-      "implementationRuntimeKeccak": "$(kc X402Stake)",
-      "abiKeccak": "$(abi_hash X402Stake)",
+      "implementationRuntimeKeccak": "$(kc AssayStake)",
+      "abiKeccak": "$(abi_hash AssayStake)",
       "abiFunctions": [
-$(abi_json_entries X402Stake)
+$(abi_json_entries AssayStake)
       ],
       "salt": "$(salt Stake)",
       "initializerArgs": "0x"
     },
-    "X402Escrow": {
+    "AssayEscrow": {
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
-      "implementationRuntimeKeccak": "$(kc X402Escrow)",
-      "abiKeccak": "$(abi_hash X402Escrow)",
+      "implementationRuntimeKeccak": "$(kc AssayEscrow)",
+      "abiKeccak": "$(abi_hash AssayEscrow)",
       "abiFunctions": [
-$(abi_json_entries X402Escrow)
+$(abi_json_entries AssayEscrow)
       ],
       "salt": "$(salt Escrow)",
       "initializerArgs": "0x"
     }
   },
   "domainSeparators": {
-    "X402Escrow": "0x0000000000000000000000000000000000000000000000000000000000000000",
-    "X402Stake":  "0x0000000000000000000000000000000000000000000000000000000000000000"
+    "AssayEscrow": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "AssayStake":  "0x0000000000000000000000000000000000000000000000000000000000000000"
   },
   "status": "pending-deploy"
 }

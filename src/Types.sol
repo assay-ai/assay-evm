@@ -22,7 +22,7 @@ struct Voucher {
     uint64 expiresAt;
 }
 
-/// The verifier's judgement. Signed against X402Stake's domain, never X402Escrow's — two
+/// The verifier's judgement. Signed against AssayStake's domain, never AssayEscrow's — two
 /// verifying contracts means a captured attestation cannot be replayed at the escrow door even
 /// if the two structs ever came to share a shape.
 ///
@@ -69,7 +69,7 @@ struct RequestWithdraw {
 /// other door of the escrow still recovers to the payer or reads `msg.sender`.
 ///
 /// `nonce` is the escrow's `authNonce`, shared with [`SetLimits`] and [`RequestWithdraw`] —
-/// the argument is at `X402Escrow.authorizeDelegate`.
+/// the argument is at `AssayEscrow.authorizeDelegate`.
 struct AuthorizeDelegate {
     address payer;
     address delegate;
@@ -88,7 +88,7 @@ struct RevokeDelegate {
     uint64 deadline;
 }
 
-/// Everything X402Config's admin can change, in one struct so `updateConfig` validates it as
+/// Everything AssayConfig's admin can change, in one struct so `updateConfig` validates it as
 /// a set — the two split shares are only meaningful together (update_config.rs).
 struct ParamSet {
     address treasury;

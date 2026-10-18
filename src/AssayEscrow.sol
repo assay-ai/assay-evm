@@ -8,8 +8,8 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
-import {IX402Config} from "./interfaces/IX402Config.sol";
-import {IX402StakeView} from "./interfaces/IX402StakeView.sol";
+import {IAssayConfig} from "./interfaces/IAssayConfig.sol";
+import {IAssayStakeView} from "./interfaces/IAssayStakeView.sol";
 import {IERC20Decimals} from "./interfaces/IERC20Decimals.sol";
 import {Voucher712} from "./libraries/Voucher712.sol";
 import {Sig} from "./libraries/Sig.sol";
@@ -73,7 +73,7 @@ import "./Errors.sol";
 /// are proxy-safe: `_domainSeparatorV4()` rebuilds whenever `address(this) != _cachedThis`, so
 /// the separator is the PROXY's; `nonReentrant` tests `_status == ENTERED`, so the zero slot a
 /// proxy starts with reads as NOT_ENTERED. D-1 carries the full argument and the two edges.
-contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
+contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// Four slots per buyer, exactly. Asserted by `script/check-layout.sh`, which fails the
@@ -126,8 +126,8 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// Ordinary storage, written once in `initialize` and never again — the standard,
     /// upgrade-safe shape (D-1). The UPPER_SNAKE_CASE names are kept from the pre-proxy draft,
     /// where these were immutables.
-    IX402Config public CONFIG;
-    IX402StakeView public STAKE;
+    IAssayConfig public CONFIG;
+    IAssayStakeView public STAKE;
     IERC20 public ASSET;
 
     /// `internal` rather than `public` because the generated getter for a struct-valued mapping
@@ -137,7 +137,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// The solvency counter — `Config.total_deposited` minus its withdrawals, in the contract
     /// that holds the custody rather than in Config (`state.rs` keeps the stake totals on
-    /// Solana's Config; X402Config.sol's header records why the EVM split puts them here).
+    /// Solana's Config; AssayConfig.sol's header records why the EVM split puts them here).
     ///
     /// Solvency is NEVER derived from `ASSET.balanceOf(address(this))`: USDG is an upgradeable
     /// Paxos proxy with a blocklist, and a blocklisted contract's `balanceOf` and its
@@ -262,7 +262,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
 
     /// An initialiser rather than a constructor because the contract is upgradeable (D-1): a
     /// constructor would write the implementation's storage, not the proxy's.
-    function initialize(IX402Config config, IX402StakeView stake, IERC20 asset)
+    function initialize(IAssayConfig config, IAssayStakeView stake, IERC20 asset)
         external
         initializer
     {
@@ -275,7 +275,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
         // constant, so this folds to nothing and only guards a FRESH proxy's first
         // implementation — `initializer` never runs again on an upgrade. What holds the invariant
         // for every later implementation is CI:
-        // `test/X402Escrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`
+        // `test/AssayEscrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`
         // and `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`.
         if (Constants.WITHDRAW_DELAY_SECONDS <= Constants.MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS) {
             revert WithdrawDelayTooShort();
@@ -326,11 +326,11 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// "owner exits are never paused"): the pause closes every door that moves money or changes
     /// a party's standing — deposits, redemption, the exit (`requestWithdraw`, `withdraw`), the
     /// limits and delegate authorisation here, and every deposit, exit and slash door on
-    /// X402Stake. It leaves open only what reduces risk or releases a hold: `revokeDelegate`,
+    /// AssayStake. It leaves open only what reduces risk or releases a hold: `revokeDelegate`,
     /// `disputeSlash`, `cancelSlash`, `expireSlash`, and the config roles' own calls. **It never
     /// moves anybody's money**: there is no seize and no sweep, and a paused exit reopens on
     /// unpause with the balance untouched. The same doors refuse a blocked party
-    /// (`X402Config.blocked`); both checks are the one `CONFIG.assertActive` call.
+    /// (`AssayConfig.blocked`); both checks are the one `CONFIG.assertActive` call.
     ///
     /// **This is checks → INTERACTION → effects, and it is not strict CEI. Read this before
     /// copying the shape.** The pull has to happen before the credit, because what is credited is
@@ -431,7 +431,7 @@ contract X402Escrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     /// `params()` is read ONCE, into memory, and the same `ParamSet` is used for the redeemer
     /// pin, the stake floor, the take rate and the treasury. Reading them from four calls would
     /// let a Config upgrade mid-transaction hand this function a redeemer from one parameter set
-    /// and a treasury from another; `IX402Config.params`'s own note makes the same argument.
+    /// and a treasury from another; `IAssayConfig.params`'s own note makes the same argument.
     function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
         ParamSet memory p = CONFIG.params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
