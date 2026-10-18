@@ -42,10 +42,14 @@ contract RedeemObserverUSDG {
     uint64 public seenWindowStartedAt;
     uint128 public seenTotalRedeemed;
     uint128 public seenTotalEscrowed;
+    uint128 public seenTotalHeld;
+    uint8 public seenHeldStatus;
+    uint64 public observedSeq;
 
-    function arm(address escrow_, address buyer_) external {
+    function arm(address escrow_, address buyer_, uint64 seq_) external {
         escrow = escrow_;
         observedBuyer = buyer_;
+        observedSeq = seq_;
         armed = true;
     }
 
@@ -80,6 +84,8 @@ contract RedeemObserverUSDG {
             seenWindowStartedAt = e.windowStartedAt;
             seenTotalRedeemed = e.totalRedeemed;
             seenTotalEscrowed = X402Escrow(escrow).totalEscrowed();
+            seenTotalHeld = X402Escrow(escrow).totalHeld();
+            seenHeldStatus = uint8(X402Escrow(escrow).held(observedBuyer, observedSeq).status);
         }
         return true;
     }
@@ -154,10 +160,14 @@ contract X402EscrowRedeemTest is Fixture {
         return VoucherSigner.signVoucher(WRONG_KEY, ds, v);
     }
 
+    /// Redeem, then collect the held payment as the redeemer (redeem into hold): the tests in
+    /// this file reason about the money a redemption moves, which since the hold is the money
+    /// its collect moves. `X402Escrow.hold.t.sol` covers the hold itself.
     function _redeem(Voucher memory v) internal {
         bytes memory sig = _sig(v);
         vm.prank(redeemer);
         escrow.redeemVoucher(v, sig);
+        _collect(v.payer, v.seq);
     }
 
     function _expect(Voucher memory v, bytes4 err) internal {
@@ -342,6 +352,7 @@ contract X402EscrowRedeemTest is Fixture {
         assertEq(signed.amount, 250_000, "the signed struct was rewritten by a flip above");
         vm.prank(redeemer);
         escrow.redeemVoucher(signed, sig);
+        _collect(buyer, signed.seq);
         assertEq(usdg.balanceOf(provider), 225_000);
     }
 
@@ -803,13 +814,15 @@ contract X402EscrowRedeemTest is Fixture {
 
     // --- effects strictly before interactions ------------------------------------------------
 
-    /// The proof that `nonReentrant` is load-bearing HERE in a way it is not on the funding
-    /// doors: this path pays out, so there is no measured delta to fall back on.
+    /// The proof that `nonReentrant` is load-bearing on the payout door. Since redeem into hold
+    /// that door is `collectHeld`: this path pays out, so there is no measured delta to fall back
+    /// on.
     ///
-    /// The asset re-enters `redeemVoucher` from inside the provider payout, with the SAME
-    /// voucher. The token is also made the configured redeemer, so the nested call would clear
-    /// `onlyRedeemer` as well — the only thing left refusing it is the guard.
-    function test_wrongState_aReentrantAssetCannotRecurseIntoRedeemVoucher() public {
+    /// The asset re-enters `collectHeld` from inside the provider payout, with the SAME record.
+    /// The token is also made the configured redeemer, so the nested call would clear the
+    /// redeemer's timing rule as well — the guard (and, behind it, the status written first) is
+    /// what refuses it.
+    function test_wrongState_aReentrantAssetCannotRecurseIntoCollectHeld() public {
         RedeemReentrantUSDG evil = new RedeemReentrantUSDG();
         X402Escrow e2 = _deployEscrow(address(evil), address(0));
 
@@ -827,25 +840,28 @@ contract X402EscrowRedeemTest is Fixture {
 
         Voucher memory v = _v(250_000, 1);
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, e2.DOMAIN_SEPARATOR(), v);
-        evil.arm(address(e2), abi.encodeCall(X402Escrow.redeemVoucher, (v, sig)));
+        vm.prank(address(evil));
+        e2.redeemVoucher(v, sig); // redeem into hold transfers nothing, so nothing re-enters
+        vm.warp(e2.held(buyer, 1).collectableAt);
 
-        // `evil.didReenter()` cannot be read afterwards — the outer call reverts, and that
-        // unwinds the MOCK's storage along with the escrow's. `expectCall` is checked by the
-        // inspector as calls happen, so it survives the revert and is the only way to assert the
-        // nested call was actually attempted rather than skipped.
-        vm.expectCall(address(e2), abi.encodeCall(X402Escrow.redeemVoucher, (v, sig)), 2);
+        bytes memory collect = abi.encodeCall(X402Escrow.collectHeld, (buyer, uint64(1)));
+        evil.arm(address(e2), collect);
+        // `expectCall` survives the outer revert, so it is what proves the nested call happened.
+        vm.expectCall(address(e2), collect, 2);
         vm.prank(address(evil));
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        e2.redeemVoucher(v, sig);
+        e2.collectHeld(buyer, 1);
 
-        assertEq(e2.escrowOf(buyer).balance, 10_000_000, "and nothing moved");
-        assertEq(evil.balanceOf(provider), 0);
-        assertEq(e2.escrowOf(buyer).seqHigh, 0);
+        assertEq(uint8(e2.held(buyer, 1).status), uint8(X402Escrow.HeldStatus.Held), "unwound");
+        assertEq(e2.totalHeld(), 250_000);
+        assertEq(evil.balanceOf(provider), 0, "and nothing moved");
     }
 
-    /// **The committable ordering guard (a review suggestion, sibling of F-1).** Every one of the
-    /// six effects must already be written when the FIRST external call happens. This is the test
-    /// the batch path inherits: a batch that reorders anything fails it without any mutation.
+    /// **The committable ordering guard (a review suggestion, sibling of F-1).** Every effect must
+    /// already be written when the FIRST external transfer happens. Since redeem into hold the
+    /// redemption makes no transfer at all, and the first transfer is the collect's — so the
+    /// observer checks that the redemption's six effects AND the collect's two (`Collected`,
+    /// `totalHeld` lowered) are all in place when the provider payout runs.
     function test_everyEffectIsWrittenBeforeTheFirstTransfer() public {
         RedeemObserverUSDG obs = new RedeemObserverUSDG();
         X402Escrow e2 = _deployEscrow(address(obs), address(0));
@@ -857,13 +873,18 @@ contract X402EscrowRedeemTest is Fixture {
         e2.setLimits(1_000_000, 5_000_000);
         vm.stopPrank();
 
-        obs.arm(address(e2), buyer);
+        obs.arm(address(e2), buyer, 1);
 
-        uint64 t = uint64(block.timestamp);
+        uint64 t = uint64(vm.getBlockTimestamp()); // not block.timestamp: the test warps below
         Voucher memory v = _v(250_000, 1);
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, e2.DOMAIN_SEPARATOR(), v);
         vm.prank(redeemer);
         e2.redeemVoucher(v, sig);
+        assertFalse(obs.observed(), "the redemption made a transfer");
+
+        vm.warp(e2.held(buyer, 1).collectableAt);
+        vm.prank(redeemer);
+        e2.collectHeld(buyer, 1);
 
         assertTrue(obs.observed(), "the observer never ran, so nothing below is asserting anything");
         assertEq(obs.seenBalance(), 9_750_000, "balance not yet debited at payout time");
@@ -872,8 +893,14 @@ contract X402EscrowRedeemTest is Fixture {
         assertEq(obs.seenWindowStartedAt(), t, "windowStartedAt not yet anchored at payout time");
         assertEq(obs.seenTotalRedeemed(), 250_000, "totalRedeemed not yet advanced at payout time");
         assertEq(obs.seenTotalEscrowed(), 9_750_000, "totalEscrowed not yet debited at payout time");
+        assertEq(obs.seenTotalHeld(), 0, "totalHeld not yet lowered at payout time");
+        assertEq(
+            obs.seenHeldStatus(),
+            uint8(X402Escrow.HeldStatus.Collected),
+            "the record not yet Collected at payout time"
+        );
 
-        // and the redemption really completed, so the observation above is of a real payout.
+        // and the collect really completed, so the observation above is of a real payout.
         assertEq(obs.balanceOf(provider), 225_000);
         assertEq(obs.balanceOf(treasury), 25_000);
     }

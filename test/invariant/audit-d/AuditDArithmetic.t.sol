@@ -271,6 +271,7 @@ contract AuditDEscrowEdgesTest is Fixture {
         uint256 provBefore = usdg.balanceOf(provider);
         vm.prank(redeemer);
         escrow.redeemVoucher(v, sig);
+        _collect(buyer, 1); // redeem into hold: the payout is the collect's
         (uint64 fee, uint64 net) = Fee.splitFee(M, Constants.MAX_TAKE_RATE_BPS);
         assertEq(usdg.balanceOf(provider) - provBefore, net);
         assertEq(usdg.balanceOf(treasury), fee);

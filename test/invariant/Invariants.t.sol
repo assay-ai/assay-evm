@@ -24,7 +24,7 @@ contract InvariantsTest is Test {
         // Only the actions are fuzzed. Without the selector lists, `targetContract` would also
         // offer forge-std's own inherited externals — the handler inherits `Test` for `bound`
         // and `vm` — and a run would spend its calls on those instead.
-        bytes4[] memory e = new bytes4[](8);
+        bytes4[] memory e = new bytes4[](10);
         e[0] = EscrowHandler.deposit.selector;
         e[1] = EscrowHandler.depositFor.selector;
         e[2] = EscrowHandler.setLimits.selector;
@@ -33,6 +33,8 @@ contract InvariantsTest is Test {
         e[5] = EscrowHandler.withdraw.selector;
         e[6] = EscrowHandler.warp.selector;
         e[7] = EscrowHandler.donate.selector;
+        e[8] = EscrowHandler.collectHeld.selector;
+        e[9] = EscrowHandler.refundHeld.selector;
         targetSelector(FuzzSelector({addr: address(escrowHandler), selectors: e}));
 
         bytes4[] memory s = new bytes4[](10);
@@ -64,11 +66,20 @@ contract InvariantsTest is Test {
     /// mainnet USDG is presumed to be an upgradeable issuer proxy with a blocklist, so a
     /// `balanceOf`-based solvency check would refuse EVERY withdrawal rather than the one actually
     /// blocked.
+    ///
+    /// Since "redeem into hold" what it owes is the buyers' balances PLUS every held payment not
+    /// yet collected or refunded: `balanceOf >= totalEscrowed + totalHeld`.
     function invariant_theContractHoldsAtLeastWhatItOwes() public view {
         assertGe(
             escrowHandler.usdg().balanceOf(address(escrowHandler.escrow())),
-            escrowHandler.escrow().totalEscrowed()
+            uint256(escrowHandler.escrow().totalEscrowed()) + escrowHandler.escrow().totalHeld()
         );
+    }
+
+    /// `totalHeld` is exactly the sum of the `Held` records, computed from the records: a collect
+    /// or refund that forgot to lower it, or lowered it twice, shows up here.
+    function invariant_heldRecordsSumToTotalHeld() public view {
+        assertEq(escrowHandler.sumOfHeld(), escrowHandler.escrow().totalHeld());
     }
 
     /// D-9: `seq` is a high-water mark and never goes backwards. There is no path that lowers it
@@ -173,11 +184,14 @@ contract InvariantsTest is Test {
         h.depositFor(1, 2, 300_000_000);
         h.setLimits(0, 100_000_000, 400_000_000);
         h.redeem(0, 1, 50_000_000);
+        h.redeem(0, 1, 10_000_000);
+        h.refundHeld(1); // the second redemption goes back to the balance
         h.donate(1_000);
         h.requestWithdraw(0, 10_000_000);
         h.warp(3_599); // the withdraw delay is 3,600s, so two warps are needed
         h.warp(3_599);
         h.withdraw(0);
+        h.collectHeld(0, false); // the first, past its one-hour hold
 
         StakeHandler k = stakeHandler;
         k.depositStake(0, 500_000_000);
@@ -197,7 +211,7 @@ contract InvariantsTest is Test {
         k.warp(4 * 86_400); // the unbonding period is 14 days and the warps above reach 11
         k.withdrawStake(0, 100_000_000);
 
-        string[8] memory escrowOps = [
+        string[10] memory escrowOps = [
             "deposit",
             "depositFor",
             "setLimits",
@@ -205,7 +219,9 @@ contract InvariantsTest is Test {
             "requestWithdraw",
             "withdraw",
             "warp",
-            "donate"
+            "donate",
+            "collectHeld",
+            "refundHeld"
         ];
         for (uint256 i = 0; i < escrowOps.length; i++) {
             assertGt(
@@ -235,10 +251,11 @@ contract InvariantsTest is Test {
             );
         }
 
-        // Every identity, over the state those 21 calls built — a state in which money has been
+        // Every identity, over the state those calls built — a state in which money has been
         // redeemed, withdrawn, donated, staked, unbonded, slashed, cancelled and reaped.
         invariant_escrowBalancesSumToTotalEscrowed();
         invariant_theContractHoldsAtLeastWhatItOwes();
+        invariant_heldRecordsSumToTotalHeld();
         invariant_seqHighIsMonotonic();
         invariant_stakeAccountingIdentity();
         invariant_pendingSlashEqualsTheSumOfPendingReservations();
@@ -254,7 +271,7 @@ contract InvariantsTest is Test {
     }
 
     function _escrowLanded() internal view returns (uint256 n) {
-        string[8] memory ops = [
+        string[10] memory ops = [
             "deposit",
             "depositFor",
             "setLimits",
@@ -262,7 +279,9 @@ contract InvariantsTest is Test {
             "requestWithdraw",
             "withdraw",
             "warp",
-            "donate"
+            "donate",
+            "collectHeld",
+            "refundHeld"
         ];
         for (uint256 i = 0; i < ops.length; i++) {
             n += escrowHandler.landed(_k(ops[i]));

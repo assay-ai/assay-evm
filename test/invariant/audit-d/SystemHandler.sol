@@ -670,22 +670,96 @@ contract SystemHandler is Test {
 
         uint256 provBefore = usdg.balanceOf(v.provider);
         uint256 treasBefore = usdg.balanceOf(TREASURY);
+        uint128 heldBefore = escrow.totalHeld();
         bool paused = config.paused();
         bool blk = config.blocked(v.payer) || config.blocked(v.provider)
             || (del != address(0) && config.blocked(del));
         uint16 take = config.params().takeRateBps;
+        uint64 hold = config.collectHoldSeconds();
         bool s = _call(caller, address(escrow), abi.encodeCall(X402Escrow.redeemVoucher, (v, sig)));
         if (!s) return;
         if (caller != REDEEMER) _violate("role", "redeem by a non-redeemer");
         if (paused) _violate("pause", "redeem while paused");
         if (blk) _violate("block", "redeem paid/charged a blocked party");
         _checkRedeemCaps(v, del, 0, 0);
-        (uint64 fee, uint64 net) = Fee.splitFee(v.amount, take);
-        if (usdg.balanceOf(v.provider) - provBefore != net) _violate("payout", "provider net");
-        if (usdg.balanceOf(TREASURY) - treasBefore != fee) _violate("payout", "treasury fee");
+        // Redeem into hold: nobody is paid, the amount is held with the take rate and clock frozen.
+        if (usdg.balanceOf(v.provider) != provBefore) _violate("payout", "provider paid at redeem");
+        if (usdg.balanceOf(TREASURY) != treasBefore) _violate("payout", "treasury paid at redeem");
+        X402Escrow.HeldPayment memory hp = escrow.held(v.payer, v.seq);
+        if (
+            hp.status != X402Escrow.HeldStatus.Held || hp.amount != v.amount
+                || hp.provider != v.provider || hp.takeRateBps != take
+                || hp.collectableAt != uint64(block.timestamp) + hold
+        ) _violate("hold", "the held record is not the redemption");
+        if (escrow.totalHeld() != heldBefore + v.amount) _violate("hold", "totalHeld not raised");
         if (escrow.escrowOf(v.payer).balance != e.balance - v.amount) {
             _violate("payout", "payer debit");
         }
+    }
+
+    /// Redeem into hold: a collect of one of the payer's recent seqs, by the redeemer or a
+    /// stranger. It may land only on a `Held` record, not paused, neither payer nor provider
+    /// blocked, from `collectableAt` for the redeemer and `collectableAt + HELD_TIMEOUT` for
+    /// anybody else — and it pays exactly the split frozen at redemption.
+    function collectHeld(uint256 buyerSeed, uint256 seed) external step("collectHeld") {
+        uint256 bi = buyerSeed % 3;
+        address payer = buyers[bi];
+        uint64 high = escrow.escrowOf(payer).seqHigh;
+        uint64 back = uint64(seed % 4);
+        if (high <= back) return;
+        uint64 seq = high - back;
+        X402Escrow.HeldPayment memory hp = escrow.held(payer, seq);
+        address caller = seed % 5 == 4 ? strangers[0] : REDEEMER;
+        address treasury = config.params().treasury;
+        uint256 provBefore = usdg.balanceOf(hp.provider);
+        uint256 treasBefore = usdg.balanceOf(treasury);
+        bool paused = config.paused();
+        bool blk = config.blocked(payer) || config.blocked(hp.provider);
+        uint256 opensAt = uint256(hp.collectableAt)
+            + (caller == REDEEMER ? 0 : uint256(Constants.HELD_TIMEOUT_SECONDS));
+        bool s =
+            _call(caller, address(escrow), abi.encodeCall(X402Escrow.collectHeld, (payer, seq)));
+        if (!s) return;
+        if (hp.status != X402Escrow.HeldStatus.Held) _violate("hold", "collect of a non-Held");
+        if (block.timestamp < opensAt) _violate("hold", "collect before its time");
+        if (paused) _violate("pause", "collect while paused");
+        if (blk) _violate("block", "collect paid a blocked party");
+        (uint64 fee, uint64 net) = Fee.splitFee(hp.amount, hp.takeRateBps);
+        if (treasury == hp.provider) {
+            if (usdg.balanceOf(hp.provider) - provBefore != uint256(net) + fee) {
+                _violate("payout", "collect total");
+            }
+        } else {
+            if (usdg.balanceOf(hp.provider) - provBefore != net) _violate("payout", "collect net");
+            if (usdg.balanceOf(treasury) - treasBefore != fee) _violate("payout", "collect fee");
+        }
+        if (escrow.held(payer, seq).status != X402Escrow.HeldStatus.Collected) {
+            _violate("hold", "collected record not marked");
+        }
+    }
+
+    /// Redeem into hold: a refund, by the redeemer or a stranger. It may land only for the
+    /// redeemer, on a `Held` record, before the timeout; it credits the whole amount back and
+    /// leaves the window counter alone.
+    function refundHeld(uint256 buyerSeed, uint256 seed) external step("refundHeld") {
+        uint256 bi = buyerSeed % 3;
+        address payer = buyers[bi];
+        X402Escrow.Escrow memory e = escrow.escrowOf(payer);
+        uint64 back = uint64(seed % 4);
+        if (e.seqHigh <= back) return;
+        uint64 seq = e.seqHigh - back;
+        X402Escrow.HeldPayment memory hp = escrow.held(payer, seq);
+        address caller = seed % 7 == 6 ? strangers[1] : REDEEMER;
+        bool s = _call(caller, address(escrow), abi.encodeCall(X402Escrow.refundHeld, (payer, seq)));
+        if (!s) return;
+        if (caller != REDEEMER) _violate("role", "refund by a non-redeemer");
+        if (hp.status != X402Escrow.HeldStatus.Held) _violate("hold", "refund of a non-Held");
+        if (block.timestamp >= uint256(hp.collectableAt) + Constants.HELD_TIMEOUT_SECONDS) {
+            _violate("hold", "refund after the timeout");
+        }
+        X402Escrow.Escrow memory a = escrow.escrowOf(payer);
+        if (a.balance != e.balance + hp.amount) _violate("hold", "refund credit");
+        if (a.spentInWindow != e.spentInWindow) _violate("hold", "refund restored the window");
     }
 
     // --- the payer's authorisation, modelled here (review 2026-10-16 F5) -----------------------

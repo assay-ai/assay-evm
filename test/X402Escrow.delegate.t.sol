@@ -98,9 +98,12 @@ contract X402EscrowDelegateTest is Fixture {
         return VoucherSigner.signVoucher(key, ds, v);
     }
 
+    /// Redeem, then collect as the redeemer (redeem into hold), so a payout assertion here still
+    /// reads the money the voucher moved.
     function _redeem(Voucher memory v, bytes memory sig) internal {
         vm.prank(redeemer);
         escrow.redeemVoucher(v, sig);
+        _collect(v.payer, v.seq);
     }
 
     function _expect(Voucher memory v, bytes memory sig, bytes4 err) internal {

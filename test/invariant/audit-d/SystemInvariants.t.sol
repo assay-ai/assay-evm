@@ -67,7 +67,7 @@ contract SystemInvariantsTest is Test {
         s[n++] = SystemHandler.registerVerifier.selector;
         s[n++] = SystemHandler.revokeVerifier.selector;
         s[n++] = SystemHandler.warp.selector;
-        bytes4[] memory more = new bytes4[](35);
+        bytes4[] memory more = new bytes4[](37);
         for (uint256 i = 0; i < 30; i++) {
             more[i] = s[i];
         }
@@ -76,6 +76,8 @@ contract SystemInvariantsTest is Test {
         more[32] = SystemHandler.donate.selector;
         more[33] = SystemHandler.warp.selector; // weighted
         more[34] = SystemHandler.executeSlash.selector; // weighted
+        more[35] = SystemHandler.collectHeld.selector;
+        more[36] = SystemHandler.refundHeld.selector;
         targetSelector(FuzzSelector({addr: address(h), selectors: more}));
         targetContract(address(h));
     }
@@ -161,10 +163,11 @@ contract SystemInvariantsTest is Test {
             );
         }
         assertEq(sum, escrow.totalEscrowed(), "sum of balances != totalEscrowed");
+        // Redeem into hold: held money is out of the balances and still in the contract.
         assertEq(
             usdg.balanceOf(address(escrow)),
-            uint256(escrow.totalEscrowed()) + h.donatedEscrow(),
-            "escrow token balance != totalEscrowed + donations"
+            uint256(escrow.totalEscrowed()) + escrow.totalHeld() + h.donatedEscrow(),
+            "escrow token balance != totalEscrowed + totalHeld + donations"
         );
     }
 

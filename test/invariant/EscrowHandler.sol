@@ -46,6 +46,11 @@ contract EscrowHandler is Test, StepCounter {
     uint64[4] internal observedSeqHigh;
     bool public seqHighNeverWentBackwards = true;
 
+    /// Every `(actor, seq)` this handler redeemed, so the held records can be summed OUTSIDE the
+    /// contract and a collect or refund can pick a real one.
+    uint256[] internal heldActor;
+    uint64[] internal heldSeq;
+
     /// Landed-call counters, one per action, indexed by the action's own name.
     mapping(bytes32 => uint256) public landed;
 
@@ -119,6 +124,15 @@ contract EscrowHandler is Test, StepCounter {
     function sumOfBalances() external view returns (uint128 total) {
         for (uint256 i = 0; i < 4; i++) {
             total += escrow.escrowOf(actors[i]).balance;
+        }
+    }
+
+    /// The sum of every `Held` record's amount, computed from the records — the left-hand side of
+    /// `totalHeld`'s identity.
+    function sumOfHeld() external view returns (uint128 total) {
+        for (uint256 k = 0; k < heldSeq.length; k++) {
+            X402Escrow.HeldPayment memory h = escrow.held(actors[heldActor[k]], heldSeq[k]);
+            if (h.status == X402Escrow.HeldStatus.Held) total += h.amount;
         }
     }
 
@@ -205,7 +219,27 @@ contract EscrowHandler is Test, StepCounter {
         vm.prank(REDEEMER);
         escrow.redeemVoucher(v, sig);
         landed["redeem"] += 1;
+        heldActor.push(i);
+        heldSeq.push(seq);
         _recordSeq(i);
+    }
+
+    /// Redeem into hold: the redeemer collects a held record (refused before `collectableAt`;
+    /// `warp` gets there), or anybody once the timeout has run.
+    function collectHeld(uint256 pick, bool asStranger) external step {
+        if (heldSeq.length == 0) return;
+        uint256 k = bound(pick, 0, heldSeq.length - 1);
+        vm.prank(asStranger ? address(0xBEEF) : REDEEMER);
+        escrow.collectHeld(actors[heldActor[k]], heldSeq[k]);
+        landed["collectHeld"] += 1;
+    }
+
+    function refundHeld(uint256 pick) external step {
+        if (heldSeq.length == 0) return;
+        uint256 k = bound(pick, 0, heldSeq.length - 1);
+        vm.prank(REDEEMER);
+        escrow.refundHeld(actors[heldActor[k]], heldSeq[k]);
+        landed["refundHeld"] += 1;
     }
 
     function requestWithdraw(uint256 actorSeed, uint64 amount) external step {

@@ -53,6 +53,7 @@ contract BatchObserverUSDG {
         uint64 seqHigh;
         uint64 spentInWindow;
         uint128 totalRedeemed;
+        uint8 heldStatus; // of the payer's seq 1 (redeem into hold)
     }
 
     address public escrow;
@@ -63,6 +64,7 @@ contract BatchObserverUSDG {
     mapping(uint256 => address) public seenTo;
     mapping(uint256 => uint256) public seenAmount;
     mapping(uint256 => uint128) public seenTotalEscrowed;
+    mapping(uint256 => uint128) public seenTotalHeld;
     /// transfer index => index into `watched` => that payer's escrow at that instant.
     mapping(uint256 => mapping(uint256 => Seen)) internal seen;
 
@@ -105,13 +107,15 @@ contract BatchObserverUSDG {
             seenTo[t] = to;
             seenAmount[t] = amount;
             seenTotalEscrowed[t] = X402Escrow(escrow).totalEscrowed();
+            seenTotalHeld[t] = X402Escrow(escrow).totalHeld();
             for (uint256 i = 0; i < watched.length; i++) {
                 X402Escrow.Escrow memory e = X402Escrow(escrow).escrowOf(watched[i]);
                 seen[t][i] = Seen({
                     balance: e.balance,
                     seqHigh: e.seqHigh,
                     spentInWindow: e.spentInWindow,
-                    totalRedeemed: e.totalRedeemed
+                    totalRedeemed: e.totalRedeemed,
+                    heldStatus: uint8(X402Escrow(escrow).held(watched[i], 1).status)
                 });
             }
             transferCount = t + 1;
@@ -148,6 +152,10 @@ contract ConfigShiftingUSDG {
         cfg = cfg_;
         next = p;
         armed = true;
+    }
+
+    function disarm() external {
+        armed = false;
     }
 
     function mint(address to, uint256 amount) external {
@@ -373,6 +381,25 @@ contract X402EscrowBatchTest is Fixture {
         }
     }
 
+    /// Redeem into hold: collect every item of a redeemed batch with ONE `collectHeldBatch`, as the
+    /// redeemer, at the latest `collectableAt` among them, then put the clock back.
+    function _collectAll(X402Escrow e, Voucher[] memory vs) internal {
+        address[] memory ps = new address[](vs.length);
+        uint64[] memory ss = new uint64[](vs.length);
+        uint256 back = vm.getBlockTimestamp(); // not block.timestamp: see Fixture._collect
+        uint256 at = back;
+        for (uint256 i = 0; i < vs.length; i++) {
+            ps[i] = vs[i].payer;
+            ss[i] = vs[i].seq;
+            uint64 c = e.held(vs[i].payer, vs[i].seq).collectableAt;
+            if (c > at) at = c;
+        }
+        vm.warp(at);
+        vm.prank(redeemer);
+        e.collectHeldBatch(ps, ss);
+        vm.warp(back);
+    }
+
     function _fee(uint64 amount) internal pure returns (uint64) {
         return uint64((uint256(amount) * TAKE_RATE_BPS) / 10_000);
     }
@@ -383,6 +410,7 @@ contract X402EscrowBatchTest is Fixture {
         (Voucher[] memory vs, bytes[] memory sigs) = _batch(8);
         vm.prank(redeemer);
         escrow.redeemVoucherBatch(vs, sigs);
+        _collectAll(escrow, vs);
 
         assertEq(escrow.escrowOf(buyer).seqHigh, 8);
         assertEq(usdg.balanceOf(provider), 8 * 900);
@@ -400,6 +428,7 @@ contract X402EscrowBatchTest is Fixture {
 
         vm.prank(redeemer);
         escrow.redeemVoucherBatch(vs, sigs);
+        _collectAll(escrow, vs);
 
         uint256 expectedTreasury;
         for (uint256 i = 0; i < 8; i++) {
@@ -469,6 +498,7 @@ contract X402EscrowBatchTest is Fixture {
 
         vm.prank(redeemer);
         escrow.redeemVoucherBatch(vs, sigs);
+        _collectAll(escrow, vs);
 
         uint256 fees;
         uint256 total;
@@ -517,6 +547,7 @@ contract X402EscrowBatchTest is Fixture {
 
         vm.prank(redeemer);
         escrow.redeemVoucherBatch(vs, sigs);
+        _collectAll(escrow, vs);
 
         uint256 fees;
         for (uint256 i = 0; i < 4; i++) {
@@ -572,6 +603,7 @@ contract X402EscrowBatchTest is Fixture {
 
         vm.prank(redeemer);
         escrow.redeemVoucherBatch(vs, sigs);
+        _collectAll(escrow, vs);
 
         assertEq(escrow.escrowOf(payers[0]).seqHigh, 2);
         assertEq(escrow.escrowOf(payers[1]).seqHigh, 2);
@@ -729,8 +761,13 @@ contract X402EscrowBatchTest is Fixture {
             sigs[i] = VoucherSigner.signVoucher(payerKeys[0], ds2, vs[i]);
         }
 
+        // Redeem into hold: the payouts — and so the mid-batch shift — happen in the collect
+        // batch, which reads `params()` once for the same reason.
+        tok.disarm();
         vm.prank(redeemer);
         e2.redeemVoucherBatch(vs, sigs);
+        tok.arm(address(config), shifted);
+        _collectAll(e2, vs);
 
         assertTrue(tok.shifted(), "the config never moved, so nothing below asserts anything");
         assertEq(config.params().treasury, altTreasury, "and it really did move");
@@ -797,7 +834,16 @@ contract X402EscrowBatchTest is Fixture {
             sigs[i] = VoucherSigner.signVoucher(payerKeys[0], ds2, vs[i]);
         }
 
-        bytes memory reentry = abi.encodeCall(X402Escrow.redeemVoucherBatch, (vs, sigs));
+        // Redeem into hold: the redemption batch transfers nothing; the payouts — and so the
+        // re-entry point — are in `collectHeldBatch`.
+        vm.prank(address(evil));
+        e2.redeemVoucherBatch(vs, sigs);
+        vm.warp(e2.held(b, 2).collectableAt);
+        address[] memory ps = new address[](2);
+        uint64[] memory ss = new uint64[](2);
+        (ps[0], ps[1], ss[0], ss[1]) = (b, b, 1, 2);
+
+        bytes memory reentry = abi.encodeCall(X402Escrow.collectHeldBatch, (ps, ss));
         evil.arm(address(e2), reentry);
 
         // `evil.didReenter()` cannot be read afterwards — the outer call reverts and unwinds the
@@ -806,10 +852,10 @@ contract X402EscrowBatchTest is Fixture {
         vm.expectCall(address(e2), reentry, 2);
         vm.prank(address(evil));
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        e2.redeemVoucherBatch(vs, sigs);
+        e2.collectHeldBatch(ps, ss);
 
-        assertEq(e2.escrowOf(b).balance, FUND, "and nothing moved");
-        assertEq(e2.escrowOf(b).seqHigh, 0);
+        assertEq(e2.totalHeld(), 500_000, "and nothing moved");
+        assertEq(uint8(e2.held(b, 1).status), uint8(X402Escrow.HeldStatus.Held));
         assertEq(evil.balanceOf(providers[0]), 0);
     }
 
@@ -852,9 +898,14 @@ contract X402EscrowBatchTest is Fixture {
         obs.arm(address(e2), bs);
         vm.prank(redeemer);
         e2.redeemVoucherBatch(vs, sigs);
+        // Redeem into hold: the redemption batch makes no transfer at all …
+        assertEq(obs.transferCount(), 0, "the redemption batch made a transfer");
+        // … and the item-by-item ordering is the collect batch's.
+        _collectAll(e2, vs);
 
         assertEq(obs.transferCount(), 8, "two transfers per item, or the indices below are wrong");
 
+        uint256 total = uint256(amounts[0]) + amounts[1] + amounts[2] + amounts[3];
         uint256 running;
         for (uint256 n = 0; n < 4; n++) {
             running += amounts[n];
@@ -863,30 +914,37 @@ contract X402EscrowBatchTest is Fixture {
             assertEq(obs.seenTo(t), providers[n], "transfer 2n is not item n's provider payout");
             assertEq(obs.seenAmount(t), amounts[n] - _fee(amounts[n]));
 
-            // 1. item n's own effects are ALREADY written when item n is paid.
+            // 1. item n's own effects are ALREADY written when item n is paid; every redemption
+            //    effect landed in the redemption batch, before any payout.
             BatchObserverUSDG.Seen memory own = obs.seenAt(t, n);
-            assertEq(own.seqHigh, 1, "item n's seqHigh not yet advanced at item n's payout");
-            assertEq(own.balance, FUND - amounts[n], "item n's balance not yet debited");
-            assertEq(own.spentInWindow, amounts[n], "item n's window not yet advanced");
-            assertEq(own.totalRedeemed, amounts[n], "item n's totalRedeemed not yet advanced");
+            assertEq(
+                own.heldStatus,
+                uint8(X402Escrow.HeldStatus.Collected),
+                "item n not yet Collected at item n's payout"
+            );
+            assertEq(own.seqHigh, 1, "item n's seqHigh not advanced at item n's payout");
+            assertEq(own.balance, FUND - amounts[n], "item n's balance not debited");
+            assertEq(own.totalRedeemed, amounts[n], "item n's totalRedeemed not advanced");
 
-            // 2. and item n+1's are NOT — the loop is n complete redemptions, not a pass of
+            // 2. and item n+1's are NOT — the loop is n complete collects, not a pass of
             //    effects followed by a pass of payouts.
             if (n + 1 < 4) {
                 BatchObserverUSDG.Seen memory next = obs.seenAt(t, n + 1);
-                assertEq(next.seqHigh, 0, "item n+1 settled before item n was paid");
-                assertEq(next.balance, FUND, "item n+1's balance moved before item n was paid");
-                assertEq(next.spentInWindow, 0);
-                assertEq(next.totalRedeemed, 0);
+                assertEq(
+                    next.heldStatus,
+                    uint8(X402Escrow.HeldStatus.Held),
+                    "item n+1 collected before item n was paid"
+                );
             }
 
             // 3. the pooled counter says the same thing in one number: exactly items 0..n have
-            //    been debited at this instant.
+            //    left the hold at this instant.
             assertEq(
-                obs.seenTotalEscrowed(t),
-                uint128(4 * uint256(FUND) - running),
-                "totalEscrowed at item n's payout is not exactly items 0..n debited"
+                obs.seenTotalHeld(t),
+                uint128(total - running),
+                "totalHeld at item n's payout is not exactly items 0..n released"
             );
+            assertEq(obs.seenTotalEscrowed(t), uint128(4 * uint256(FUND) - total));
         }
 
         // and the batch really completed, so none of the above is vacuous.
