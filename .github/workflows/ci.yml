@@ -16,12 +16,14 @@ jobs:
     name: fmt, build, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # The gas figures and the bytecode pins are measured with exactly this forge build
       # (`forge --version` prints 1.2.1-nightly, commit 7e68208e…). The tag v1.2.1 is a DIFFERENT
       # commit, so the nightly is pinned by name.
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: nightly-7e68208eaae86342998f4a713d27a538ce5a3fbb
 
