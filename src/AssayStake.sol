@@ -408,6 +408,16 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (reserved > capAllowance) reserved = capAllowance;
         if (reserved > free) reserved = Cast.toUint64(free);
         if (reserved == 0) revert NothingToSlash();
+        // A reservation the current split cannot divide is refused here (review 2026-10-23 L-1):
+        // written, it could never execute (`PenaltyTooSmallToSplit`), would expire, and would
+        // burn the `requestId` for good. The agent share must be non-zero, and so must the
+        // platform share whenever the split gives the platform one. `executeSlash` keeps its own
+        // check, because the split is read again there and may have changed since.
+        if (
+            Fee.bpsOf(reserved, p.slashAgentBps) == 0
+                || (p.slashPlatformBps != 0 && Fee.bpsOf(reserved, p.slashPlatformBps) == 0)
+        ) revert PenaltyTooSmallToSplit();
+
         s.pendingSlash += reserved;
 
         SlashRecord storage rec = slashRecords[a.requestId];

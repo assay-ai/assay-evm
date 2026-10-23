@@ -774,23 +774,31 @@ contract AssayStakeSlashTest is Fixture {
         assertEq(stake.stakeOf(provider).slashedInWindow, 2_000_000, "nor is capacity handed back");
     }
 
-    /// A judgement too small to divide leaves the record PENDING. Every write the handler made
-    /// is rolled back by the revert, which is what makes "retry as the window rolls" true.
+    /// A judgement too small to divide at EXECUTION leaves the record PENDING. Since review
+    /// 2026-10-23 L-1 proposal refuses a reservation the split cannot divide, so this is reached
+    /// only through a split lowered after the proposal (the split is read live at execution).
+    /// Every write the handler made is rolled back by the revert.
     function test_wrongState_aPenaltyTooSmallToSplitLeavesTheRecordPending() public {
         address tiny = address(0x7141);
         _stakeFor(tiny, 1_000); // capAllowance 100
 
-        SlashAttestation memory a = _att(bytes32("t1"), 1); // 6000 bps of 1 floors to zero
+        SlashAttestation memory a = _att(bytes32("t1"), 4); // 60/30 of 4: agent 2, platform 1
         a.provider = tiny;
         stake.proposeSlash(a, _sign(a, verifierKeyPk));
-        assertEq(stake.slashRecordOf(bytes32("t1")).reserved, 1);
+        assertEq(stake.slashRecordOf(bytes32("t1")).reserved, 4);
 
-        vm.warp(block.timestamp + Constants.SLASH_DELAY_SECONDS);
+        ParamSet memory p = config.params();
+        p.slashAgentBps = 1; // 1 bps of 4 floors to zero
+        p.slashPlatformBps = 0;
+        vm.prank(admin);
+        config.updateConfig(p);
+
+        vm.warp(vm.getBlockTimestamp() + Constants.SLASH_DELAY_SECONDS);
         vm.expectRevert(PenaltyTooSmallToSplit.selector);
         stake.executeSlash(bytes32("t1"));
 
         assertEq(uint256(stake.slashRecordOf(bytes32("t1")).status), uint256(SlashStatus.Pending));
-        assertEq(stake.stakeOf(tiny).pendingSlash, 1, "the reservation is still standing");
+        assertEq(stake.stakeOf(tiny).pendingSlash, 4, "the reservation is still standing");
         assertEq(stake.stakeOf(tiny).bonded, 1_000, "and nothing was taken");
     }
 

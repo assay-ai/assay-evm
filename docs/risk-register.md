@@ -502,6 +502,16 @@ platform share) and it shields only itself. The backend refuses attestations who
 linked to the provider. Per-provider FIFO execution would close it on chain; it is parked to keep
 the contract simple.
 
+**An unsplittable reservation is refused at proposal (review 2026-10-23 L-1).** `proposeSlash`
+cuts a reservation to the provider's `free` stake, and it is permissionless. A provider holding
+matured unbonding stake and a valid attestation (for example one left in public calldata by a
+failed batched proposal) could withdraw down to `pendingSlash + 1` and land it itself: the record
+reserved one base unit, could never split, expired, and burnt the `requestId`. Now `proposeSlash`
+refuses `PenaltyTooSmallToSplit` unless the reservation gives a non-zero agent share and, when the
+split has one, a non-zero platform share, so nothing is written and the attestation can land later.
+A split lowered after proposal can still make a record unsplittable at execution (it waits, then
+expires); that is the admin's choice, not the provider's.
+
 **A pause longer than 7 days voids pending and upheld slashes (A L-1, B B4, C C6).** The grace and
 the dispute timeout keep running while paused, `executeSlash` is closed and `expireSlash` is not.
 The provider's rolling window is not frozen either. Runbook §6.7.
