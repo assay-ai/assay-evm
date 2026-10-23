@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// One function, so `AssayEscrow.initialize` can assert the settlement asset really is a
 /// six-decimal token without vendoring the whole of `IERC20Metadata`.

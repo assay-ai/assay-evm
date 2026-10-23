@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// A six-decimal ERC-20 that reverts a transfer touching ONE named address, and behaves
 /// identically to a plain token otherwise.

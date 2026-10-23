@@ -10,7 +10,9 @@ produced it, so any of it can be re-run and disagreed with.
   re-measure. If a re-measurement happens on a different build, record that build here rather than
   silently replacing these numbers.
 - **Build settings the numbers depend on:** solc 0.8.24, `evm_version = "shanghai"`, `via_ir = true`,
-  optimizer on at 200 runs. A different optimizer setting is a different number.
+  optimizer on at 200 runs. A different optimizer setting is a different number. **The build now
+  uses solc 0.8.38** (review 2026-10-23 L-3); the tables below were measured under 0.8.24 and
+  were not re-measured. `.gas-snapshot` is regenerated under 0.8.38 and is the current figure.
 - **Source:** the figures were measured against `src/AssayEscrow.sol` as it is in this repository.
   Re-run the commands in each table to reproduce or dispute them.
 

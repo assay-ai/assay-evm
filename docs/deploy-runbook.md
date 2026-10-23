@@ -152,7 +152,9 @@ forge script script/Deploy.s.sol \
 ```
 
 For 4663, the RPC is `https://rpc.mainnet.chain.robinhood.com` and the verifier URL is
-`https://robinhoodchain.blockscout.com/api/`.
+`https://robinhoodchain.blockscout.com/api/`. **With solc 0.8.38 the inline Blockscout
+verification fails** (Blockscout there accepts up to 0.8.36): drop `--verify …` and verify on
+Sourcify as in §4.
 
 Each contract is deployed twice over: the implementation plainly, then an `ERC1967Proxy` in front
 of it whose constructor data is the `initialize` call. **The proxy is initialised in the same
@@ -222,7 +224,7 @@ proxy**:
 forge verify-contract <implementation> src/AssayEscrow.sol:AssayEscrow \
   --chain-id 46630 --verifier blockscout \
   --verifier-url https://explorer.testnet.chain.robinhood.com/api/ \
-  --compiler-version 0.8.24 \
+  --compiler-version 0.8.38 \
   --show-standard-json-input > verification/AssayEscrow.impl.standard.json
 
 # the proxy — its constructor args are (implementation, initializer calldata)
@@ -230,10 +232,33 @@ forge verify-contract <proxy> \
   lib/openzeppelin/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
   --chain-id 46630 --verifier blockscout \
   --verifier-url https://explorer.testnet.chain.robinhood.com/api/ \
-  --compiler-version 0.8.24 \
+  --compiler-version 0.8.38 \
   --constructor-args $(cast abi-encode "constructor(address,bytes)" <implementation> <initializerArgs>) \
   --show-standard-json-input > verification/AssayEscrow.proxy.standard.json
 ```
+
+**Blockscout on Robinhood Chain verifies only up to solc 0.8.36, and this build uses 0.8.38**
+(SOL-2026-7, review 2026-10-23 L-3), so `--verify --verifier blockscout` in §3 is expected to fail.
+Verify on **Sourcify** instead, through its v2 API with the standard-JSON input forge emits (the
+forge nightly's own Sourcify client failed in testing, so do not rely on `--verifier sourcify`):
+
+```sh
+forge verify-contract <implementation> src/AssayEscrow.sol:AssayEscrow \
+  --chain-id 46630 --compiler-version 0.8.38 \
+  --show-standard-json-input > verification/AssayEscrow.impl.standard.json
+
+jq -n --slurpfile std verification/AssayEscrow.impl.standard.json \
+  '{stdJsonInput: $std[0], compilerVersion: "0.8.38", contractIdentifier: "src/AssayEscrow.sol:AssayEscrow"}' \
+  | curl -sS -X POST -H 'content-type: application/json' --data @- \
+      https://sourcify.dev/server/v2/verify/46630/<implementation>
+# → {"verificationId": "..."}; poll GET https://sourcify.dev/server/v2/verify/<verificationId>
+```
+
+`compilerVersion` may need the full build string Sourcify lists for 0.8.38 (`0.8.38+commit.…`);
+take it from `solc --version` of the binary forge used. Repeat for each implementation and for
+each `ERC1967Proxy` (`lib/openzeppelin/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy`; Sourcify reads
+constructor arguments from the creation transaction). The Blockscout commands below stay valid
+for a build at or below 0.8.36.
 
 Verification goes through **standard-JSON input**, which works whatever the metadata setting. Commit both emitted standard-JSONs beside the deployment record. Verifying the proxy is
 what gives Blockscout its "Read as Proxy" tab, which is how an operator sees the live

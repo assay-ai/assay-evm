@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// The ONE edge from AssayEscrow into AssayStake, and it is a view returning a number.
 ///

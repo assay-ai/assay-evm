@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 // COMPILE ASSERTION — NOT A BEHAVIOURAL TEST.
 //
 // It asserts one thing and asserts it at build time: every file named in
 // lib/openzeppelin/MANIFEST exists and compiles under this project's exact settings
-// (solc 0.8.24, evm_version = shanghai, via_ir, optimizer at 200 runs). It exercises
+// (solc 0.8.38, evm_version = shanghai, via_ir, optimizer at 200 runs). It exercises
 // nothing and proves nothing about behaviour; ECDSA's low-s property is proved by
 // Toolchain.t.sol, and every other vendored file gets its behavioural coverage from the
 // task that first uses it.

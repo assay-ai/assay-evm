@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Test, stdError} from "forge-std/Test.sol";
 import {Fee} from "../src/libraries/Fee.sol";

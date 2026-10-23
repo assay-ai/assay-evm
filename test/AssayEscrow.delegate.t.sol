@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
@@ -89,8 +89,8 @@ contract AssayEscrowDelegateTest is Fixture {
             resourceHash: keccak256("resource"),
             requestHash: keccak256(abi.encode("request", payer_, seq)),
             seq: seq,
-            issuedAt: uint64(block.timestamp),
-            expiresAt: uint64(block.timestamp) + 300
+            issuedAt: uint64(vm.getBlockTimestamp()),
+            expiresAt: uint64(vm.getBlockTimestamp()) + 300
         });
     }
 
@@ -527,7 +527,8 @@ contract AssayEscrowDelegateTest is Fixture {
         // The payer's own key still has the escrow's remaining capacity.
         _redeem(c, _signed(buyerKey, c));
 
-        vm.warp(block.timestamp + Constants.SLASH_WINDOW_SECONDS);
+        // `vm.getBlockTimestamp()`: under via-ir a cached TIMESTAMP read can predate the warp.
+        vm.warp(vm.getBlockTimestamp() + Constants.SLASH_WINDOW_SECONDS);
         Voucher memory d = _v(buyer, 500_000, 4);
         _redeem(d, _signed(DELEGATE_KEY, d));
     }

@@ -64,7 +64,7 @@ on `AssayStake` rather than on `AssayConfig`, where the Anchor program keeps the
 ## Quick start
 
 Requirements: [Foundry](https://book.getfoundry.sh/getting-started/installation). The repository
-was developed with forge **1.2.1-nightly**; the compiler (solc 0.8.24) is pinned in
+was developed with forge **1.2.1-nightly**; the compiler (solc 0.8.38) is pinned in
 `foundry.toml` and downloaded by forge. Dependencies (forge-std, OpenZeppelin Contracts) are
 vendored under `lib/`, so no `forge install` or submodule step is needed.
 
@@ -93,7 +93,7 @@ produces):
 | | |
 |---|---|
 | `forge` | 1.2.1-nightly. Export `FOUNDRY_DISABLE_NIGHTLY_WARNING=1` |
-| solc | **0.8.24**, `evm_version = "shanghai"` |
+| solc | **0.8.38** (0.8.24 until review 2026-10-23 L-3: SOL-2026-7 affects 0.8.19 to 0.8.37 under `via_ir`), `evm_version = "shanghai"` |
 | optimizer | on, **200** runs, `via_ir = true` |
 | metadata | `bytecode_hash = "ipfs"`, `cbor_metadata = true`: solc appends a CBOR metadata hash, so any source change, comments included, changes the bytecode. Verify with **standard-JSON input** (below) or metadata matching |
 | remappings | `auto_detect_remappings = false` plus an explicit `remappings.txt`, so one dependency cannot compile under two spellings |

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -147,8 +147,8 @@ contract AssayEscrowRedeemTest is Fixture {
             resourceHash: keccak256("resource"),
             requestHash: keccak256(abi.encode("request", seq)),
             seq: seq,
-            issuedAt: uint64(block.timestamp),
-            expiresAt: uint64(block.timestamp) + 300
+            issuedAt: uint64(vm.getBlockTimestamp()),
+            expiresAt: uint64(vm.getBlockTimestamp()) + 300
         });
     }
 
@@ -441,7 +441,9 @@ contract AssayEscrowRedeemTest is Fixture {
         // The three redemptions below stay under the 1_000_000 per-call ceiling, which is a
         // SEPARATE limit: a single 2_500_000 voucher here would be refused by that one instead
         // and would prove nothing about the window.
-        vm.warp(block.timestamp + Constants.SLASH_WINDOW_SECONDS / 2);
+        // `vm.getBlockTimestamp()`, not `block.timestamp`: under via-ir the optimizer may reuse an
+        // earlier TIMESTAMP read, and solc 0.8.38 does (review 2026-10-23 L-3 / I-5).
+        vm.warp(vm.getBlockTimestamp() + Constants.SLASH_WINDOW_SECONDS / 2);
         assertEq(escrow.escrowOf(buyer).spentInWindow, 5_000_000, "the stored counter is stale");
 
         _redeem(_v(1_000_000, 7));

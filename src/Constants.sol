@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// Every value here is copied from the Anchor program's `programs/x402-payment/src/constants.rs`
 /// (repository `assay-solana`), with the source line noted on each. They are **copied, never
