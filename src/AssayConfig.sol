@@ -532,21 +532,32 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
     /// window. A record already proposed keeps the `executableAt` frozen into it.
     ///
     /// Reads back as `Constants.SLASH_DELAY_SECONDS` until set, so an upgraded proxy keeps 72
-    /// hours with no initializer call.
+    /// hours with no initializer call. Never below [`minSlashDelaySeconds`], so a value stored
+    /// before the floor existed (or on another chain id) cannot outlive it.
     function slashDelaySeconds() public view override returns (uint64) {
         uint64 d = _slashDelaySeconds;
-        return d == 0 ? Constants.SLASH_DELAY_SECONDS : d;
+        if (d == 0) return Constants.SLASH_DELAY_SECONDS;
+        uint64 floor = minSlashDelaySeconds();
+        return d < floor ? floor : d;
     }
 
-    /// Fixed bounds, `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` (10 min to 22 days),
+    /// D-23: 48 hours on every chain but the test chains, where it is ten minutes.
+    function minSlashDelaySeconds() public view override returns (uint64) {
+        return block.chainid == Constants.ROBINHOOD_TESTNET_CHAIN_ID
+            || block.chainid == Constants.LOCAL_CHAIN_ID
+            ? Constants.MIN_SLASH_DELAY_SECONDS_TESTNET
+            : Constants.MIN_SLASH_DELAY_SECONDS;
+    }
+
+    /// Fixed bounds, `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (48 h, or 10 min on a
+    /// test chain, to 22 days),
     /// independent of the unbonding period (audit F R3): once proposed, a penalty is held by
     /// `pendingSlash` and no unbonding exit can take it, however long the delay
     /// (`test_longDelayShortUnbondingCannotBeOutrun`).
     function setSlashDelay(uint64 newDelay) external onlyAdmin {
-        if (
-            newDelay < Constants.MIN_SLASH_DELAY_SECONDS
-                || newDelay > Constants.MAX_SLASH_DELAY_SECONDS
-        ) revert InvalidSlashDelay();
+        if (newDelay < minSlashDelaySeconds() || newDelay > Constants.MAX_SLASH_DELAY_SECONDS) {
+            revert InvalidSlashDelay();
+        }
         emit SlashDelaySet(slashDelaySeconds(), newDelay);
         _slashDelaySeconds = newDelay;
     }

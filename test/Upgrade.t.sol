@@ -436,6 +436,7 @@ contract UpgradeTest is Fixture {
             "canSign(address)",
             "collectHoldSeconds()",
             "initialize((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16),address,address)",
+            "minSlashDelaySeconds()",
             "owner()",
             "params()",
             "paused()",
@@ -454,10 +455,9 @@ contract UpgradeTest is Fixture {
             "transferOwnership(address)",
             "updateConfig((address,address,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16))",
             "upgradeToAndCall(address,bytes)",
-            "verifierKey(address)",
-            "" // the 30th slot is deliberately empty: a 30th function makes this test red
+            "verifierKey(address)" // all 30 slots used since D-23: a 31st function fails the size
         ];
-        _assertSurface("AssayConfig", 29, _dyn30(expected));
+        _assertSurface("AssayConfig", 30, _dyn30(expected));
     }
 
     function test_theStakeFunctionSurfaceIsPinnedByName() public view {

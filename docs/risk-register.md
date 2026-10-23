@@ -423,6 +423,10 @@ voucher of that payer fail `VoucherSeqNotIncreasing` for ever. Withdrawal still 
 signer kind. The backend refuses to issue or admit a seq past the same bound. The residual
 cost of a hostile jump is one million unusable seqs, and the next one is still admitted.
 
+**Since D-23** a high seq voids no other voucher (replay is per `(payer, seq)`), so a hostile jump
+costs nothing on chain; the cap now only keeps `seqHigh` low enough for the backend's allocator,
+which issues new seqs above it.
+
 ## 17. A withheld relayed signature could undo a later direct decision — closed by D-18
 
 **Was:** the direct `setLimits` and `requestWithdraw` did not consume `authNonce`. A relayer

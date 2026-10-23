@@ -147,11 +147,13 @@ contract AssayConfigArbiterTest is Fixture {
         }
     }
 
-    /// Fixed bounds since audit F R3: `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]`,
-    /// 10 minutes to 22 days, whatever the unbonding period.
+    /// Fixed bounds since audit F R3: `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]`,
+    /// 10 minutes (on this test chain, D-23) to 22 days, whatever the unbonding period.
     function test_boundary_theSlashDelayBounds() public {
-        uint64 min = Constants.MIN_SLASH_DELAY_SECONDS;
+        uint64 min = config.minSlashDelaySeconds();
         uint64 max = Constants.MAX_SLASH_DELAY_SECONDS;
+        assertEq(block.chainid, Constants.LOCAL_CHAIN_ID);
+        assertEq(min, Constants.MIN_SLASH_DELAY_SECONDS_TESTNET);
         assertEq(min, 600);
         assertEq(max, 22 * 86_400);
         assertLt(config.params().unbondingPeriodSeconds, max, "the fixture's 14 d is below it");
@@ -170,6 +172,35 @@ contract AssayConfigArbiterTest is Fixture {
         vm.expectRevert(InvalidSlashDelay.selector);
         config.setSlashDelay(type(uint64).max);
         vm.stopPrank();
+    }
+
+    /// D-23: off the test chains the floor is 48 hours — on Robinhood mainnet and on any chain id
+    /// not named as a test chain — and the Robinhood testnet keeps ten minutes.
+    function test_boundary_theSlashDelayFloorFollowsTheChain() public {
+        assertEq(Constants.MIN_SLASH_DELAY_SECONDS, 48 * 3600);
+        uint256[3] memory prod = [uint256(4663), 1, 42_161];
+        for (uint256 i = 0; i < prod.length; i++) {
+            vm.chainId(prod[i]);
+            assertEq(config.minSlashDelaySeconds(), 48 * 3600);
+            vm.startPrank(admin);
+            vm.expectRevert(InvalidSlashDelay.selector);
+            config.setSlashDelay(48 * 3600 - 1);
+            config.setSlashDelay(48 * 3600);
+            vm.stopPrank();
+            assertEq(config.slashDelaySeconds(), 48 * 3600);
+        }
+        vm.chainId(Constants.ROBINHOOD_TESTNET_CHAIN_ID);
+        assertEq(config.minSlashDelaySeconds(), 600);
+    }
+
+    /// D-23: a delay stored below the floor (set on a test chain, or before the floor existed)
+    /// reads back as the floor, so it cannot shorten a production dispute window.
+    function test_aStoredDelayBelowTheFloorReadsAsTheFloor() public {
+        vm.prank(admin);
+        config.setSlashDelay(600);
+        assertEq(config.slashDelaySeconds(), 600);
+        vm.chainId(4663);
+        assertEq(config.slashDelaySeconds(), 48 * 3600);
     }
 
     /// The coupling is gone in both directions: with the delay at its maximum, the unbonding

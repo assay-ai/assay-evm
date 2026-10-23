@@ -119,7 +119,7 @@ The cost of that decision lands on the backend:
 
 Pre-validation is the same list `_redeem` applies, evaluated off chain against current state: the
 voucher window (`expiresAt > issuedAt`, lifetime ≤ 300 s, issued no more than 120 s ahead, redeemed
-no more than 1 800 s late), `seq > seqHigh` **for that payer**, the payer's per-call and
+no more than 1 800 s late), `held(payer, seq).status == None` **for that payer** (D-23), the payer's per-call and
 rolling-window ceilings, the provider's `bonded` stake against `minimumStake`, and the payer's
 balance. Since D-21 the ceilings are the EFFECTIVE ones and a revoked delegate signs for up to
 3,600 s after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps
@@ -138,9 +138,9 @@ Three rules bite specifically in the batch shape, and a job that does not know t
 batches that revert:
 
 - **`seq` is per payer, not per batch.** Two payers' sequences constrain each other in no way at
-  all; one payer's items must be ordered among themselves. Sorting a batch by `seq` globally is
+  all, and since D-23 one payer's items may come in any order. Sorting a batch by `seq` globally is
   wrong.
-- **The same voucher twice in one batch reverts the batch.** The second copy fails `seq > seqHigh`,
+- **The same voucher twice in one batch reverts the batch.** The second copy fails `VoucherSeqUsed`,
   because the first copy already advanced it.
 - **The parameter set is read once for the whole batch.** Every item settles against the treasury
   and take rate that were current when the batch started, even if a Config update lands mid
@@ -238,9 +238,8 @@ makes it legitimate to attribute them separately.
 - Grouping a batch **by payer** is worth about **27 500 gas per voucher** at these sizes, which is
   roughly two thirds of the entire marginal cost of a same-payer item. It dominates every other
   batching heuristic.
-- It does **not** follow that a batch may be reordered to achieve it. `seq` is per payer and
-  strictly increasing, so one payer's items must keep their relative order whatever else the
-  grouping does.
+- Since D-23 a batch may be reordered freely to achieve it: a seq is consumed on its own, so one
+  payer's items need no relative order.
 - The **distinct-provider** column is the smaller half and it is mostly a *first payment* cost:
   paying a provider whose settlement-token balance is zero writes a zero → non-zero slot. It is not
   recoverable by batching and it does not repeat for that provider.

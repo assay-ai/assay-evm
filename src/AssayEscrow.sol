@@ -36,8 +36,9 @@ import "./Errors.sol";
 ///
 /// **No role — not the owner, not the admin, not the redeemer — has a door that moves a token to
 /// an address of its choosing**; the owner's only residual power over this money is the upgrade
-/// itself (D-17, `test/NoTokenDoors.t.sol`). There is no `closeEscrow`: closing would reset
-/// `seqHigh` and replay every in-window voucher.
+/// itself (D-17, `test/NoTokenDoors.t.sol`). There is no `closeEscrow`: closing would have to
+/// clear `heldPayments`, the per-seq record that refuses a replay, and so replay every
+/// in-window voucher.
 ///
 /// # What this is a port of
 ///
@@ -86,7 +87,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// compares against a clock is `uint64`.
     struct Escrow {
         uint128 balance; //            slot 0
-        uint64 seqHigh; //              ↑ strictly-increasing high-water mark (state.rs)
+        uint64 seqHigh; //              ↑ highest seq redeemed; the gap cap's anchor (D-23)
         uint64 authNonce; //            ↑ meta-transaction nonce — EVM only
         uint64 maxVoucherAmount; //    slot 1   0 = refuse every redeem (state.rs)
         uint64 maxPerWindow; //         ↑       0 = refuse every redeem (state.rs)
@@ -197,8 +198,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 collectableAt; //      slot 1
     }
 
-    /// `payer → seq → held payment`. A seq is redeemed at most once per payer (`seqHigh`), so a
-    /// record is written at most once. Appended before `__gap`, which shrank by the two slots this
+    /// `payer → seq → held payment`. **The replay rule (D-23)**: a `(payer, seq)` whose record
+    /// is not `None` was redeemed, and records are never deleted, so a seq is redeemed at most
+    /// once per payer, in any order, and a record is written at most once. Appended before `__gap`, which shrank by the two slots this
     /// mapping and [`totalHeld`] take (D-7). `internal` for [`escrowOf`]'s reason: [`held`]
     /// returns the struct.
     mapping(address => mapping(uint64 => HeldPayment)) internal heldPayments;
@@ -418,9 +420,10 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// The submitter is pinned to `Config::redeemer` and is consulted
     /// about nothing else: it cannot aim the money anywhere, because the provider comes out of the
-    /// signed voucher and the treasury out of Config. The pin is about `seq` — a redemption
-    /// advances `seqHigh`, so anyone who could land one could void every voucher a buyer had
-    /// already served.
+    /// signed voucher and the treasury out of Config. Since D-23 a redemption voids no other
+    /// voucher (seqs are consumed one by one, in any order), so the pin no longer guards the
+    /// sequence; it stays because the redeemer decides WHEN a served call is charged, which is
+    /// the backend's verdict (D-10).
     ///
     /// **The whole authority over the money is the buyer's authorisation of the EIP-712 voucher**
     /// — its own signature, or a delegate's within the caps the buyer set on chain
@@ -469,8 +472,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// the replay rule to live, and `test_theBatchDelegatesToTheOneRedeemPathInTheSource` pins the
     /// delegation as source text so the copy cannot appear quietly.
     ///
-    /// `seq` is therefore NOT a batch-wide rule: it is `seq > seqHigh` per escrow, applied item by
-    /// item, so two payers' sequences in one batch constrain each other in no way at all.
+    /// `seq` is therefore NOT a batch-wide rule: it is "this `(payer, seq)` is unused", applied
+    /// item by item (D-23), so the items may come in any order and two payers' sequences
+    /// constrain each other in no way at all.
     ///
     /// `nonReentrant` sits on this external entry point only. [`_redeem`] is internal and must not
     /// carry the modifier — with it, the loop would deadlock on its second item.
@@ -825,9 +829,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// payer with no second address to disagree with) and with **one deliberate reordering**:
     ///
     /// **`seq` is checked BEFORE the signature; `redeem_voucher.rs` checks it after.**
-    /// The EVM design specifies it here. It is strictly cheaper — a stale voucher is
-    /// refused without paying for `ecrecover` — and it leaks nothing, because `seqHigh` is public
-    /// state that `escrowOf` already returns to anybody who asks. Recorded in
+    /// The EVM design specifies it here. It is strictly cheaper — a replayed voucher is
+    /// refused without paying for `ecrecover` — and it leaks nothing, because the record is
+    /// public state that `held` already returns to anybody who asks. Recorded in
     /// `docs/divergences.md`.
     ///
     /// **`ProviderBelowMinimumStake` is reinstated** at the Anchor program's position, after the
@@ -849,7 +853,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// callbacks" is a statement about today only.
     ///
     /// A refusal rolls all of it back, exactly as an Anchor `require!` does — so a redemption
-    /// refused for `EscrowInsufficient` leaves `seqHigh` where it was
+    /// refused for `EscrowInsufficient` leaves its seq unused and `seqHigh` where it was
     /// (`tests/escrow.rs::an_underfunded_escrow_refuses_without_consuming_the_sequence`).
     function _redeem(Voucher calldata v, bytes calldata sig, ParamSet memory p) internal {
         // Through [`Cast.toUint64`] like every other narrowing in `src/`, and not because
@@ -894,14 +898,19 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         }
         if (nowTs > v.expiresAt + Constants.REDEEM_GRACE_SECONDS) revert VoucherExpired();
 
-        // `state.rs::admit_seq`. Strictly increasing, gaps allowed: exactly
-        // one redemption per `(buyer, seq)` as a fact of the chain, with one `uint64` and no
-        // bitmap. Moved above the signature by design — see the note above.
+        // D-23, replacing `state.rs::admit_seq`'s strictly increasing `seq_high`: exactly one
+        // redemption per `(buyer, seq)`, in ANY order, read off the record this redemption is
+        // about to write anyway (so the read also warms the slot the effects below store into).
+        // A lower seq landing after a higher one is no longer lost. Moved above the signature by
+        // design — see the note above.
         Escrow storage e = escrows[v.payer];
         if (v.seq == 0) revert VoucherSeqZero();
-        if (v.seq <= e.seqHigh) revert VoucherSeqNotIncreasing();
-        // D-17: the jump cap. `v.seq > e.seqHigh` was just checked, so the difference cannot wrap.
-        if (v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) revert VoucherSeqGapTooLarge();
+        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();
+        // D-17: the jump cap, now only on a seq above the high-water mark; the guard is what
+        // keeps the subtraction from wrapping.
+        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {
+            revert VoucherSeqGapTooLarge();
+        }
 
         // `redeem_voucher.rs`, widened for delegation. [`_voucherAuthority`] is the whole
         // authority over the money: the payer's key, or a delegate the payer authorised. It
@@ -962,7 +971,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 collectableAt = nowTs + CONFIG.collectHoldSeconds();
 
         // --- effects -------------------------------------------------------------------------
-        e.seqHigh = v.seq;
+        if (v.seq > e.seqHigh) e.seqHigh = v.seq;
         e.balance -= v.amount;
         // The truncation is unreachable — `spent` is at most an effective `maxPerWindow`, checked
         // above, and every cap is a `uint64`. It goes through [`Cast.toUint64`] anyway, and it is

@@ -589,10 +589,10 @@ contract AssayEscrowDelegateTest is Fixture {
         Voucher memory a = _v(buyer, 1_000, 5);
         _redeem(a, _signed(DELEGATE_KEY, a));
 
-        // The same voucher again, and a lower seq by the payer's own key.
-        _expect(a, _signed(DELEGATE_KEY, a), VoucherSeqNotIncreasing.selector);
-        Voucher memory b = _v(buyer, 1_000, 4);
-        _expect(b, _signed(buyerKey, b), VoucherSeqNotIncreasing.selector);
+        // The same voucher again, and the same seq by the payer's own key.
+        _expect(a, _signed(DELEGATE_KEY, a), VoucherSeqUsed.selector);
+        Voucher memory b = _v(buyer, 2_000, 5);
+        _expect(b, _signed(buyerKey, b), VoucherSeqUsed.selector);
         Voucher memory z = _v(buyer, 1_000, 0);
         _expect(z, _signed(DELEGATE_KEY, z), VoucherSeqZero.selector);
 

@@ -33,15 +33,27 @@ library Constants {
     ///
     /// **Since the dispute upgrade this is the DEFAULT, not the delay.** The live value is
     /// `AssayConfig.slashDelaySeconds()`, which the admin may set inside
-    /// `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` and which
+    /// `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (D-23) and which
     /// reads back as this constant until it is first set — so a proxy upgraded from the earlier
     /// code keeps 72 hours. A stolen admin key can shorten it to the minimum, never to zero, and
     /// a proposal's `executableAt` is frozen when it is made.
     uint64 internal constant SLASH_DELAY_SECONDS = 72 * 3600;
 
-    /// EVM only. The shortest settable slash delay (and therefore dispute window). Ten minutes:
-    /// long enough for a test run to dispute, short enough to be useful on a testnet.
-    uint64 internal constant MIN_SLASH_DELAY_SECONDS = 10 * 60;
+    /// EVM only (D-23). The shortest slash delay (and therefore dispute window) on any chain that
+    /// is not a test chain: 48 hours. A provider whose `disputeSlash` is censored, or stuck
+    /// behind a sequencer outage, can still land it through the L1 delayed inbox (Arbitrum
+    /// force inclusion, 24 h by default on an Orbit chain such as Robinhood Chain); the floor
+    /// keeps the window above that with a margin, whoever holds the admin key.
+    uint64 internal constant MIN_SLASH_DELAY_SECONDS = 48 * 3600;
+
+    /// EVM only (D-23). The shortest slash delay on a test chain ([`ROBINHOOD_TESTNET_CHAIN_ID`]
+    /// or [`LOCAL_CHAIN_ID`]): ten minutes, long enough for a test run to dispute.
+    uint64 internal constant MIN_SLASH_DELAY_SECONDS_TESTNET = 10 * 60;
+
+    /// EVM only (D-23). The chains on which [`MIN_SLASH_DELAY_SECONDS_TESTNET`] applies. Every
+    /// other chain id, a future mainnet included, gets the production floor.
+    uint256 internal constant ROBINHOOD_TESTNET_CHAIN_ID = 46_630;
+    uint256 internal constant LOCAL_CHAIN_ID = 31_337;
 
     /// EVM only. The longest settable slash delay: 22 days, the largest value the earlier
     /// delay-to-unbonding coupling ever admitted (`MAX_UNBONDING_PERIOD_SECONDS - 8 d`). A fixed
@@ -195,10 +207,11 @@ library Constants {
 
     // --- EVM only --------------------------------------------------------------------------
 
-    /// The furthest one redeemed voucher may move a payer's `seqHigh`: a redemption needs
-    /// `seq <= seqHigh + MAX_SEQ_GAP`. Without it a single voucher with `seq = 2^64 - 1` (signed by
-    /// the payer or by any delegate) moves the high-water mark to the top of the type, and every
-    /// later voucher of that payer fails `VoucherSeqNotIncreasing` for ever. A constant, not a
+    /// The furthest one redeemed voucher may move a payer's `seqHigh`: a redemption above it
+    /// needs `seq <= seqHigh + MAX_SEQ_GAP`. Since D-23 a high seq voids no other voucher, but
+    /// without the cap a single voucher with `seq = 2^64 - 1` (signed by the payer or by any
+    /// delegate) moves the high-water mark to the top of the type, and the backend, which
+    /// allocates new seqs above `seqHigh`, has nothing left to issue. A constant, not a
     /// parameter: the backend allocates seqs one at a time, so a million unredeemed numbers ahead
     /// of the chain is already far outside normal operation, and a bound an admin could raise is a
     /// bound a stolen admin key removes. No Anchor counterpart.

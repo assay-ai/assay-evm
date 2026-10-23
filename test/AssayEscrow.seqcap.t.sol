@@ -7,9 +7,9 @@ import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
-/// D-17: the seq jump cap. A redeemed voucher needs `seq <= seqHigh + MAX_SEQ_GAP`, a CONSTANT
-/// (1,000,000), on the single and batch paths and for every signer kind. Without it one voucher
-/// at `2^64 - 1` bricks the payer's sequence space for ever.
+/// D-17: the seq jump cap. A redeemed voucher above the mark needs `seq <= seqHigh + MAX_SEQ_GAP`,
+/// a CONSTANT (1,000,000), on the single and batch paths and for every signer kind. Without it
+/// one voucher at `2^64 - 1` leaves the backend's allocator nothing to issue above `seqHigh`.
 contract AssayEscrowSeqCapTest is Fixture {
     uint256 internal constant DELEGATE_KEY = 0xDE1E6A7E;
     uint64 internal constant GAP = 1_000_000;
@@ -128,13 +128,13 @@ contract AssayEscrowSeqCapTest is Fixture {
         }
     }
 
-    /// The order: the cap is checked after `VoucherSeqNotIncreasing` (so the subtraction cannot
-    /// wrap) and before the signature, like the rest of the seq rule.
-    function test_theCapSitsBesideTheMonotonicCheckInTheSource() public view {
+    /// The order: the cap is checked after the used-seq check (D-23), only above the mark (so
+    /// the subtraction cannot wrap), and before the signature, like the rest of the seq rule.
+    function test_theCapSitsBesideTheUsedSeqCheckInTheSource() public view {
         string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
         bytes memory h = bytes(src);
         bytes memory n = bytes(
-            "        if (v.seq <= e.seqHigh) revert VoucherSeqNotIncreasing();\n        // D-17: the jump cap. `v.seq > e.seqHigh` was just checked, so the difference cannot wrap.\n        if (v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) revert VoucherSeqGapTooLarge();\n"
+            "        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();\n        // D-17: the jump cap, now only on a seq above the high-water mark; the guard is what\n        // keeps the subtraction from wrapping.\n        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {\n            revert VoucherSeqGapTooLarge();\n        }\n"
         );
         uint256 found;
         for (uint256 i = 0; i + n.length <= h.length; i++) {

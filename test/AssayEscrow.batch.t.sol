@@ -564,16 +564,20 @@ contract AssayEscrowBatchTest is Fixture {
 
     // --- the batch's own guards --------------------------------------------------------------
 
-    /// Vouchers for one payer must arrive in strictly increasing seq order. The rule is not
-    /// a batch rule — it is `seq > seqHigh`, applied item by item.
-    function test_wrongState_anOutOfOrderBatchReverts() public {
+    /// D-23: one payer's vouchers may arrive in any seq order. The rule is not a batch rule — it
+    /// is "this `(payer, seq)` is unused", applied item by item.
+    function test_anOutOfOrderBatchIsAdmitted() public {
         (Voucher[] memory vs, bytes[] memory sigs) = _batch(3);
+        uint64 top = vs[2].seq;
         (vs[0], vs[2]) = (vs[2], vs[0]);
         (sigs[0], sigs[2]) = (sigs[2], sigs[0]);
 
         vm.prank(redeemer);
-        vm.expectRevert(VoucherSeqNotIncreasing.selector);
         escrow.redeemVoucherBatch(vs, sigs);
+        assertEq(escrow.escrowOf(buyer).seqHigh, top);
+        for (uint256 i = 0; i < vs.length; i++) {
+            assertEq(uint8(escrow.held(buyer, vs[i].seq).status), 1, "every item is held");
+        }
     }
 
     /// Two payers' sequences are independent, so an ordering that would be "out of order" read as
@@ -794,7 +798,7 @@ contract AssayEscrowBatchTest is Fixture {
         sigs[1] = sigs[0];
 
         vm.prank(redeemer);
-        vm.expectRevert(VoucherSeqNotIncreasing.selector);
+        vm.expectRevert(VoucherSeqUsed.selector);
         escrow.redeemVoucherBatch(vs, sigs);
 
         assertEq(escrow.escrowOf(buyer).seqHigh, 0);

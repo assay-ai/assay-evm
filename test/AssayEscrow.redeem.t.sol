@@ -358,16 +358,48 @@ contract AssayEscrowRedeemTest is Fixture {
 
     // --- the boundaries ----------------------------------------------------------------------
 
-    /// Boundary B5/B6. Gaps are allowed; every seq at or below the high-water mark is dead.
-    function test_boundary_theSequenceMustStrictlyIncrease() public {
+    /// D-23, the case the rule exists for: the backend lands a payer's seq 11 (provider B) before
+    /// seq 10 (provider A). Under the old `seq > seqHigh` rule seq 10 was lost for good; now both
+    /// are held and both are collected.
+    function test_aLowerSeqLandingAfterAHigherOneIsStillPaid() public {
+        uint256 before = usdg.balanceOf(provider);
+        _redeem(_v(1_000, 11));
+        _redeem(_v(2_000, 10));
+        assertEq(escrow.escrowOf(buyer).seqHigh, 11);
+        assertEq(uint8(escrow.held(buyer, 10).status), 2, "seq 10 collected");
+        assertEq(uint8(escrow.held(buyer, 11).status), 2, "seq 11 collected");
+        assertGt(usdg.balanceOf(provider), before);
+    }
+
+    /// D-23: a refunded seq stays used, so a refund can never be followed by a second charge of
+    /// the same voucher.
+    function test_aRefundedSeqCannotBeRedeemedAgain() public {
+        Voucher memory v = _v(1_000, 3);
+        bytes memory sig = _sig(v);
+        vm.prank(redeemer);
+        escrow.redeemVoucher(v, sig);
+        vm.prank(redeemer);
+        escrow.refundHeld(buyer, 3);
+        vm.prank(redeemer);
+        vm.expectRevert(VoucherSeqUsed.selector);
+        escrow.redeemVoucher(v, sig);
+    }
+
+    /// Boundary B5/B6 (D-23). Gaps are allowed and may be filled later, in any order; a used seq
+    /// is dead, and filling a gap does not move the high-water mark.
+    function test_boundary_eachSeqIsRedeemedExactlyOnce() public {
         _redeem(_v(1_000, 1));
         _redeem(_v(1_000, 5));
         assertEq(escrow.escrowOf(buyer).seqHigh, 5);
 
-        for (uint64 dead = 1; dead <= 5; dead++) {
-            Voucher memory v = _v(1_000, dead);
+        _redeem(_v(1_000, 3)); // below the mark, unused: admitted
+        assertEq(escrow.escrowOf(buyer).seqHigh, 5, "a lower seq does not move the mark");
+
+        uint64[3] memory used = [uint64(1), 3, 5];
+        for (uint256 i = 0; i < used.length; i++) {
+            Voucher memory v = _v(1_000, used[i]);
             vm.prank(redeemer);
-            vm.expectRevert(VoucherSeqNotIncreasing.selector);
+            vm.expectRevert(VoucherSeqUsed.selector);
             escrow.redeemVoucher(v, _sig(v));
         }
 
@@ -780,9 +812,9 @@ contract AssayEscrowRedeemTest is Fixture {
     function test_divergence_theSequenceIsCheckedBeforeTheSignature() public {
         _redeem(_v(1_000, 7));
 
-        Voucher memory stale = _v(1_000, 7); // dead seq AND a signature by the wrong key
+        Voucher memory stale = _v(1_000, 7); // used seq AND a signature by the wrong key
         vm.prank(redeemer);
-        vm.expectRevert(VoucherSeqNotIncreasing.selector);
+        vm.expectRevert(VoucherSeqUsed.selector);
         escrow.redeemVoucher(stale, _badSig(stale));
 
         // The same voucher with a LIVE seq and the same wrong key gets the other diagnosis, so

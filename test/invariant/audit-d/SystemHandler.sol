@@ -1227,10 +1227,10 @@ contract SystemHandler is Test {
     function setSlashDelay(uint256 callerSeed, uint64 d) external step("setSlashDelay") {
         address caller = callerSeed % 4 == 0 ? _anyCaller(callerSeed >> 2) : _admin();
         d = uint64(bound(d, 0, 30 * 86_400));
-        if (callerSeed % 5 == 1) d = Constants.MIN_SLASH_DELAY_SECONDS;
+        uint64 floor = config.minSlashDelaySeconds();
+        if (callerSeed % 5 == 1) d = floor;
         // Fixed bounds since audit F R3: no coupling to the unbonding period.
-        bool want = caller == _admin() && d >= Constants.MIN_SLASH_DELAY_SECONDS
-            && d <= Constants.MAX_SLASH_DELAY_SECONDS;
+        bool want = caller == _admin() && d >= floor && d <= Constants.MAX_SLASH_DELAY_SECONDS;
         bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.setSlashDelay, (d)));
         if (s != want) _violate("role", "setSlashDelay outcome mismatch");
     }

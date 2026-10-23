@@ -44,6 +44,10 @@ interface IAssayConfig {
     /// provider's dispute window. `Constants.SLASH_DELAY_SECONDS` until the admin sets it.
     function slashDelaySeconds() external view returns (uint64);
 
+    /// The floor `setSlashDelay` and `slashDelaySeconds` apply: 48 h, or 10 min on a test chain
+    /// (D-23).
+    function minSlashDelaySeconds() external view returns (uint64);
+
     /// How long `AssayEscrow` holds a new redemption before the redeemer may collect it, frozen
     /// into each record's `collectableAt`. `Constants.DEFAULT_COLLECT_HOLD_SECONDS` until set.
     function collectHoldSeconds() external view returns (uint64);

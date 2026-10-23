@@ -518,17 +518,17 @@ contract AssayStakeDisputeTest is Fixture {
         assertEq(oldExecutableAt, uint64(block.timestamp) + Constants.SLASH_DELAY_SECONDS);
 
         vm.prank(admin);
-        config.setSlashDelay(Constants.MIN_SLASH_DELAY_SECONDS);
+        config.setSlashDelay(Constants.MIN_SLASH_DELAY_SECONDS_TESTNET);
 
         assertEq(stake.slashRecordOf(ID).executableAt, oldExecutableAt, "frozen at proposal");
         _propose(bytes32("d2"));
         assertEq(
             stake.slashRecordOf(bytes32("d2")).executableAt,
-            uint64(block.timestamp) + Constants.MIN_SLASH_DELAY_SECONDS
+            uint64(block.timestamp) + Constants.MIN_SLASH_DELAY_SECONDS_TESTNET
         );
 
         // The short delay is the short dispute window.
-        vm.warp(block.timestamp + Constants.MIN_SLASH_DELAY_SECONDS);
+        vm.warp(block.timestamp + Constants.MIN_SLASH_DELAY_SECONDS_TESTNET);
         vm.prank(provider);
         vm.expectRevert(DisputeWindowClosed.selector);
         stake.disputeSlash(bytes32("d2"));
