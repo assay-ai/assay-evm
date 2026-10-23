@@ -114,7 +114,7 @@ aspiration.
 - **Provider stake.** The admin `registerVerifier`s a key it holds, `setArbiter`s an accomplice
   (the arbiter cannot be removed, only replaced), `setSlashDelay`s 10 minutes, and raises the
   slash parameters with `updateConfig` (`slashCapBps` up to 5,000, `slashAgentBps` 10,000,
-  `penaltyAmount` and `verifierDailyCap` large). Its key proposes against each provider naming its
+  `penaltyAmount` large). Its key proposes against each provider naming its
   own beneficiary; the provider's dispute is upheld by the accomplice; `executeSlash` pays after
   10 minutes — repeatable per provider and per window. A dispute does not help, and the old
   "the owner acts inside the 72 h delay" remedy is gone, because the same key shortens the delay.
@@ -123,7 +123,7 @@ aspiration.
 - **Redemption ordering.** It can pin `redeemer` to itself.
 - **Freezing.** It can pause, and block any address, holding every exit closed (§18).
 
-**What limits it:** the caps per record, per provider window and per key-day, and how fast the
+**What limits it:** the caps per record and per provider window, and how fast the
 owner replaces the admin (`setAdmin`) and the fresh admin revokes the rogue key and unpauses.
 **Monitoring (required, off chain):** page on every `ConfigUpdated`, `VerifierRegistered`,
 `ArbiterSet`, `SlashDelaySet`, `PauseToggled` and `BlockedSet` from `AssayConfig`.
@@ -228,8 +228,8 @@ until `pendingSlash == atRisk`, at which point `free == 0` and further proposals
 
 The scenario, because "a leaked key can grief" is too abstract to act on:
 
-> A verifier key leaks at 09:00. The holder does not execute anything — executing costs them
-> nothing but would burn the key's `verifierDailyCap` and leave a `SlashExecuted` event. Instead
+> A verifier key leaks at 09:00. The holder does not execute anything — executing would leave a
+> `SlashExecuted` event and pay only after the slash delay, inside which the key is revoked. Instead
 > they submit proposals against one provider until `pendingSlash == atRisk`, in one block, for the
 > price of the gas. That provider's `withdrawStake` now returns `InsufficientUnbondingStake` for
 > every amount. Release requires `cancelSlash` (admin or arbiter) or `expireSlash`, and
@@ -482,17 +482,32 @@ key is revoked.
 **All or wait (audits A M-1, B B1, C C2, fixed; owner decision on audit F R4).**
 `executeSlash` is permissionless, so a payment cut by a rolling window let the provider pick the
 instant and discharge a judgement for dust. Now a record is paid its whole reservation or not at
-all: it executes only when it fits under the provider's window AND the key's daily cap, otherwise
-`SlashWindowNotDrained` and it stays Pending. `applied == reserved` for every executed record. The
-accepted cost: an honest judgement that never fits within its 7-day grace expires unpaid, so
-`verifierDailyCap` must be sized with large headroom.
+all: it executes only when it fits under the provider's window, otherwise `SlashWindowNotDrained`
+and it stays Pending. `applied == reserved` for every executed record. The accepted cost: an honest
+judgement that never fits within its 7-day grace expires unpaid.
+
+**No per-verifier-key window (D-25, review 2026-10-23 M-1 / T-4).** Until D-25 a record also had to
+fit the signing key's rolling daily window (`verifierDailyCap`). That window was one
+first-come-first-served resource shared by every provider the key judged, and `executeSlash` is
+permissionless, so anyone able to fill it could make every other provider's slash wait until it
+expired: the reviewer's PoC kept a 500 USDG key-day full with self-slashes (attestations for calls
+the attacker bought from its own provider, beneficiary its own agent) for about 171 USDG a day and
+voided every honest slash signed by that key. The key window is gone; `verifierDailyCap` stays in
+`ParamSet` and is not read on chain. A leaked verifier key is bounded instead by `revokeVerifier`
+(which voids every record it signed), the slash delay (at least 48 h off the test chains, D-23),
+the dispute and arbiter path, and each provider's own window. **Residual, accepted:** a provider can
+still fill its OWN window with self-slashes, so a victim's record against that provider waits and
+may expire (`test/AssayStake.crowding.t.sol`); it costs the provider 30 % of each self-slash (the
+platform share) and it shields only itself. The backend refuses attestations whose beneficiary is
+linked to the provider. Per-provider FIFO execution would close it on chain; it is parked to keep
+the contract simple.
 
 **A pause longer than 7 days voids pending and upheld slashes (A L-1, B B4, C C6).** The grace and
 the dispute timeout keep running while paused, `executeSlash` is closed and `expireSlash` is not.
 The provider's rolling window is not frozen either. Runbook §6.7.
 
-**Execution-time pricing (B3).** The split (`slashAgentBps`, `slashPlatformBps`), the `treasury`
-and the `verifierDailyCap` are read when a record executes, not when it was proposed, so a
+**Execution-time pricing (B3).** The split (`slashAgentBps`, `slashPlatformBps`) and the `treasury`
+are read when a record executes, not when it was proposed, so a
 parameter change re-prices every record in flight. Only `capAllowance`, `reserved`, the beneficiary
 and `executableAt` are frozen.
 

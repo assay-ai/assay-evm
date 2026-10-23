@@ -220,43 +220,37 @@ contract AssayConfigAdminTest is Test {
         p.slashPlatformBps = 0;
         p.slashCapBps = 1;
         p.minimumStake = 10_000; // the smallest a 1-bps cap can slash (audit C7)
-        p.verifierDailyCap = 1;
-        p.penaltyAmount = 0; // two penalties fit one key-day (audit G G-1)
+        p.verifierDailyCap = 1; // not read on chain since D-25; only zero is refused
+        p.penaltyAmount = 0;
         AssayConfig floor_ = _deploy(p, admin);
         assertEq(floor_.params().slashCapBps, 1, "a one-bps cap is a cap");
         assertEq(floor_.params().takeRateBps, 0, "a zero take rate is not refused");
     }
 
     /// `penalty_amount` is unbounded in `state.rs` — `0` **is** on-chain shadow mode. It has
-    /// two ceilings and no other bound in either direction: half of `verifierDailyCap` (two
-    /// judgements must fit one key-day, audit G G-1) and half of a minimum-stake provider's
+    /// one ceiling and no other bound in either direction: half of a minimum-stake provider's
     /// capped day, `minimumStake * slashCapBps / 10_000` (two must fit one provider-day, review
-    /// 2026-10-15 R-1).
-    function test_boundary_penaltyAmountIsBoundedOnlyByTheTwoDailyCaps() public {
+    /// 2026-10-15 R-1). The key-day ceiling against `verifierDailyCap` (audit G G-1) went with
+    /// the on-chain key window (D-25).
+    function test_boundary_penaltyAmountIsBoundedOnlyByTheProviderDayCap() public {
         ParamSet memory p = _valid();
         p.penaltyAmount = 0;
         assertEq(_deploy(p, admin).params().penaltyAmount, 0, "zero penalty is shadow mode");
 
-        // Both caps at their largest: max * 5 000 / 10 000 = 2^63 - 1 holds two of max / 4.
-        p.verifierDailyCap = type(uint64).max;
+        // The cap at its largest: max * 5 000 / 10 000 = 2^63 - 1 holds two of max / 4.
+        p.verifierDailyCap = 1; // ignored on chain (D-25): no longer a ceiling
         p.minimumStake = type(uint64).max;
         p.slashCapBps = 5_000; // MAX_SLASH_CAP_BPS
         p.penaltyAmount = type(uint64).max / 4;
         assertEq(
             _deploy(p, admin).params().penaltyAmount,
             type(uint64).max / 4,
-            "no ceiling but the two daily caps"
+            "no ceiling but the provider-day cap"
         );
 
         // One more than the provider-day ceiling.
         p.penaltyAmount = type(uint64).max / 4 + 1;
         vm.expectRevert(InvalidMinimumStake.selector);
-        _deploy(p, admin);
-
-        // The key-day ceiling still binds on its own.
-        p.penaltyAmount = type(uint64).max / 4;
-        p.verifierDailyCap = 2 * p.penaltyAmount - 1;
-        vm.expectRevert(InvalidVerifierDailyCap.selector);
         _deploy(p, admin);
     }
 

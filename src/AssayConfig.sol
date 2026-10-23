@@ -235,7 +235,7 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
     /// a 100% slash cap is not a cap.
     ///
     /// `penaltyAmount` has no bound of its own: `0` is on-chain shadow mode.
-    /// Its only ceiling is the cross-check against `verifierDailyCap` below (audit C7).
+    /// Its only ceiling is the provider-day cross-check against `minimumStake` below.
     ///
     /// Parameters only. The role table (the redeemer is not the arbiter) is
     /// [`_assertRolesDistinct`]'s, and the slash delay is no longer coupled to the unbonding
@@ -272,13 +272,12 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         ) {
             revert InvalidMinimumStake();
         }
+        // `verifierDailyCap` is not read on chain since D-25 (`executeSlash` meters only the
+        // provider's window). The field stays in `ParamSet` for ABI and layout stability and is
+        // the off-chain verifier's own per-key budget, so a zero is still refused as a
+        // misconfiguration. Its old `>= 2 * penaltyAmount` bound (audit G G-1) protected the
+        // on-chain key window and went with it.
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
-        // At least two maximal judgements must fit in one key-day (audit G G-1): with all or
-        // wait, a cap of one penalty lets a single record fill the day and crowd out the next.
-        // `uint256`, so a large `penaltyAmount` cannot overflow the doubling.
-        if (uint256(p.verifierDailyCap) < 2 * uint256(p.penaltyAmount)) {
-            revert InvalidVerifierDailyCap();
-        }
     }
 
     // -------------------------------------------------------------------------------------
@@ -296,9 +295,9 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
     ///   is that place. Storing it would cost a slot per key to serve a query `eth_getLogs`
     ///   already answers.
     /// - `slashed_in_window` / `slash_window_started_at` — **the per-key rolling daily cap, which
-    ///   lives in AssayStake** (D-3). It is a consequence of slashing, and putting it here
-    ///   would hand AssayStake write authority over this contract, which is the one property the
-    ///   three-contract split exists to deny. Its absence is the design, not an omission.
+    ///   is not enforced on chain at all** (D-25): a key-wide window was a shared resource one
+    ///   party could fill to make every other provider's slash expire. It never lived here
+    ///   either way (D-3): AssayStake must not have write authority over this contract.
     ///
     /// The two booleans are `state.rs`'s `status` plus the account existence Anchor gets for
     /// free, and **both are load-bearing**: `registered` is what makes enrolment one-shot, and

@@ -1059,11 +1059,12 @@ contract SystemHandler is Test {
         }
         AssayStake.SlashRecord memory q = stake.slashRecordOf(id);
         AssayStake.ProviderStake memory s2 = stake.stakeOf(r.provider);
-        (uint64 vUsed,) = _verifierWindow(r.verifier);
+        (uint64 vUsed, uint64 vStarted) = _verifierWindow(r.verifier);
         // All or wait (D-20): an execution pays the whole reservation, never part of it.
         if (q.applied != r.reserved) _violate("caps", "applied != reserved");
         if (s2.slashedInWindow > r.capAllowance) _violate("caps", "provider window above cap");
-        if (vUsed > p.verifierDailyCap) _violate("caps", "verifier window above daily cap");
+        // D-25: the per-key window is retired; its storage must never be written again.
+        if (vUsed != 0 || vStarted != 0) _violate("caps", "retired verifier window written");
         uint64 agent = Fee.bpsOf(q.applied, p.slashAgentBps);
         uint64 plat = Fee.bpsOf(q.applied, p.slashPlatformBps);
         if (usdg.balanceOf(r.beneficiary) - benBefore != agent) _violate("payout", "agent share");

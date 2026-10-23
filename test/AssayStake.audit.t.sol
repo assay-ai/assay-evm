@@ -109,25 +109,21 @@ contract AssayStakeAuditTest is Fixture {
         assertEq(stake.slashRecordOf("s2").applied, 100_000_000, "paid in full");
     }
 
-    /// M-1b: the same through the verifier key's shared window.
-    function test_audit_M1b_theSharedKeyWindowCannotBeUsedToDischargeEither() public {
-        _params(100_000_000, 5_000, 200_000_000); // the key-day holds two penalties (G-1)
+    /// M-1b, as amended by D-25: there is no shared key window any more, so another
+    /// provider's executions under the same key leave this provider's record untouched — it
+    /// pays in full at once, even with `verifierDailyCap` set to a single penalty.
+    function test_audit_M1b_anotherProvidersExecutionsDoNotDelayThisOne() public {
+        _params(100_000_000, 5_000, 100_000_000); // the cap is ignored on chain since D-25
         _bond(provider2, BOND);
         _propose("other", provider2, 100_000_000);
         _propose("other2", provider2, 100_000_000);
         _propose("mine", provider, 100_000_000);
         vm.warp(stake.slashRecordOf("mine").executableAt);
         stake.executeSlash("other");
-        stake.executeSlash("other2"); // fills the key's day
+        stake.executeSlash("other2"); // twice the key's nominal cap, already
 
-        vm.warp(block.timestamp + 1);
-        vm.prank(provider);
-        vm.expectRevert(SlashWindowNotDrained.selector);
         stake.executeSlash("mine");
-
-        vm.warp(block.timestamp + Constants.SLASH_WINDOW_SECONDS);
-        stake.executeSlash("mine");
-        assertEq(stake.slashRecordOf("mine").applied, 100_000_000, "paid in full");
+        assertEq(stake.slashRecordOf("mine").applied, 100_000_000, "paid in full, no wait");
     }
 
     /// All or wait (owner decision, audit F R4): there is no last-day exception. A judgement that
@@ -227,19 +223,17 @@ contract AssayStakeAuditTest is Fixture {
         assertEq(config.params().minimumStake, 20);
     }
 
-    function test_audit_C7_aPenaltyAboveTheDailyCapIsRefused() public {
+    /// D-25 retired audit C7 / G-1's `verifierDailyCap >= 2 * penaltyAmount`: the field is not
+    /// read on chain, so a cap below one penalty is admitted. Only zero is still refused.
+    function test_D25_theDailyCapNoLongerBoundsThePenalty() public {
         ParamSet memory p = config.params();
-        // Audit G G-1: the daily cap must hold TWO maximal penalties.
-        p.verifierDailyCap = 2 * p.penaltyAmount - 1;
+        p.verifierDailyCap = 1; // far below one penalty
+        vm.prank(admin);
+        config.updateConfig(p);
+        assertEq(config.params().verifierDailyCap, 1);
+        p.verifierDailyCap = 0;
         vm.prank(admin);
         vm.expectRevert(InvalidVerifierDailyCap.selector);
-        config.updateConfig(p);
-        p.verifierDailyCap = p.penaltyAmount; // one penalty is no longer enough
-        vm.prank(admin);
-        vm.expectRevert(InvalidVerifierDailyCap.selector);
-        config.updateConfig(p);
-        p.verifierDailyCap = 2 * p.penaltyAmount; // exactly two is admitted
-        vm.prank(admin);
         config.updateConfig(p);
     }
 

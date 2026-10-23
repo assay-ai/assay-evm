@@ -57,10 +57,11 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         uint128 totalSlashed; //     slot 3  state.rs
     }
 
-    /// The verifier's rolling daily cap counter lives HERE, not in AssayConfig: it is a
-    /// consequence of slashing, and AssayConfig must never be written by another contract
-    /// (D-3). AssayConfig owns only the key's lifecycle. On Solana both halves sit on the
-    /// one `VerifierKey` account because there is only one program.
+    /// RETIRED (D-25). This was the verifier key's rolling daily meter. `executeSlash` no longer
+    /// reads or writes it: one shared first-come-first-served window per key let anyone who could
+    /// fill it with its own records crowd every other provider's slash into expiry. The type and
+    /// the mapping below stay declared only so the storage layout remains append-only
+    /// (`script/check-layout.sh`); nothing in this contract touches them.
     struct VerifierWindow {
         uint64 slashedInWindow;
         uint64 windowStartedAt;
@@ -75,6 +76,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// for a struct-valued mapping returns a flattened tuple, which reorders silently when a
     /// field is appended. [`stakeOf`] returns the struct, so a decoder breaks loudly instead.
     mapping(address => ProviderStake) internal stakes;
+    /// RETIRED (D-25): never read or written. Kept for the storage layout only.
     mapping(address => VerifierWindow) internal verifierWindows;
 
     /// `state.rs` keeps these on Solana's `Config`. Here they live on the contract that
@@ -406,7 +408,6 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (reserved > capAllowance) reserved = capAllowance;
         if (reserved > free) reserved = Cast.toUint64(free);
         if (reserved == 0) revert NothingToSlash();
-
         s.pendingSlash += reserved;
 
         SlashRecord storage rec = slashRecords[a.requestId];
@@ -476,7 +477,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     );
 
     /// Phase two: the delay was served, the execution window has not closed,
-    /// the key can still sign, and the penalty is paid under both caps.
+    /// the key can still sign, and the penalty fits the provider's rolling window.
     ///
     /// **Permissionless.** Being front-run for the privilege of paying gas is harmless — the
     /// judgement, its beneficiary and its amount were all fixed at proposal, and every one of
@@ -519,21 +520,21 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
 
         // **All or wait** (owner decision, audit F R4). The record is paid its WHOLE reservation
         // or not at all: only when it fits under the provider's rolling window (against the
-        // allowance FROZEN at proposal) AND under the verifier key's rolling window (against the
-        // daily cap read LIVE). Otherwise `SlashWindowNotDrained`, the record stays Pending, and
-        // it is retried as the windows drain; one that never fits before its deadline expires in
-        // the provider's favour. So `applied == reserved` always: nobody — the party being judged
-        // included — can choose an instant at which a judgement is paid as dust. Nothing is
-        // reserved against the key window at proposal, so a leaked key cannot burn a day's
-        // capacity on judgements it never intends to execute.
+        // allowance FROZEN at proposal). Otherwise `SlashWindowNotDrained`, the record stays
+        // Pending, and it is retried as the window drains; one that never fits before its
+        // deadline expires in the provider's favour. So `applied == reserved` always: nobody —
+        // the party being judged included — can choose an instant at which a judgement is paid
+        // as dust.
+        //
+        // **No per-verifier-key window (D-25).** A key-wide window is one first-come-first-served
+        // resource shared by every provider that key judged, so whoever fills it with its own
+        // records makes every other provider's slash wait until it expires. A leaked key is
+        // bounded instead by `revokeVerifier` (re-checked above, it voids every record the key
+        // signed), the slash delay, the dispute and arbiter path, and this per-provider window.
+        // `ParamSet.verifierDailyCap` is not read on chain.
         uint64 providerCarried = Window.decay(s.slashedInWindow, s.slashWindowStartedAt, nowTs);
-        VerifierWindow storage vw = verifierWindows[rec.verifier];
-        uint64 keyCarried = Window.decay(vw.slashedInWindow, vw.windowStartedAt, nowTs);
         uint64 applied = rec.reserved;
-        if (
-            uint256(providerCarried) + applied > rec.capAllowance
-                || uint256(keyCarried) + applied > p.verifierDailyCap
-        ) revert SlashWindowNotDrained();
+        if (uint256(providerCarried) + applied > rec.capAllowance) revert SlashWindowNotDrained();
 
         uint64 agentAmount = Fee.bpsOf(applied, p.slashAgentBps);
         uint64 platformAmount = Fee.bpsOf(applied, p.slashPlatformBps);
@@ -561,13 +562,10 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (s.unbonding == 0) s.unbondingStartedAt = 0;
 
         s.totalSlashed += taken;
-        // Both counters meter `applied` — the gross judged — not `taken`. The anchors never move
+        // The window meters `applied` — the gross judged — not `taken`. The anchor never moves
         // backwards: a clock that stepped back must not hand capacity to whoever noticed.
         s.slashedInWindow = providerCarried + applied;
         s.slashWindowStartedAt = nowTs > s.slashWindowStartedAt ? nowTs : s.slashWindowStartedAt;
-
-        vw.slashedInWindow = keyCarried + applied;
-        vw.windowStartedAt = nowTs > vw.windowStartedAt ? nowTs : vw.windowStartedAt;
 
         totalStaked -= taken;
         totalSlashed += taken;
@@ -739,8 +737,8 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
 
     /// The arbiter rules against the provider: the record goes back to `Pending`, executable
     /// from `max(frozen executableAt, now)` — never earlier than it would have been undisputed —
-    /// and the ordinary [`executeSlash`], with its verifier re-check and both caps, must still
-    /// run inside the 7-day grace counted from that `executableAt`.
+    /// and the ordinary [`executeSlash`], with its verifier re-check and the provider window, must
+    /// still run inside the 7-day grace counted from that `executableAt`.
     ///
     /// **Only before the dispute timed out.** At and after `disputedAt + DISPUTE_TIMEOUT_SECONDS`
     /// this refuses [`DisputeTimedOut`] and only `expireSlash` works: the two doors share that

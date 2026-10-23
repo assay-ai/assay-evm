@@ -13,8 +13,8 @@ import {Cast} from "./Cast.sol";
 /// early. The documented residual is unchanged — an adversary can spend 2x across an
 /// arbitrary 24 hours, and that is accepted on both chains.
 ///
-/// Three callers, one implementation: the buyer's spend window, the provider's
-/// slash window, and the verifier key's daily cap.
+/// Two callers, one implementation: the buyer's spend window and the provider's slash window.
+/// (The verifier key's daily cap was a third until D-25 removed it.)
 ///
 /// **What the unsigned port changes, and what it does not.** The Anchor original takes `i64`
 /// timestamps (Solana's `unix_timestamp` is signed) and reaches the "clock went backwards" case

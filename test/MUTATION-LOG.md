@@ -1959,3 +1959,13 @@ Not yet mutated; the expected killers:
 | R1 | `_validate`: `minimumStake * slashCapBps / BPS < 2 * penaltyAmount` → `InvalidMinimumStake` | deleted | `AssayStake.audit.t.sol::test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused`, `AssayConfig.params.t.sol::test_wrongState_updateRefusesEveryBoundJustAsInitializeDoes` | not run |
 | R2 | same | `2 *` dropped (back to one penalty) | `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 19` row) | not run |
 | R3 | same, the boundary | `<` → `<=` | `AssayConfig.params.t.sol::test_aMinimumStakeCapOfExactlyTwoPenaltiesIsAccepted`, `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 20` row) | not run |
+
+### Review 2026-10-23 (M-1 / D-25: the verifier key window is retired)
+
+`executeSlash` no longer reads or writes `verifierWindows`, and `_validate` no longer requires
+`verifierDailyCap >= 2 * penaltyAmount` (only `verifierDailyCap == 0` is still refused). The rows
+above that mutate the key window or G1 (X8, A1, A3, F5, G1, D23) describe code that no longer
+exists; their named tests were removed or rewritten (`test_D25_oneKeyIsNotMeteredAcrossJudgements`,
+`test_audit_M1b_anotherProvidersExecutionsDoNotDelayThisOne`,
+`test_D25_theDailyCapNoLongerBoundsThePenalty`, `test/AssayStake.crowding.t.sol`). Audit D's
+handler now asserts the retired slot is never written. Not yet mutated.

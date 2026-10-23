@@ -428,9 +428,11 @@ contract AssayConfigParamsTest is Test {
         p.penaltyAmount = 1_000_000;
         _accepted(p, "the penalty may be a quarter of the minimum stake");
 
-        // A daily cap smaller than a single penalty WAS accepted here; since audit C7 it is a
-        // deliberate refusal (one judgement could never be paid in full), tested in
-        // `AssayStake.audit.t.sol::test_audit_C7_aPenaltyAboveTheDailyCapIsRefused`.
+        // A daily cap smaller than a single penalty: refused from audit C7 until D-25, which
+        // stopped reading the cap on chain. Accepted again (only zero is refused).
+        p = _valid();
+        p.verifierDailyCap = 1;
+        _accepted(p, "a daily cap below one penalty (D-25: not read on chain)");
 
         // an unbonding period that is not a whole number of days.
         p = _valid();

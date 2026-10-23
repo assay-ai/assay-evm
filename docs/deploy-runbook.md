@@ -403,12 +403,11 @@ set `expiresAt` far enough out to cover that tail.
 ### 6.7 Executing slashes, pauses and parameter changes
 
 - **All or wait (D-20).** `executeSlash` pays a record its WHOLE reservation or nothing. When the
-  provider's or the key's rolling window cannot take all of it, it refuses `SlashWindowNotDrained`
-  (the backend maps it to WAIT) and the record stays Pending; retry as the windows drain (they
-  reopen linearly over 24 h). There is no partial payment and no last-day exception: **an honest
-  slash crowded out for the whole 7-day grace expires unpaid.** So size `verifierDailyCap` with
-  large headroom over a day's expected judgements (or spread the load over more keys), and never
-  lower it below records already in flight.
+  provider's rolling window cannot take all of it, it refuses `SlashWindowNotDrained` (the backend
+  maps it to WAIT) and the record stays Pending; retry as the window drains (it reopens linearly
+  over 24 h). There is no partial payment and no last-day exception: **an honest slash crowded out
+  for the whole 7-day grace expires unpaid.** There is no per-key window on chain (D-25):
+  `verifierDailyCap` is not read by the contracts and is only the backend's own per-key budget.
 - **A pause longer than 7 days voids slashes.** The grace and the 30-day dispute timeout keep
   running while paused; `executeSlash` is closed and `expireSlash` is open to anyone. **Before a
   long pause, and again right after the unpause**, list every Pending or upheld record whose
@@ -421,15 +420,15 @@ set `expiresAt` far enough out to cover that tail.
 - **Only if that is impractical** (many providers): raise `unbondingPeriodSeconds` temporarily
   before the unpause (`updateConfig`), so no provider whose slashes were voided can exit before
   they are re-proposed (audit B B6). This delays every provider's exit, not just the affected ones.
-- **Two penalties per key-day.** `updateConfig` refuses `verifierDailyCap < 2 * penaltyAmount`
-  (`InvalidVerifierDailyCap`, audit G G-1), so one maximal record can never fill a key's day.
+- **`verifierDailyCap` must be non-zero** (`InvalidVerifierDailyCap`); nothing else bounds it since
+  D-25 removed the on-chain key window and audit G G-1's `>= 2 * penaltyAmount` with it.
 - **Two penalties per provider-day at the minimum.** `updateConfig` refuses
   `minimumStake * slashCapBps / 10_000 < 2 * penaltyAmount` (`InvalidMinimumStake`, review
   2026-10-15 R-1), so a provider at the minimum fits two maximal records in its capped day. Raise
   `minimumStake` (or lower `penaltyAmount`) before raising the penalty; a provider slashed below
   the minimum can still have one record fill its day.
-- **Parameters re-price records in flight.** The split, the `treasury` and the `verifierDailyCap`
-  are read at execution time, not at proposal: an `updateConfig` changes what every pending record
+- **Parameters re-price records in flight.** The split and the `treasury` are read at execution
+  time, not at proposal: an `updateConfig` changes what every pending record
   will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
   frozen.
 - **Key expiry.** The backend runs a key-expiry monitor (§6.6 gives the tail a key must cover).
