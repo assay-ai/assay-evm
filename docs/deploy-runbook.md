@@ -677,6 +677,24 @@ deployment automatically — which is the property that makes a redeploy safe an
 A halted Orbit sequencer freezes withdrawals; the mitigation is the parent chain's force-inclusion
 path. It is not a contract concern.
 
+**Two timing assumptions this depends on (review 2026-10-23 L-4).**
+
+1. **The 48 h slash-delay floor (D-23) assumes a 24 h force-inclusion window.** A force-included
+   transaction is timestamped `max(parent-chain enqueue time, previous L2 block time)`, so a
+   censored `disputeSlash` lands with the current time; it is defended only if it can be forced in
+   before `executableAt`. 48 h covers Arbitrum One's default 24 h `delaySeconds` with margin, but
+   **Robinhood's own value is not measured yet**: read `SequencerInbox.maxTimeVariation()` on
+   Robinhood's parent chain (see below for why it cannot be read from the L3) and confirm
+   `delaySeconds` plus a margin is below `minSlashDelaySeconds()`. If it is not, raise the floor
+   before mainnet.
+2. **The D-24 margin is smaller than the sequencer clock drift Arbitrum allows.**
+   `WITHDRAW_DELAY_SECONDS` / `TIGHTEN_DELAY_SECONDS` (10,800 s) exceed the longest redeemable
+   voucher life (7,620 s) by **3,180 s**, while a sequencer may stamp blocks up to 1 h (3,600 s)
+   ahead of real time. A faulty or malicious sequencer that runs the clock forward by more than
+   3,180 s inside one voucher's life can mature a withdrawal, or bind a tightening, before a voucher
+   signed earlier is redeemed ("signed means collectable" breaks). This needs a misbehaving trusted
+   sequencer and is accepted; the backend alerts when `block.timestamp` drifts from wall-clock time.
+
 **Still owed, and here is exactly why.** The force-inclusion window is
 `SequencerInbox.maxTimeVariation()` on the **parent** chain, not a value any L3 precompile
 exposes. Closing it needs two inputs this repo does not have: which chain Robinhood settles to,

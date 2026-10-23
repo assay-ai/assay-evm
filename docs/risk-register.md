@@ -161,6 +161,14 @@ A halted Orbit sequencer freezes withdrawals. The mitigation is the parent chain
 path, and **the delay is an Orbit configuration that must be read from the actual chain and written into the
 runbook.** It is not a contract concern and there is no contract-side mitigation.
 
+Two timing assumptions rest on it (review 2026-10-23 L-4, runbook §8): the 48 h slash-delay floor
+(D-23) assumes a force-inclusion window of at most 24 h, which is **not yet measured** on
+Robinhood's parent chain (`SequencerInbox.maxTimeVariation()`); and D-24's margin between the
+withdraw/tighten delay and the longest voucher life (10,800 − 7,620 = 3,180 s) is below the 1 h of
+forward clock drift Arbitrum allows a sequencer, so a sequencer that runs its clock ahead by more
+than that can break "signed means collectable". Accepted (trusted sequencer); the backend alerts
+on drift.
+
 ## 8. No gasless first deposit
 
 A buyer holding zero ETH needs one funded transaction (`approve` + `depositFor`) before the first deposit; the Permit2 door was removed in D-18.
@@ -286,10 +294,10 @@ signed — covers **only vouchers signed before `requestWithdraw`**. That half i
 `WITHDRAW_DELAY_SECONDS (10,800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7,620)` buys. The other half
 is false, and the contract does not pretend otherwise:
 
-> A buyer requests a withdrawal at `T`; it matures at `T + 3600`. The backend writes a 402 at
-> `T + 1400` and the buyer signs a voucher with `issuedAt = T + 1400`, `expiresAt = T + 1700`. That
-> voucher stays redeemable until `T + 1700 + 1800 = T + 3500`, which is fine — but a voucher signed
-> at **`T + 1381` or later** is redeemable past `T + 3600`. `withdraw()` reads no
+> A buyer requests a withdrawal at `T`; it matures at `T + 10,800`. The backend writes a 402 at
+> `T + 3,000` and the buyer signs a voucher with `issuedAt = T + 3,000`, `expiresAt = T + 3,300`.
+> That voucher stays redeemable until `T + 3,300 + 7,200 = T + 10,500`, which is fine — but a
+> voucher signed at **`T + 3,181` or later** (10,800 − 7,620 + 1) is redeemable past `T + 10,800`. `withdraw()` reads no
 > outstanding-voucher state, pays `min(requested, balance)`, and the later redemption then fails
 > `EscrowInsufficient`. **The provider has already served the request.**
 
@@ -330,7 +338,7 @@ needs before it is redeemed.
 - Vouchers signed after a withdrawal request (§13) and pause, blocklist or outage beyond a
   voucher's deadline are unchanged.
 
-## 14a. A revoked (or stolen) delegate key can sign NEW vouchers for up to an hour — ACCEPTED, owner decision pending
+## 14a. A revoked (or stolen) delegate key can sign NEW vouchers for up to three hours — ACCEPTED, owner decision pending
 
 **Who it affects:** the payer. Review 2026-10-16 step 5, F2 (Medium, design trade-off).
 
@@ -338,13 +346,13 @@ During the grace the chain cannot tell a voucher signed before the revocation fr
 after it: `issuedAt` is chosen by the signer. So a key the payer revokes because it was stolen
 can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 10,800 s after the
 revocation, never past `validUntil`). Before D-21 `revokeDelegate` and `setLimits(0, 0)` were
-instant kill switches; now nothing the payer can do stops on-chain spending for that hour —
+instant kill switches; now nothing the payer can do stops on-chain spending for those three hours —
 lowering the escrow caps is held too, and `requestWithdraw` does not block redeems.
 
 **The bound (quantified):** the extra spend after the revocation is at most
 `min(heldDelegateMaxPerWindow - carried, heldEscrowWindow - carriedEscrow, balance)`, where
 `carried` is the delegate's window spend decayed to the redemption instant; the decay over the
-hour returns at most 3,600 / 86,400 ≈ 4.2% of the window, so the bound is about one held delegate
+three hours returns at most 10,800 / 86,400 = 12.5% of the window, so the bound is about one held delegate
 window. Each voucher is also at most the held `maxVoucherAmount`. The money goes to an ACTIVE
 provider, not to the thief, so the thief must also control or collude with a registered provider,
 and the vouchers must be submitted by the REDEEMER — which happens only under a backend compromise
@@ -352,7 +360,7 @@ or a backend bug (`Constants.sol` already assumes the backend may be compromised
 
 **Why accepted:** it is the price of "signed means collectable" (§14) and of "the platform never
 owes providers". Gating the held caps on `issuedAt <= revokedAt + skew` does not change the
-amount bound (a thief backdates `issuedAt`); it only shortens the usable time to about 2,100 s.
+amount bound (a thief backdates `issuedAt`); it only shortens the usable time to about 7,500 s.
 The alternative — a payer `freeze` with no grace, where the platform carries the debt of the
 vouchers it strands — is more contract surface and is the owner's decision (pending).
 
@@ -366,7 +374,7 @@ vouchers it strands — is more contract surface and is the owner's decision (pe
 - **F3, a merged hold.** A voucher is checked against the current pair or the held pair, each
   WHOLE, so a single lower-one-raise-the-other change never combines (old per-call, new window).
   One slot holds one pair, though: a SECOND lowering while a hold still runs merges the two pairs
-  field by field (and restarts the hour from the second lowering), because a voucher valid at
+  field by field (and restarts the three hours from the second lowering), because a voucher valid at
   that instant may rely on either. Only then can a held pair be one the payer never set as a
   whole, and only payer calls create it. The merge carries forward: a payer who lowers again
   within each hour keeps the first and loosest pair in force for as long as that pattern goes
@@ -383,13 +391,13 @@ vouchers it strands — is more contract surface and is the owner's decision (pe
   the two hold paths one rule; revisit if repeated lowering becomes a real pattern.
 - **F7, more signing keys than the list limit.** A revoked delegate in its grace is unlisted but
   can still sign, so revoke-and-grant churn can give a payer more than `MAX_DELEGATES_PER_PAYER`
-  signing keys for up to an hour. Only the payer can cause it, and lookups go through a mapping,
+  signing keys for up to three hours. Only the payer can cause it, and lookups go through a mapping,
   so it costs no gas and blocks nothing.
 - **F8, a relayed grant signed close to the minimum.** `authorizeDelegateBySig` needs
-  `validUntil >= now + 3,600` at the block that lands it. A grant SIGNED with
-  `validUntil ≈ signTime + 3,600` reverts with `DelegateValidUntilInvalid` if it is relayed later.
+  `validUntil >= now + 10,800` at the block that lands it. A grant SIGNED with
+  `validUntil ≈ signTime + 10,800` reverts with `DelegateValidUntilInvalid` if it is relayed later.
   Liveness only: the front end signs with a margin of at least the relay deadline
-  (`validUntil >= now + 3,600 + deadline window`).
+  (`validUntil >= now + 10,800 + deadline window`).
 
 ## 15. The redeemer can censor or delay a provider's payment — no fallback yet
 
@@ -401,11 +409,10 @@ for longer than that, or that withholds one provider's vouchers, leaves that pro
 calls it served. The buyer is unharmed: their balance stays theirs.
 
 **The fallback that was specified and not built (2026-10-12):** anyone may redeem after an
-admin-set delay in [1 h, 7 d]. As specified it could never fire: every voucher is dead before an
-hour has passed. Making it fire would need either bounds below the shortest redeemable life
-(about 1,800 s), or a longer redeemable life. A longer life means a longer withdraw delay
-(`WITHDRAW_DELAY_SECONDS` must outlive every voucher signed before the request), and a
-third-party redeemer could then void lower seqs. A redesign is pending: only the voucher's named
+admin-set delay in [1 h, 7 d]. As specified it could never fire before D-24: every voucher was
+dead within 2,220 s. Since D-24 a voucher stays redeemable up to 7,620 s (the shortest redeemable
+life is about 7,200 s, the grace), so a delay of 1 h to about 2 h could fire, and since D-23 a
+redemption out of order no longer voids lower seqs. It is still not built. A redesign is pending: only the voucher's named
 provider, after a fixed delay of about 10 to 15 minutes, with every other rule unchanged.
 
 **What the contract does not do:** nothing today. **Mitigations:** the redeemer and the relayer
