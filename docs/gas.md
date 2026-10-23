@@ -87,15 +87,15 @@ neither has any contract-side enforcement — by design in both cases.
 > provider serves the request for nothing.
 
 The arithmetic, because the boundary is not where it looks: a withdrawal requested at `T` matures
-at `T + WITHDRAW_DELAY_SECONDS (3,600)`. A voucher is redeemable until
-`expiresAt + REDEEM_GRACE_SECONDS (1,800)`, and `expiresAt` may be up to
-`VOUCHER_MAX_LIFETIME_SECONDS (300)` past `issuedAt`. So a voucher signed at **`T + 1381` or later**
+at `T + WITHDRAW_DELAY_SECONDS (10,800)`. A voucher is redeemable until
+`expiresAt + REDEEM_GRACE_SECONDS (7,200)`, and `expiresAt` may be up to
+`VOUCHER_MAX_LIFETIME_SECONDS (300)` past `issuedAt`. So a voucher signed at **`T + 3181` or later**
 can still be redeemable after the withdrawal has matured and been taken. `withdraw()` reads no
 outstanding-voucher state and pays `min(requested, balance)`; the redemption then fails
 `EscrowInsufficient`.
 
 The contract's own guarantee is the other half and it is real: a voucher signed **before** the
-request cannot outlive the delay, because `3,600 > 2,220`. That half is asserted at deployment and
+request cannot outlive the delay, because `10,800 > 7,620`. That half is asserted at deployment and
 tested (`AssayEscrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`,
 `Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`). The half above cannot be:
 it would need an outstanding-voucher set the contract deliberately does not hold, and **Solana's
@@ -119,10 +119,10 @@ The cost of that decision lands on the backend:
 
 Pre-validation is the same list `_redeem` applies, evaluated off chain against current state: the
 voucher window (`expiresAt > issuedAt`, lifetime ≤ 300 s, issued no more than 120 s ahead, redeemed
-no more than 1 800 s late), `held(payer, seq).status == None` **for that payer** (D-23), the payer's per-call and
+no more than 7 200 s late), `held(payer, seq).status == None` **for that payer** (D-23), the payer's per-call and
 rolling-window ceilings, the provider's `bonded` stake against `minimumStake`, and the payer's
 balance. Since D-21 the ceilings are the EFFECTIVE ones and a revoked delegate signs for up to
-3,600 s after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps
+10,800 s after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps
 `0` = that delegate cannot sign now), not from `escrowOf` / `delegationOf`. `effectiveCapsOf` is
 the per-field envelope: the chain also requires the voucher to fit ONE pair whole — the stored
 caps, or the held caps of the last `CapsHeld` for that `(payer, delegate)` while `now <= until`.
@@ -132,7 +132,7 @@ other; an exact prevalidation checks the two pairs from `escrowOf`/`delegationOf
 **Prevalidation is not admission.** `effectiveCapsOf` (and the held caps) are only for a voucher
 that was ALREADY admitted. Admission of a NEW voucher reads `delegationOf(...).revoked` and the
 current (stored) caps, never `effectiveCapsOf`: a revoked delegate's key, or caps the payer just
-lowered, still pass on chain for up to 3,600 s (risk register §14a).
+lowered, still pass on chain for up to 10,800 s (risk register §14a).
 
 Three rules bite specifically in the batch shape, and a job that does not know them will build
 batches that revert:

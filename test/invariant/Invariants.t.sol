@@ -188,8 +188,8 @@ contract InvariantsTest is Test {
         h.refundHeld(1); // the second redemption goes back to the balance
         h.donate(1_000);
         h.requestWithdraw(0, 10_000_000);
-        h.warp(3_599); // the withdraw delay is 3,600s, so two warps are needed
-        h.warp(3_599);
+        h.warp(5_401); // the withdraw delay is 10,800s (D-24), so two warps are needed
+        h.warp(5_401);
         h.withdraw(0);
         h.collectHeld(0, false); // the first, past its one-hour hold
 

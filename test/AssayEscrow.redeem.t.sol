@@ -774,7 +774,7 @@ contract AssayEscrowRedeemTest is Fixture {
 
         // 5. the clock window BEFORE seq — long expired, and seq 0.
         Voucher memory ez = _v(1_000, 0);
-        ez.issuedAt = uint64(block.timestamp) - 5_000;
+        ez.issuedAt = uint64(block.timestamp) - 20_000; // past the 7,620 s redeemable life
         ez.expiresAt = ez.issuedAt + 300;
         _expect(ez, VoucherExpired.selector);
 

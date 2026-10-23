@@ -249,7 +249,7 @@ contract AssayEscrowWithdrawTest is Fixture {
     }
 
     /// THE INVARIANT THE DELAY EXISTS FOR: a voucher signed the instant before the request
-    /// is dead 1,380 seconds before the withdrawal lands. 3600 > 120 + 300 + 1800.
+    /// is dead 3,180 seconds before the withdrawal lands. 10800 > 120 + 300 + 7200 (D-24).
     function test_aVoucherSignedBeforeTheRequestCannotOutliveTheDelay() public {
         Voucher memory v = Voucher({
             payer: buyer,

@@ -96,7 +96,7 @@ contract BoundariesTest is Fixture {
         _refused(_v(3, t + skew + 1, t + skew + 61), VoucherNotYetValid.selector); // +1
     }
 
-    /// **B2 — `now <= expiresAt + 1800`, admits exact.** New. The shared instant belongs to the
+    /// **B2 — `now <= expiresAt + 7200`, admits exact.** New. The shared instant belongs to the
     /// voucher: at exactly `expiresAt + REDEEM_GRACE` the redemption still lands.
     function test_B2_theRedeemGraceAdmitsItsOwnValue() public {
         uint64 t = uint64(block.timestamp);

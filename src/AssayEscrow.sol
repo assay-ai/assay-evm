@@ -158,8 +158,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// Caps a payer LOWERED, still honoured until `until` ("signed means collectable"). One slot.
     /// While `now <= until` a voucher passes if it fits the current pair of caps OR this pair,
     /// each pair checked whole ([`_heldRefusal`]), so a voucher that was valid when the payer
-    /// tightened stays redeemable for `TIGHTEN_DELAY` (3,600 s), longer than any voucher lives
-    /// (2,220 s). A delegate's hold never runs past the grant's `validUntil` before the change.
+    /// tightened stays redeemable for `TIGHTEN_DELAY` (10,800 s), longer than any voucher lives
+    /// (7,620 s). A delegate's hold never runs past the grant's `validUntil` before the change.
     /// Raising a cap takes effect at once. Every write emits [`CapsHeld`].
     struct PriorCaps {
         uint64 maxVoucherAmount;
@@ -588,7 +588,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// The delay is `WITHDRAW_DELAY_SECONDS`, sized by `constants.rs`'s build-time assertion
     /// rather than chosen: every voucher the buyer signed *before* asking for their money back is
-    /// dead before the withdrawal matures (3,600 > 2,220). `initialize` re-states that inequality
+    /// dead before the withdrawal matures (10,800 > 7,620). `initialize` re-states that inequality
     /// because Solidity has no `const _: () = assert!(…)`.
     ///
     /// It does NOT block [`redeemVoucher`], exactly as the Anchor original does not. A voucher
@@ -644,10 +644,10 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// # The half of the guarantee this delay does NOT buy — a backend obligation
     ///
-    /// `WITHDRAW_DELAY_SECONDS (3,600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2,220)` guarantees
+    /// `WITHDRAW_DELAY_SECONDS (10,800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7,620)` guarantees
     /// that a voucher signed **before** this call cannot outlive the delay. It says nothing about
     /// one signed after: a voucher signed at `T + 1381` or later is still redeemable past
-    /// `T + 3600`, [`withdraw`] reads no outstanding-voucher state and pays `min(requested,
+    /// `T + 10800`, [`withdraw`] reads no outstanding-voucher state and pays `min(requested,
     /// balance)`, and the redemption then fails [`EscrowInsufficient`] — **after the provider has
     /// served the request.**
     ///
@@ -881,7 +881,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         //   `v.expiresAt + REDEEM_GRACE_SECONDS` — because of the two checks ABOVE it, and this
         //   one IS an ordering invariant with two legs: the lifetime bound pins
         //   `expiresAt <= issuedAt + 300`, the skew bound pins `issuedAt <= nowTs + 120`, so
-        //   `expiresAt + 1800 <= nowTs + 2220`. Move either of them below this line and a voucher
+        //   `expiresAt + 7200 <= nowTs + 7620`. Move either of them below this line and a voucher
         //   with a large `expiresAt` (leg one) or a large `issuedAt` (leg two) answers
         //   `Panic(0x11)` instead of its named refusal. Both legs are pinned, at exact and
         //   `type(uint64).max` inputs, by `test_boundary_theVoucherClockWindowIsBoundedAtBothEnds`.

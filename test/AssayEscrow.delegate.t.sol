@@ -551,7 +551,8 @@ contract AssayEscrowDelegateTest is Fixture {
     }
 
     function test_expiry_aDelegateIsValidThroughItsInstantAndRefusedAfter() public {
-        uint64 until = uint64(block.timestamp) + 1 hours;
+        // At least `TIGHTEN_DELAY_SECONDS` ahead (3 h since D-24), or the grant is refused.
+        uint64 until = uint64(block.timestamp) + 4 hours;
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, until);
 

@@ -283,7 +283,7 @@ they can be re-judged under the replacement key, and paste the address rather th
 
 The two-step exit's guarantee — a buyer cannot withdraw out from under a voucher they have already
 signed — covers **only vouchers signed before `requestWithdraw`**. That half is real, and it is what
-`WITHDRAW_DELAY_SECONDS (3,600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2,220)` buys. The other half
+`WITHDRAW_DELAY_SECONDS (10,800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7,620)` buys. The other half
 is false, and the contract does not pretend otherwise:
 
 > A buyer requests a withdrawal at `T`; it matures at `T + 3600`. The backend writes a 402 at
@@ -314,9 +314,9 @@ after the provider served it. Repeatable at no cost (business finding 7, review 
 rows were absorbed this way (`DelegateIsRevoked`).
 
 **Since D-21:** every such tightening binds an already-valid voucher only after
-`TIGHTEN_DELAY_SECONDS` (3,600 s), longer than any voucher lives (2,220 s): the caps in force before
+`TIGHTEN_DELAY_SECONDS` (10,800 s), longer than any voucher lives (7,620 s): the caps in force before
 a lowering, and a revoked grant's authority, are held for that long, and a grant's `validUntil`
-can no longer be set less than 3,600 s ahead. Raising applies at once. The exit delay already had
+can no longer be set less than 10,800 s ahead. Raising applies at once. The exit delay already had
 the same shape (§13), so a payer can no longer strand a signed voucher or withdraw the money it
 needs before it is redeemed.
 
@@ -336,7 +336,7 @@ needs before it is redeemed.
 
 During the grace the chain cannot tell a voucher signed before the revocation from one signed
 after it: `issuedAt` is chosen by the signer. So a key the payer revokes because it was stolen
-can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 3,600 s after the
+can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 10,800 s after the
 revocation, never past `validUntil`). Before D-21 `revokeDelegate` and `setLimits(0, 0)` were
 instant kill switches; now nothing the payer can do stops on-chain spending for that hour —
 lowering the escrow caps is held too, and `requestWithdraw` does not block redeems.
@@ -372,13 +372,13 @@ vouchers it strands — is more contract surface and is the owner's decision (pe
   within each hour keeps the first and loosest pair in force for as long as that pattern goes
   on. For the escrow's own caps there is no end; for a delegate the bound is `validUntil`,
   which a re-grant can extend. So the total stays within the field-wise max of every pair in
-  force since the last gap of more than 3,600 s between lowerings, all of them caps the payer
+  force since the last gap of more than 10,800 s between lowerings, all of them caps the payer
   set. Only the payer can cause it (a delegate, the redeemer or a relayer cannot write or extend
   a hold), and only by tightening repeatedly; it matters most when a payer lowers several times
   after a key leak (F2). A second slot or a per-pair `until` would remove it; not worth the
   storage. A cheaper fix exists for the escrow's caps only: drop the running hold from the
-  merge once every voucher that relied on it has expired (written more than 2,220 s ago, i.e.
-  `until + 2,220 < now + TIGHTEN_DELAY`). A delegate hold's `until` may already be cut to
+  merge once every voucher that relied on it has expired (written more than 7,620 s ago, i.e.
+  `until + 7,620 < now + TIGHTEN_DELAY`). A delegate hold's `until` may already be cut to
   `validUntil`, so its age cannot be read back from it without a new field. Not built, to keep
   the two hold paths one rule; revisit if repeated lowering becomes a real pattern.
 - **F7, more signing keys than the list limit.** A revoked delegate in its grace is unlisted but
@@ -396,7 +396,7 @@ vouchers it strands — is more contract surface and is the owner's decision (pe
 **Who it affects:** providers.
 
 `redeemVoucher*` is pinned to `params().redeemer` (D-10), and a voucher stays redeemable for at
-most `MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS` (2,220 s) after `issuedAt`. A redeemer that is down
+most `MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS` (7,620 s since D-24; it was 2,220 s) after `issuedAt`. A redeemer that is down
 for longer than that, or that withholds one provider's vouchers, leaves that provider unpaid for
 calls it served. The buyer is unharmed: their balance stays theirs.
 

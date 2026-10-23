@@ -8,6 +8,7 @@ import {AssayEscrow} from "../../../src/AssayEscrow.sol";
 import {AssayStake} from "../../../src/AssayStake.sol";
 import {SlashStatus} from "../../../src/Types.sol";
 import {MockUSDG} from "../../helpers/MockUSDG.sol";
+import {Constants} from "../../../src/Constants.sol";
 
 /// Audit D's stateful invariants over the whole system. See `SystemHandler` for the per-call
 /// outcome properties (pause, blocklist, roles, liveness of dispute/revoke, transitions, caps);
@@ -255,7 +256,7 @@ contract SystemInvariantsTest is Test {
             vm.prank(b);
             escrow.requestWithdraw(uint64(bal));
         }
-        vm.warp(block.timestamp + 3_600);
+        vm.warp(block.timestamp + Constants.WITHDRAW_DELAY_SECONDS);
         for (uint256 i = 0; i < 3; i++) {
             address b = h.buyers(i);
             uint128 bal = escrow.escrowOf(b).balance;

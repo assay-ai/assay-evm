@@ -66,14 +66,15 @@ library Constants {
     /// nobody rules on must not become a hold for ever.
     uint64 internal constant DISPUTE_TIMEOUT_SECONDS = 30 * 86_400;
 
-    /// constants.rs — `WITHDRAW_DELAY_SECONDS: i64 = 3_600`. Sized by the invariant noted
-    /// below [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`], not chosen.
-    uint64 internal constant WITHDRAW_DELAY_SECONDS = 3600;
+    /// D-24: three hours (`constants.rs` has `3_600`). Sized by the invariant noted below
+    /// [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`] (10,800 > 7,620), not chosen: it must outlive the
+    /// longest redeemable voucher, which D-24 lengthened.
+    uint64 internal constant WITHDRAW_DELAY_SECONDS = 3 * 3600;
 
     /// EVM only. How long a payer's TIGHTENING (revoking a delegate, shortening its horizon,
     /// lowering a delegate's or the escrow's caps) waits before it binds a voucher that was
     /// already valid: until then the previous authority and caps still redeem it. It is the exit
-    /// delay, for the exit delay's reason — it outlives every voucher (3,600 > 2,220), so no payer
+    /// delay, for the exit delay's reason — it outlives every voucher (10,800 > 7,620), so no payer
     /// call can make an already-admitted voucher unredeemable before its deadline.
     uint64 internal constant TIGHTEN_DELAY_SECONDS = WITHDRAW_DELAY_SECONDS;
 
@@ -99,8 +100,10 @@ library Constants {
     /// the provider as it does in the slash design.
     uint64 internal constant HELD_TIMEOUT_SECONDS = 7 * 86_400;
 
-    /// constants.rs — `REDEEM_GRACE_SECONDS: i64 = 30 * 60`.
-    uint64 internal constant REDEEM_GRACE_SECONDS = 30 * 60;
+    /// D-24: two hours (`constants.rs` has `30 * 60`). How long after `expiresAt` a voucher may
+    /// still be redeemed, so a redeemer, RPC or pause outage of up to about two hours loses no
+    /// call that was already served. Its cost is the two delays sized above it.
+    uint64 internal constant REDEEM_GRACE_SECONDS = 2 * 3600;
 
     /// constants.rs — `VOUCHER_MAX_LIFETIME_SECONDS: i64 = 5 * 60`. The widest window a
     /// voucher may claim for itself, `expiresAt - issuedAt`. The original design put this bound in
@@ -113,14 +116,14 @@ library Constants {
     uint64 internal constant CLOCK_SKEW_TOLERANCE_SECONDS = 120;
 
     /// constants.rs — derived, not typed, exactly as the Anchor source derives it, so it
-    /// cannot disagree with the three constants it is the sum of. 2,220s = 37 minutes.
+    /// cannot disagree with the three constants it is the sum of. 7,620s = 2 h 7 min (D-24).
     uint64 internal constant MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS =
         CLOCK_SKEW_TOLERANCE_SECONDS + VOUCHER_MAX_LIFETIME_SECONDS + REDEEM_GRACE_SECONDS;
 
     // **The invariant constants.rs makes a build failure, and where it went.**
     //
     // ```text
-    // WITHDRAW_DELAY_SECONDS (3600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2220)
+    // WITHDRAW_DELAY_SECONDS (10800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7620)
     // ```
     //
     // A buyer's withdrawal must not land while a voucher they signed *before* asking for it is
@@ -130,7 +133,7 @@ library Constants {
     // constant expression cannot invoke one — so it becomes two things, and both of them exist:
     //
     //   1. HERE, NOW: `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`
-    //      derives the 2,220 from its three terms rather than typing it, and asserts the
+    //      derives the 7,620 from its three terms rather than typing it, and asserts the
     //      inequality. A red test instead of a red build.
     //   2. `AssayEscrow.initialize` checks the same inequality and reverts
     //      [`WithdrawDelayTooShort`]. Runtime rather than a constructor because these contracts
