@@ -122,6 +122,18 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
 
     // --- views ----------------------------------------------------------------------------
 
+    // --- shared call sites ------------------------------------------------------------------
+    //
+    // Each external read below has several callers. Under `via_ir` every inline call site
+    // carries its own copy of the call, returndata checks and ABI decoding, so routing them
+    // through one internal function is a size saving only: the same call, with the same
+    // arguments, at the same point of every caller, reverting with the same data.
+
+    /// The one `CONFIG.params()` call site (see the note above).
+    function _params() internal view returns (ParamSet memory) {
+        return CONFIG.params();
+    }
+
     function stakeOf(address provider) external view returns (ProviderStake memory) {
         return stakes[provider];
     }
@@ -172,7 +184,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// rather than being reported as a zero.
     function withdrawableOf(address provider) public view returns (uint64) {
         ProviderStake storage s = stakes[provider];
-        uint64 period = CONFIG.params().unbondingPeriodSeconds;
+        uint64 period = _params().unbondingPeriodSeconds;
         if (s.unbonding == 0) return 0;
         if (block.timestamp < uint256(s.unbondingStartedAt) + period) return 0;
         uint128 free = _atRisk(s) - s.pendingSlash;
@@ -248,7 +260,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
             amount,
             s.bonded,
             s.unbonding,
-            uint64(block.timestamp) + CONFIG.params().unbondingPeriodSeconds
+            uint64(block.timestamp) + _params().unbondingPeriodSeconds
         );
     }
 
@@ -278,7 +290,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         ProviderStake storage s = stakes[msg.sender];
 
         if (amount > s.unbonding) revert InsufficientUnbondingStake();
-        uint64 period = CONFIG.params().unbondingPeriodSeconds;
+        uint64 period = _params().unbondingPeriodSeconds;
         if (block.timestamp < uint256(s.unbondingStartedAt) + period) {
             revert UnbondingPeriodNotElapsed();
         }
@@ -398,7 +410,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         address verifier = Sig.recover(_hashTypedDataV4(Attestation712.hashAttestation(a)), sig);
         CONFIG.assertCanSign(verifier);
 
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         // A ceiling rather than an equality: the verifier computes the penalty off chain and a
         // deliberately reduced judgement is legal.
         if (a.penalty > p.penaltyAmount) revert PenaltyExceedsMaximum();
@@ -546,7 +558,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
 
         CONFIG.assertCanSign(rec.verifier);
 
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         ProviderStake storage s = stakes[rec.provider];
 
         // **All or wait** (owner decision, audit F R4). The record is paid its WHOLE reservation
