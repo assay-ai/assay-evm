@@ -144,6 +144,11 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         return CONFIG.paused();
     }
 
+    /// The one `CONFIG.assertCanSign` call site.
+    function _assertCanSign(address verifier) internal view {
+        CONFIG.assertCanSign(verifier);
+    }
+
     function stakeOf(address provider) external view returns (ProviderStake memory) {
         return stakes[provider];
     }
@@ -418,7 +423,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (nowTs > a.expiresAt) revert AttestationExpired();
 
         address verifier = Sig.recover(_hashTypedDataV4(Attestation712.hashAttestation(a)), sig);
-        CONFIG.assertCanSign(verifier);
+        _assertCanSign(verifier);
 
         ParamSet memory p = _params();
         // A ceiling rather than an equality: the verifier computes the penalty off chain and a
@@ -566,7 +571,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         // comparison into a panic — the Anchor original saturates for the same reason.
         if (nowTs >= _deadline(rec)) revert SlashExecutionWindowClosed();
 
-        CONFIG.assertCanSign(rec.verifier);
+        _assertCanSign(rec.verifier);
 
         ParamSet memory p = _params();
         ProviderStake storage s = stakes[rec.provider];
