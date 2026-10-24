@@ -317,6 +317,11 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         escrows[payer].authNonce += 1;
     }
 
+    /// Both halves of [`_pullExact`]'s before/after delta, and no other read (see there).
+    function _assetBalance() internal view returns (uint256) {
+        return ASSET.balanceOf(address(this));
+    }
+
     function escrowOf(address buyer) external view returns (Escrow memory) {
         return escrows[buyer];
     }
@@ -394,9 +399,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// extensions; here the asset is an opaque upgradeable proxy that could grow a transfer fee
     /// after deployment, so the check has to be made on every transfer instead of once.
     function _pullExact(address from, uint64 amount) internal {
-        uint256 before = ASSET.balanceOf(address(this));
+        uint256 before = _assetBalance();
         ASSET.safeTransferFrom(from, address(this), amount);
-        if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
+        if (_assetBalance() - before != amount) revert TransferAmountMismatch();
     }
 
     /// `deposit_stake.rs` — "Deposits accumulate: a second deposit adds to the first, it
