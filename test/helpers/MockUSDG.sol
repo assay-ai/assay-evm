@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// Models the three USDG properties that matter: 6 decimals, a Paxos-style blocklist, and a
 /// fee-on-transfer switch for the delta assertion. Deliberately minimal — it is not an

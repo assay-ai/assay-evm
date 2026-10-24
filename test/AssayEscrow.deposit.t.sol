@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
@@ -52,7 +52,7 @@ contract AssayEscrowDepositTest is Fixture {
         // compiler and not only by `address(...)`, which accepts a plain `address` just as well.
         // A getter retyped to `address` — the shape a reviewer's degenerate used — stops this
         // file compiling, which is the loudest failure available.
-        assertEq(escrow.STAKE().bondedOf(provider), MINIMUM_STAKE, "STAKE is IAssayStakeView");
+        assertEq(escrow.STAKE().freeBondedOf(provider), MINIMUM_STAKE, "STAKE is IAssayStakeView");
         assertEq(escrow.CONFIG().admin(), admin, "CONFIG is IAssayConfig");
         assertEq(escrow.ASSET().balanceOf(address(escrow)), 0, "ASSET is IERC20");
     }

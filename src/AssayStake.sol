@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -31,10 +31,10 @@ import "./Errors.sol";
 /// **Pause closes the deposit and exit half too, since the dispute upgrade** — a deliberate
 /// reversal, by the owner's decision, of the earlier rule (and of `withdraw_stake.rs`)
 /// that owner exits are never paused. `depositStake(For)`, `requestUnstake` and `withdrawStake`
-/// call `CONFIG.assertActive`, which refuses while paused and refuses a blocked provider (or
-/// funder). What stays open while paused is what only releases or freezes a hold:
-/// `disputeSlash`, `cancelSlash`, `expireSlash`, and `upholdSlash` (which moves no money). The
-/// pause still moves nobody's funds anywhere; there is no seize and no sweep.
+/// call `CONFIG.assertActive` (through `_assertActive`), which refuses while paused and refuses a
+/// blocked provider (or funder). What stays open while paused is what only releases or freezes a
+/// hold: `disputeSlash`, `cancelSlash`, `expireSlash`, and `upholdSlash` (which moves no money).
+/// The pause still moves nobody's funds anywhere; there is no seize and no sweep.
 contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -57,10 +57,11 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         uint128 totalSlashed; //     slot 3  state.rs
     }
 
-    /// The verifier's rolling daily cap counter lives HERE, not in AssayConfig: it is a
-    /// consequence of slashing, and AssayConfig must never be written by another contract
-    /// (D-3). AssayConfig owns only the key's lifecycle. On Solana both halves sit on the
-    /// one `VerifierKey` account because there is only one program.
+    /// RETIRED (D-25). This was the verifier key's rolling daily meter. `executeSlash` no longer
+    /// reads or writes it: one shared first-come-first-served window per key let anyone who could
+    /// fill it with its own records crowd every other provider's slash into expiry. The type and
+    /// the mapping below stay declared only so the storage layout remains append-only
+    /// (`script/check-layout.sh`); nothing in this contract touches them.
     struct VerifierWindow {
         uint64 slashedInWindow;
         uint64 windowStartedAt;
@@ -75,6 +76,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// for a struct-valued mapping returns a flattened tuple, which reorders silently when a
     /// field is appended. [`stakeOf`] returns the struct, so a decoder breaks loudly instead.
     mapping(address => ProviderStake) internal stakes;
+    /// RETIRED (D-25): never read or written. Kept for the storage layout only.
     mapping(address => VerifierWindow) internal verifierWindows;
 
     /// `state.rs` keeps these on Solana's `Config`. Here they live on the contract that
@@ -120,6 +122,38 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
 
     // --- views ----------------------------------------------------------------------------
 
+    // --- shared call sites ------------------------------------------------------------------
+    //
+    // Each external read below has several callers. Under `via_ir` every inline call site
+    // carries its own copy of the call, returndata checks and ABI decoding, so routing them
+    // through one internal function is a size saving only: the same call, with the same
+    // arguments, at the same point of every caller, reverting with the same data.
+
+    /// The one `CONFIG.params()` call site (see the note above).
+    function _params() internal view returns (ParamSet memory) {
+        return CONFIG.params();
+    }
+
+    /// The one `CONFIG.assertActive` call site: the pause and blocklist check of every door.
+    function _assertActive(address a, address b, address c) internal view {
+        CONFIG.assertActive(a, b, c);
+    }
+
+    /// The one `CONFIG.paused()` call site.
+    function _paused() internal view returns (bool) {
+        return CONFIG.paused();
+    }
+
+    /// The one `CONFIG.assertCanSign` call site.
+    function _assertCanSign(address verifier) internal view {
+        CONFIG.assertCanSign(verifier);
+    }
+
+    /// Both halves of `depositStakeFor`'s before/after delta, and no other read.
+    function _assetBalance() internal view returns (uint256) {
+        return ASSET.balanceOf(address(this));
+    }
+
     function stakeOf(address provider) external view returns (ProviderStake memory) {
         return stakes[provider];
     }
@@ -128,9 +162,25 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// so clamping is correct and truncation would be a silent under-report. The `Cast` after
     /// the clamp can never revert — that is the point of the clamp — and it is written anyway
     /// under `Cast`'s no-exceptions rule.
-    function bondedOf(address provider) external view override returns (uint64) {
+    function bondedOf(address provider) external view returns (uint64) {
         uint128 b = stakes[provider].bonded;
         return b > type(uint64).max ? type(uint64).max : Cast.toUint64(b);
+    }
+
+    /// The bonded stake no standing slash record has reserved: `bonded - pendingSlash`, floored
+    /// at zero, saturated like [`bondedOf`]. This is what the escrow's redeem gate reads (D-26):
+    /// stake held back by `Pending` or `Disputed` records is not backing new traffic, so a
+    /// provider cannot freeze its stake with records it disputes itself and keep being paid.
+    ///
+    /// `pendingSlash` is reserved against `atRisk = bonded + unbonding`, and a withdrawal must
+    /// leave it covered, so once the unbonding has left it sits entirely on `bonded`. Charging it
+    /// all to `bonded` now is the conservative reading of where it will end up.
+    function freeBondedOf(address provider) external view override returns (uint64) {
+        ProviderStake storage s = stakes[provider];
+        uint128 b = s.bonded;
+        uint128 pending = s.pendingSlash;
+        uint128 free = b > pending ? b - pending : 0;
+        return free > type(uint64).max ? type(uint64).max : Cast.toUint64(free);
     }
 
     function DOMAIN_SEPARATOR() external view returns (bytes32) {
@@ -154,7 +204,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// rather than being reported as a zero.
     function withdrawableOf(address provider) public view returns (uint64) {
         ProviderStake storage s = stakes[provider];
-        uint64 period = CONFIG.params().unbondingPeriodSeconds;
+        uint64 period = _params().unbondingPeriodSeconds;
         if (s.unbonding == 0) return 0;
         if (block.timestamp < uint256(s.unbondingStartedAt) + period) return 0;
         uint128 free = _atRisk(s) - s.pendingSlash;
@@ -182,13 +232,13 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// `nonReentrant` is present — the same finding `test/MUTATION-LOG.md` rows E4 and E23
     /// record on `AssayEscrow.depositFor`. The modifier is the belt.
     function depositStakeFor(address provider, uint64 amount) public nonReentrant {
-        CONFIG.assertActive(provider, msg.sender, address(0));
+        _assertActive(provider, msg.sender, address(0));
         if (provider == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 before = ASSET.balanceOf(address(this));
+        uint256 before = _assetBalance();
         ASSET.safeTransferFrom(msg.sender, address(this), amount);
-        if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
+        if (_assetBalance() - before != amount) revert TransferAmountMismatch();
 
         ProviderStake storage s = stakes[provider];
         // Deposits accumulate: a second deposit adds to the first (deposit_stake.rs).
@@ -216,7 +266,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     ///
     /// Pause-gated and blocklist-gated since the dispute upgrade, like [`withdrawStake`].
     function requestUnstake(uint64 amount) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         if (amount == 0) revert ZeroAmount();
         ProviderStake storage s = stakes[msg.sender];
         if (amount > s.bonded) revert InsufficientBondedStake();
@@ -230,7 +280,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
             amount,
             s.bonded,
             s.unbonding,
-            uint64(block.timestamp) + CONFIG.params().unbondingPeriodSeconds
+            uint64(block.timestamp) + _params().unbondingPeriodSeconds
         );
     }
 
@@ -255,12 +305,12 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// reversing `withdraw_stake.rs`. Neither gate moves the stake anywhere: it stays the
     /// provider's, and the door reopens when the pause lifts or the block is removed.
     function withdrawStake(uint64 amount) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         if (amount == 0) revert ZeroAmount();
         ProviderStake storage s = stakes[msg.sender];
 
         if (amount > s.unbonding) revert InsufficientUnbondingStake();
-        uint64 period = CONFIG.params().unbondingPeriodSeconds;
+        uint64 period = _params().unbondingPeriodSeconds;
         if (block.timestamp < uint256(s.unbondingStartedAt) + period) {
             revert UnbondingPeriodNotElapsed();
         }
@@ -339,9 +389,9 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     ///
     /// **Permissionless to SUBMIT: the authority is the signature, not the sender.** On Solana
     /// the `VerifierKey` PDA is passed and `require_signed_by` proves that key signed. Here
-    /// `Sig.recover` yields the signer and `CONFIG.assertCanSign` decides whether that address
-    /// may judge — one fewer parameter, one fewer place for the caller to point at the wrong
-    /// account, and the same property.
+    /// `Sig.recover` yields the signer and `CONFIG.assertCanSign` (via `_assertCanSign`) decides
+    /// whether that address may judge — one fewer parameter, one fewer place for the caller to
+    /// point at the wrong account, and the same property.
     ///
     /// **The replay lock.** `slashRecords[requestId].status != None` is the EVM counterpart of
     /// the Anchor `init` on a PDA seeded by the signed `request_id`: a captured attestation can
@@ -356,7 +406,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// `nonReentrant` is belt with no brace behind it, exactly as `test/MUTATION-LOG.md` row
     /// T13 records for the escrow's four limit and withdrawal doors.
     function proposeSlash(SlashAttestation calldata a, bytes calldata sig) external nonReentrant {
-        if (CONFIG.paused()) revert ProgramPaused();
+        if (_paused()) revert ProgramPaused();
         if (a.penalty == 0) revert ZeroAmount();
         // The stake proxy itself would keep the share as an untracked balance. (Stake holds no
         // reference to the escrow; the backend never names it.)
@@ -378,9 +428,9 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (nowTs > a.expiresAt) revert AttestationExpired();
 
         address verifier = Sig.recover(_hashTypedDataV4(Attestation712.hashAttestation(a)), sig);
-        CONFIG.assertCanSign(verifier);
+        _assertCanSign(verifier);
 
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         // A ceiling rather than an equality: the verifier computes the penalty off chain and a
         // deliberately reduced judgement is legal.
         if (a.penalty > p.penaltyAmount) revert PenaltyExceedsMaximum();
@@ -404,8 +454,22 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         uint128 free = atRisk - s.pendingSlash;
         uint64 reserved = a.penalty;
         if (reserved > capAllowance) reserved = capAllowance;
-        if (reserved > free) reserved = Cast.toUint64(free);
-        if (reserved == 0) revert NothingToSlash();
+        // All or nothing against `free` (D-26): a judgement the provider's free stake cannot
+        // cover in full is refused, not written short. A short record would spend the
+        // `requestId` for less than the cap allows; refused, the attestation stays unconsumed
+        // and can be proposed again once other records release their reservations. The
+        // `capAllowance` cut above is the ceiling itself and stays. `reserved >= 1` here (a zero
+        // penalty is `ZeroAmount`, a zero ceiling `SlashCapExceeded`), so `free == 0` lands here.
+        if (reserved > free) revert NothingToSlash();
+        // A reservation the current split cannot divide is refused here (review 2026-10-23 L-1):
+        // written, it could never execute (`PenaltyTooSmallToSplit`), would expire, and would
+        // burn the `requestId` for good. The agent share must be non-zero, and so must the
+        // platform share whenever the split gives the platform one. `executeSlash` keeps its own
+        // check, because the split is read again there and may have changed since.
+        if (
+            Fee.bpsOf(reserved, p.slashAgentBps) == 0
+                || (p.slashPlatformBps != 0 && Fee.bpsOf(reserved, p.slashPlatformBps) == 0)
+        ) revert PenaltyTooSmallToSplit();
 
         s.pendingSlash += reserved;
 
@@ -476,13 +540,14 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     );
 
     /// Phase two: the delay was served, the execution window has not closed,
-    /// the key can still sign, and the penalty is paid under both caps.
+    /// the key can still sign, and the penalty fits the provider's rolling window.
     ///
     /// **Permissionless.** Being front-run for the privilege of paying gas is harmless — the
     /// judgement, its beneficiary and its amount were all fixed at proposal, and every one of
     /// them is read from the record rather than from the caller.
     ///
-    /// **THE CRUX OF THE WHOLE TWO-PHASE DESIGN is `CONFIG.assertCanSign(rec.verifier)`.** A key
+    /// **THE CRUX OF THE WHOLE TWO-PHASE DESIGN is `CONFIG.assertCanSign(rec.verifier)`**, made
+    /// through the one call site `_assertCanSign`. A key
     /// revoked or expired inside the window can never pay, so `revokeVerifier` reaches backwards
     /// into every judgement that key already signed, and [`expireSlash`] then releases the
     /// collateral. That is what turns revocation from a stop into a cleanup.
@@ -498,7 +563,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// `test_everyEffectIsWrittenBeforeTheSlashTransfers` is the brace, and it observes the
     /// effects from inside the first payout.
     function executeSlash(bytes32 requestId) external nonReentrant {
-        if (CONFIG.paused()) revert ProgramPaused();
+        if (_paused()) revert ProgramPaused();
 
         SlashRecord storage rec = slashRecords[requestId];
         if (rec.status != SlashStatus.Pending) revert SlashNotPending();
@@ -512,28 +577,28 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         // comparison into a panic — the Anchor original saturates for the same reason.
         if (nowTs >= _deadline(rec)) revert SlashExecutionWindowClosed();
 
-        CONFIG.assertCanSign(rec.verifier);
+        _assertCanSign(rec.verifier);
 
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         ProviderStake storage s = stakes[rec.provider];
 
         // **All or wait** (owner decision, audit F R4). The record is paid its WHOLE reservation
         // or not at all: only when it fits under the provider's rolling window (against the
-        // allowance FROZEN at proposal) AND under the verifier key's rolling window (against the
-        // daily cap read LIVE). Otherwise `SlashWindowNotDrained`, the record stays Pending, and
-        // it is retried as the windows drain; one that never fits before its deadline expires in
-        // the provider's favour. So `applied == reserved` always: nobody — the party being judged
-        // included — can choose an instant at which a judgement is paid as dust. Nothing is
-        // reserved against the key window at proposal, so a leaked key cannot burn a day's
-        // capacity on judgements it never intends to execute.
+        // allowance FROZEN at proposal). Otherwise `SlashWindowNotDrained`, the record stays
+        // Pending, and it is retried as the window drains; one that never fits before its
+        // deadline expires in the provider's favour. So `applied == reserved` always: nobody —
+        // the party being judged included — can choose an instant at which a judgement is paid
+        // as dust.
+        //
+        // **No per-verifier-key window (D-25).** A key-wide window is one first-come-first-served
+        // resource shared by every provider that key judged, so whoever fills it with its own
+        // records makes every other provider's slash wait until it expires. A leaked key is
+        // bounded instead by `revokeVerifier` (re-checked above, it voids every record the key
+        // signed), the slash delay, the dispute and arbiter path, and this per-provider window.
+        // `ParamSet.verifierDailyCap` is not read on chain.
         uint64 providerCarried = Window.decay(s.slashedInWindow, s.slashWindowStartedAt, nowTs);
-        VerifierWindow storage vw = verifierWindows[rec.verifier];
-        uint64 keyCarried = Window.decay(vw.slashedInWindow, vw.windowStartedAt, nowTs);
         uint64 applied = rec.reserved;
-        if (
-            uint256(providerCarried) + applied > rec.capAllowance
-                || uint256(keyCarried) + applied > p.verifierDailyCap
-        ) revert SlashWindowNotDrained();
+        if (uint256(providerCarried) + applied > rec.capAllowance) revert SlashWindowNotDrained();
 
         uint64 agentAmount = Fee.bpsOf(applied, p.slashAgentBps);
         uint64 platformAmount = Fee.bpsOf(applied, p.slashPlatformBps);
@@ -561,13 +626,10 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (s.unbonding == 0) s.unbondingStartedAt = 0;
 
         s.totalSlashed += taken;
-        // Both counters meter `applied` — the gross judged — not `taken`. The anchors never move
+        // The window meters `applied` — the gross judged — not `taken`. The anchor never moves
         // backwards: a clock that stepped back must not hand capacity to whoever noticed.
         s.slashedInWindow = providerCarried + applied;
         s.slashWindowStartedAt = nowTs > s.slashWindowStartedAt ? nowTs : s.slashWindowStartedAt;
-
-        vw.slashedInWindow = keyCarried + applied;
-        vw.windowStartedAt = nowTs > vw.windowStartedAt ? nowTs : vw.windowStartedAt;
 
         totalStaked -= taken;
         totalSlashed += taken;
@@ -739,8 +801,8 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
 
     /// The arbiter rules against the provider: the record goes back to `Pending`, executable
     /// from `max(frozen executableAt, now)` — never earlier than it would have been undisputed —
-    /// and the ordinary [`executeSlash`], with its verifier re-check and both caps, must still
-    /// run inside the 7-day grace counted from that `executableAt`.
+    /// and the ordinary [`executeSlash`], with its verifier re-check and the provider window, must
+    /// still run inside the 7-day grace counted from that `executableAt`.
     ///
     /// **Only before the dispute timed out.** At and after `disputedAt + DISPUTE_TIMEOUT_SECONDS`
     /// this refuses [`DisputeTimedOut`] and only `expireSlash` works: the two doors share that

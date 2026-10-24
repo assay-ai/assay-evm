@@ -1577,7 +1577,7 @@ Thirty-six tests were added (`test/Boundaries.t.sol` 17, `test/Pause.t.sol` 11,
 | Source | What it predicted | What is actually true |
 |---|---|---|
 | the test plan Step 1, B2's table row and D-13 B3 | B3's far-side error is `InvalidVoucherWindow` | `VoucherLifetimeTooLong`. `attestation.rs:477-481` raises one Anchor name for two conditions; this port splits the width bound out under the `Errors.sol` one-condition-one-name rule, and `Errors.sol` records the split with its argument. The test plan's own sample code uses the split name while the table it cites does not. |
-| the test plan Step 5, `check-sizes.sh` | `forge inspect "$c" bytecode` | **The wrong bytecode.** That is the CREATION code; EIP-170 bounds the RUNTIME code, and they differ by 1,427 bytes on both money contracts here. Gating on the larger number fires early and teaches the reader that the limit applies to initcode. The shipped script measures `deployedBytecode` and prints creation beside it as information. |
+| the test plan Step 5, `check-sizes.sh` | `forge inspect "$c" bytecode` | **The wrong bytecode.** That is the CREATION code; EIP-170 bounds the RUNTIME code, and they differ by 1,427 bytes on both money contracts here (at the time; 1,433 as of 2026-10-24). Gating on the larger number fires early and teaches the reader that the limit applies to initcode. The shipped script measures `deployedBytecode` and prints creation beside it as information. |
 | the extras list | "`.gas-snapshot` holds fuzz rows that move between runs (seed not pinned), so `forge snapshot --check` will be red at random" | **Measured over three consecutive regenerations, and it is the other way round.** The `testFuzz_*` rows are stable — μ and ~ did not move. The `invariant_*` rows churn every run through their `reverts:` counts (2,097 → 2,081 → 2,094 …), 14 diff lines each time. And `forge snapshot --check` is **green** regardless, twice, because it compares gas and an `invariant_*` row carries no gas figure. It has teeth: perturbing one `FeeTest` row by 1,000 gas gives `Diff in "FeeTest::test_aCallTooSmallToDividePaysTheProviderInFull()" … expected "(gas: 10453)"` and exit 1. So `--check` **stays** in CI; what must never be added is `git diff --exit-code -- .gas-snapshot`. |
 | the extras list | the `Errors.sol` accounting gate closes "the numbers drift" | It does, and on its first run it also found **five** errors with no producer, not the one the test plan names: `AmountExceedsUint64`, `DestinationIsVault`, `EscrowLimitsRequireBuyer`, `NotBuyer`, `SignerIsNotVerifier`. Each is argued for in `docs/divergences.md`. |
 | B14's expected error | — | The first spelling of `test_B14` expected `InsufficientUnbondingStake` one second early. `withdrawStake` asks the **clock** question before it asks `withdrawableOf`, so the answer is `UnbondingPeriodNotElapsed` — the truer diagnosis, and the one an operator can act on. |
@@ -1959,3 +1959,26 @@ Not yet mutated; the expected killers:
 | R1 | `_validate`: `minimumStake * slashCapBps / BPS < 2 * penaltyAmount` → `InvalidMinimumStake` | deleted | `AssayStake.audit.t.sol::test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused`, `AssayConfig.params.t.sol::test_wrongState_updateRefusesEveryBoundJustAsInitializeDoes` | not run |
 | R2 | same | `2 *` dropped (back to one penalty) | `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 19` row) | not run |
 | R3 | same, the boundary | `<` → `<=` | `AssayConfig.params.t.sol::test_aMinimumStakeCapOfExactlyTwoPenaltiesIsAccepted`, `test_audit_C7_aMinimumStakeWhoseCapRoundsToZeroIsRefused` (the `minimumStake = 20` row) | not run |
+
+### Review 2026-10-23 (M-1 / D-25: the verifier key window is retired)
+
+`executeSlash` no longer reads or writes `verifierWindows`, and `_validate` no longer requires
+`verifierDailyCap >= 2 * penaltyAmount` (only `verifierDailyCap == 0` is still refused). The rows
+above that mutate the key window or G1 (X8, A1, A3, F5, G1, D23) describe code that no longer
+exists; their named tests were removed or rewritten (`test_D25_oneKeyIsNotMeteredAcrossJudgements`,
+`test_audit_M1b_anotherProvidersExecutionsDoNotDelayThisOne`,
+`test_D25_theDailyCapNoLongerBoundsThePenalty`, `test/AssayStake.crowding.t.sol`). Audit D's
+handler now asserts the retired slot is never written. Not yet mutated.
+
+### Review 2026-10-24 (F-M1 / F-L1, D-26: free stake for the redeem gate, whole reservations)
+
+The escrow's stake floor reads `freeBondedOf` (`bonded - pendingSlash`, floored at 0), and
+`proposeSlash` refuses `NothingToSlash` instead of cutting a reservation to `free`. Row P7 above
+mutates the clamp that this replaced; its named test is now
+`test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut`. Run on the non-fork suite (604 tests).
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| FS1 | `freeBondedOf`: `free = b > pending ? b - pending : 0` | → `free = b` (back to `bondedOf`) | `test_F_M1_aProviderWhoseStakeIsReservedBelowTheMinimumIsNotPaid`, `test_freeBondedOfIsBondedMinusPendingSlash` | **DIES**: `602 passed; 2 failed` — `[FAIL: assertion failed: 200000000 != 100000000]` and `[FAIL: assertion failed: 100000000 != 99000000]` |
+| FS2 | `proposeSlash`: `if (reserved > free) revert NothingToSlash();` | → `if (reserved > free) reserved = Cast.toUint64(free);` (the old clamp) | `test_F_L1_aShortFreeBalanceRefusesTheJudgementAndBurnsNothing`, `test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut`, `test_L1_aReservationTooSmallToSplitIsRefusedAndBurnsNothing`, `test_F_M1_…` | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected` / `PenaltyTooSmallToSplit() != NothingToSlash()` |
+| FS3 | same | line deleted | the same four | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected`. Without it `pendingSlash` can exceed `atRisk` |

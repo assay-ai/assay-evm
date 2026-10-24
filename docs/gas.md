@@ -10,7 +10,10 @@ produced it, so any of it can be re-run and disagreed with.
   re-measure. If a re-measurement happens on a different build, record that build here rather than
   silently replacing these numbers.
 - **Build settings the numbers depend on:** solc 0.8.24, `evm_version = "shanghai"`, `via_ir = true`,
-  optimizer on at 200 runs. A different optimizer setting is a different number.
+  optimizer on at 200 runs. A different optimizer setting is a different number. **The build now
+  uses solc 0.8.38** (review 2026-10-23 L-3); the tables below were measured under 0.8.24 and
+  were not re-measured. `.gas-snapshot` is regenerated under 0.8.38 and is the current figure. Since D-26 the redeem gate reads `freeBondedOf`, one more cold slot of the stake: **+2,248 gas
+  per redeemed voucher** (`test_measure_singleRedeemVoucherForComparison` 202,209 → 204,457).
 - **Source:** the figures were measured against `src/AssayEscrow.sol` as it is in this repository.
   Re-run the commands in each table to reproduce or dispute them.
 
@@ -87,15 +90,15 @@ neither has any contract-side enforcement — by design in both cases.
 > provider serves the request for nothing.
 
 The arithmetic, because the boundary is not where it looks: a withdrawal requested at `T` matures
-at `T + WITHDRAW_DELAY_SECONDS (3,600)`. A voucher is redeemable until
-`expiresAt + REDEEM_GRACE_SECONDS (1,800)`, and `expiresAt` may be up to
-`VOUCHER_MAX_LIFETIME_SECONDS (300)` past `issuedAt`. So a voucher signed at **`T + 1381` or later**
+at `T + WITHDRAW_DELAY_SECONDS (10,800)`. A voucher is redeemable until
+`expiresAt + REDEEM_GRACE_SECONDS (7,200)`, and `expiresAt` may be up to
+`VOUCHER_MAX_LIFETIME_SECONDS (300)` past `issuedAt`. So a voucher signed at **`T + 3181` or later**
 can still be redeemable after the withdrawal has matured and been taken. `withdraw()` reads no
 outstanding-voucher state and pays `min(requested, balance)`; the redemption then fails
 `EscrowInsufficient`.
 
 The contract's own guarantee is the other half and it is real: a voucher signed **before** the
-request cannot outlive the delay, because `3,600 > 2,220`. That half is asserted at deployment and
+request cannot outlive the delay, because `10,800 > 7,620`. That half is asserted at deployment and
 tested (`AssayEscrow.bysig.t.sol::test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest`,
 `Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`). The half above cannot be:
 it would need an outstanding-voucher set the contract deliberately does not hold, and **Solana's
@@ -119,10 +122,10 @@ The cost of that decision lands on the backend:
 
 Pre-validation is the same list `_redeem` applies, evaluated off chain against current state: the
 voucher window (`expiresAt > issuedAt`, lifetime ≤ 300 s, issued no more than 120 s ahead, redeemed
-no more than 1 800 s late), `seq > seqHigh` **for that payer**, the payer's per-call and
+no more than 7 200 s late), `held(payer, seq).status == None` **for that payer** (D-23), the payer's per-call and
 rolling-window ceilings, the provider's `bonded` stake against `minimumStake`, and the payer's
 balance. Since D-21 the ceilings are the EFFECTIVE ones and a revoked delegate signs for up to
-3,600 s after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps
+10,800 s after the revocation: read both from `effectiveCapsOf(payer, delegate)` (delegate caps
 `0` = that delegate cannot sign now), not from `escrowOf` / `delegationOf`. `effectiveCapsOf` is
 the per-field envelope: the chain also requires the voucher to fit ONE pair whole — the stored
 caps, or the held caps of the last `CapsHeld` for that `(payer, delegate)` while `now <= until`.
@@ -132,15 +135,15 @@ other; an exact prevalidation checks the two pairs from `escrowOf`/`delegationOf
 **Prevalidation is not admission.** `effectiveCapsOf` (and the held caps) are only for a voucher
 that was ALREADY admitted. Admission of a NEW voucher reads `delegationOf(...).revoked` and the
 current (stored) caps, never `effectiveCapsOf`: a revoked delegate's key, or caps the payer just
-lowered, still pass on chain for up to 3,600 s (risk register §14a).
+lowered, still pass on chain for up to 10,800 s (risk register §14a).
 
 Three rules bite specifically in the batch shape, and a job that does not know them will build
 batches that revert:
 
 - **`seq` is per payer, not per batch.** Two payers' sequences constrain each other in no way at
-  all; one payer's items must be ordered among themselves. Sorting a batch by `seq` globally is
+  all, and since D-23 one payer's items may come in any order. Sorting a batch by `seq` globally is
   wrong.
-- **The same voucher twice in one batch reverts the batch.** The second copy fails `seq > seqHigh`,
+- **The same voucher twice in one batch reverts the batch.** The second copy fails `VoucherSeqUsed`,
   because the first copy already advanced it.
 - **The parameter set is read once for the whole batch.** Every item settles against the treasury
   and take rate that were current when the batch started, even if a Config update lands mid
@@ -238,9 +241,8 @@ makes it legitimate to attribute them separately.
 - Grouping a batch **by payer** is worth about **27 500 gas per voucher** at these sizes, which is
   roughly two thirds of the entire marginal cost of a same-payer item. It dominates every other
   batching heuristic.
-- It does **not** follow that a batch may be reordered to achieve it. `seq` is per payer and
-  strictly increasing, so one payer's items must keep their relative order whatever else the
-  grouping does.
+- Since D-23 a batch may be reordered freely to achieve it: a seq is consumed on its own, so one
+  payer's items need no relative order.
 - The **distinct-provider** column is the smaller half and it is mostly a *first payment* cost:
   paying a provider whose settlement-token balance is zero writes a zero → non-zero slot. It is not
   recoverable by batching and it does not repeat for that provider.
@@ -346,17 +348,19 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `AssayConfig` | 7,466 | 30.4% | 7,675 |
-| `AssayEscrow` | 17,228 | 70.1% | 18,655 |
-| `AssayStake` | 14,791 | 60.2% | 16,218 |
+| `AssayConfig` | 7,405 | 30.1% | 7,636 |
+| `AssayEscrow` | 20,312 | 82.6% | 21,745 |
+| `AssayStake` | 13,759 | 56.0% | 15,192 |
 
-Re-measured for D-19 (the dispute upgrade); the commit before it measured AssayConfig 6,136,
-AssayEscrow 16,202 and AssayStake 13,041.
+Measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
+(`docs/ci-gates.md` §4 has the history). For D-19 (the dispute upgrade, on the earlier compiler) the figures
+were AssayConfig 7,466, AssayEscrow 17,228 and AssayStake 14,791.
 
-The gate fires at **22,000**, leaving room for an auditor's remediation round and for the append a
+The gate fires at **23,000** (raised from 22,000 on 2026-10-24, reasons in `docs/ci-gates.md` §4),
+leaving room for an auditor's remediation round and for the append a
 future upgrade adds. If a contract ever goes over it, **the gate does not move** — the contract
 splits, and the reason is recorded in the pull request that does it.
 
 The creation column is information only. EIP-3860 bounds initcode at 49,152 bytes and nothing here
-is within a factor of three of it. The two columns differ by 1,427 bytes on both money contracts:
+is within a factor of three of it. The two columns differ by 1,433 bytes on both money contracts:
 constructor code plus the EIP-712 ShortString immutables, which are returned as part of neither.

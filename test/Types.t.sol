@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 import {stdError} from "forge-std/StdError.sol";
@@ -642,7 +642,7 @@ contract TypesTest is Test {
     function test_withdrawDelayOutlivesTheLongestRedeemableVoucher() public pure {
         uint64 life = Constants.CLOCK_SKEW_TOLERANCE_SECONDS
             + Constants.VOUCHER_MAX_LIFETIME_SECONDS + Constants.REDEEM_GRACE_SECONDS;
-        assertEq(life, 2220);
+        assertEq(life, 7620); // D-24
         assertEq(Constants.MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS, life);
         assertGt(Constants.WITHDRAW_DELAY_SECONDS, life);
     }
@@ -652,8 +652,8 @@ contract TypesTest is Test {
     /// point of copying rather than re-deriving them is that one test matrix covers both.
     function test_constantsMatchTheAnchorProgram() public pure {
         assertEq(Constants.SLASH_DELAY_SECONDS, 259_200); // 72 * 3_600
-        assertEq(Constants.WITHDRAW_DELAY_SECONDS, 3_600);
-        assertEq(Constants.REDEEM_GRACE_SECONDS, 1_800); // 30 * 60
+        assertEq(Constants.WITHDRAW_DELAY_SECONDS, 10_800); // D-24, not Anchor's 3_600
+        assertEq(Constants.REDEEM_GRACE_SECONDS, 7_200); // D-24, not Anchor's 30 * 60
         assertEq(Constants.VOUCHER_MAX_LIFETIME_SECONDS, 300); // 5 * 60
         assertEq(Constants.CLOCK_SKEW_TOLERANCE_SECONDS, 120);
         assertEq(Constants.SLASH_WINDOW_SECONDS, 86_400);

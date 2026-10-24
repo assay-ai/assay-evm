@@ -143,11 +143,26 @@ would make the gate compare against the wrong commit.
 
 ## 4. `./script/check-sizes.sh`
 
-EIP-170, per implementation, gated at 22,000 of the 24,576 hard limit. Measured today:
-AssayConfig 7,466 · AssayEscrow 17,228 · AssayStake 14,791 (runtime bytes, CBOR metadata included;
-re-measured for D-19).
+EIP-170, per implementation, gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
+0.8.38, `via_ir`, 200 runs): AssayConfig 7,405 · AssayEscrow 20,312 · AssayStake 13,759 (runtime
+bytes, CBOR metadata included). Down from 22,598 and 15,159 by routing each repeated external call
+to Config (the reads `params` and `paused`, the reverting checks `assertActive` and
+`assertCanSign`) and to the asset (`balanceOf`) through one internal call site per contract: under
+`via_ir` every inline external call carries its own copy of the call, returndata checks and ABI
+decoding. AssayEscrow also shares the direct doors' `authNonce` increment, a storage write, through
+one internal function (41 bytes). The free-stake read of the redeem gate (`freeBondedOf`, D-26) has
+a single call site and is left inline.
 
-It measures **`deployedBytecode`**, not `bytecode`. Creation bytecode is the wrong number: EIP-170 bounds runtime only, and the two differ by 1,427 bytes on both
+**Why 23,000 (raised from 22,000 on 2026-10-24, owner decision).** AssayEscrow grew to 21,752 bytes
+through D-20 to D-22, +194 with D-23, and +652 from the compiler move to 0.8.38 (SOL-2026-7); lower
+`optimizer_runs` saves under 350 bytes. Robinhood Chain (4663 and 46630) is an Orbit chain configured
+with `MaxCodeSize = 98,304` (measured with `eth_estimateGas`: 98,305 is refused "limit 98304"), so the
+deploy target has room to spare. The gate stays below 24,576 on purpose: that is still the limit on
+Ethereum, Arbitrum One, Base, Optimism and most EVM chains, and the default in forge and anvil, so
+these contracts stay deployable elsewhere and testable with default tooling. An upgrade that would
+cross 23,000 splits AssayEscrow (first candidate: move the read-only views into a separate lens).
+
+It measures **`deployedBytecode`**, not `bytecode`. Creation bytecode is the wrong number: EIP-170 bounds runtime only, and the two differ by 1,433 bytes on both
 money contracts here. Creation size is printed **beside** the runtime one as information, which is
 why the pin cannot be spelled "the file must not contain the word `bytecode`" — that string is
 present in a correct file. `test/GateSelfTest.t.sol::test_theSizeGateMeasuresRuntimeBytecodeAndNotCreation`
@@ -327,7 +342,7 @@ excluded tests are: `testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor`,
 `test_noProviderAddressIsExemptFromTheSignatureGuard`,
 `test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes`,
 `test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment`,
-`test_theCapSitsBesideTheMonotonicCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole` and
+`test_theCapSitsBesideTheUsedSeqCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole` and
 `test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`, plus every `invariant_*` run. Regenerate with
 `./script/check-snapshot.sh --write`. The sections below were written before this exclusion, and
 quote the plain `forge snapshot --check`.

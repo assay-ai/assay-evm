@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./helpers/Fixture.sol";
@@ -333,7 +333,7 @@ contract AssayEscrowTightenTest is Fixture {
     function test_escrowCaps_aSecondLoweringRestartsTheHoldFromItsOwnInstant() public {
         vm.prank(buyer);
         escrow.setLimits(500_000, 500_000);
-        vm.warp(_now() + 2_000);
+        vm.warp(_now() + 4_000);
         Voucher memory v = _v(ESCROW_PER_CALL, 1); // valid now, under the held caps
         bytes memory sig = _byPayer(v);
         uint64 t2 = _now();
@@ -341,7 +341,7 @@ contract AssayEscrowTightenTest is Fixture {
         escrow.setLimits(1, 1);
 
         vm.warp(_deadline(v)); // past the first hold, inside the second
-        assertGt(_now(), t2 - 2_000 + DELAY);
+        assertGt(_now(), t2 - 4_000 + DELAY);
         _redeem(v, sig);
     }
 
@@ -522,7 +522,7 @@ contract AssayEscrowTightenTest is Fixture {
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _now() + DELAY);
         uint64 end = _now() + DELAY;
-        vm.warp(_now() + 2_000);
+        vm.warp(_now() + 4_000);
         Voucher memory v = _v(D_PER_CALL, 1);
         bytes memory sig = _byDelegate(v);
         assertLt(end, _now() + DELAY, "the grant ends inside the grace");

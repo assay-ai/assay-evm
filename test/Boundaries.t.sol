@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
@@ -96,7 +96,7 @@ contract BoundariesTest is Fixture {
         _refused(_v(3, t + skew + 1, t + skew + 61), VoucherNotYetValid.selector); // +1
     }
 
-    /// **B2 — `now <= expiresAt + 1800`, admits exact.** New. The shared instant belongs to the
+    /// **B2 — `now <= expiresAt + 7200`, admits exact.** New. The shared instant belongs to the
     /// voucher: at exactly `expiresAt + REDEEM_GRACE` the redemption still lands.
     function test_B2_theRedeemGraceAdmitsItsOwnValue() public {
         uint64 t = uint64(block.timestamp);
@@ -163,15 +163,16 @@ contract BoundariesTest is Fixture {
 
     // === the sequence and the spending limits ===============================================
 
-    /// **B5 — `seq > seqHigh`, EXCLUDES equal.** Re-assertion (`AssayEscrow.redeem.t.sol`).
-    /// Gaps are allowed; equality is not, which is what makes exactly one redemption per
-    /// `(buyer, seq)` a fact of the chain with one `uint64` and no bitmap.
-    function test_B5_theSequenceIsStrictlyIncreasing() public {
+    /// **B5 — one redemption per `(buyer, seq)`, in any order (D-23).** Re-assertion
+    /// (`AssayEscrow.redeem.t.sol`). A used seq is refused; an unused one below the high-water
+    /// mark is admitted and does not move it.
+    function test_B5_eachSeqIsRedeemedOnceInAnyOrder() public {
         uint64 t = uint64(block.timestamp);
         _ok(_v(5, t, t + 60)); // seqHigh = 5
 
-        _refused(_v(4, t, t + 60), VoucherSeqNotIncreasing.selector); // -1
-        _refused(_v(5, t, t + 60), VoucherSeqNotIncreasing.selector); // exact
+        _refused(_v(5, t, t + 60), VoucherSeqUsed.selector); // exact
+        _ok(_v(4, t, t + 60)); // -1, unused
+        _refused(_v(4, t, t + 60), VoucherSeqUsed.selector); // -1, now used
         _ok(_v(6, t, t + 60)); // +1
     }
 

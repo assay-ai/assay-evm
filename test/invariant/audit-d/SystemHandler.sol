@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -1059,11 +1059,12 @@ contract SystemHandler is Test {
         }
         AssayStake.SlashRecord memory q = stake.slashRecordOf(id);
         AssayStake.ProviderStake memory s2 = stake.stakeOf(r.provider);
-        (uint64 vUsed,) = _verifierWindow(r.verifier);
+        (uint64 vUsed, uint64 vStarted) = _verifierWindow(r.verifier);
         // All or wait (D-20): an execution pays the whole reservation, never part of it.
         if (q.applied != r.reserved) _violate("caps", "applied != reserved");
         if (s2.slashedInWindow > r.capAllowance) _violate("caps", "provider window above cap");
-        if (vUsed > p.verifierDailyCap) _violate("caps", "verifier window above daily cap");
+        // D-25: the per-key window is retired; its storage must never be written again.
+        if (vUsed != 0 || vStarted != 0) _violate("caps", "retired verifier window written");
         uint64 agent = Fee.bpsOf(q.applied, p.slashAgentBps);
         uint64 plat = Fee.bpsOf(q.applied, p.slashPlatformBps);
         if (usdg.balanceOf(r.beneficiary) - benBefore != agent) _violate("payout", "agent share");
@@ -1227,10 +1228,10 @@ contract SystemHandler is Test {
     function setSlashDelay(uint256 callerSeed, uint64 d) external step("setSlashDelay") {
         address caller = callerSeed % 4 == 0 ? _anyCaller(callerSeed >> 2) : _admin();
         d = uint64(bound(d, 0, 30 * 86_400));
-        if (callerSeed % 5 == 1) d = Constants.MIN_SLASH_DELAY_SECONDS;
+        uint64 floor = config.minSlashDelaySeconds();
+        if (callerSeed % 5 == 1) d = floor;
         // Fixed bounds since audit F R3: no coupling to the unbonding period.
-        bool want = caller == _admin() && d >= Constants.MIN_SLASH_DELAY_SECONDS
-            && d <= Constants.MAX_SLASH_DELAY_SECONDS;
+        bool want = caller == _admin() && d >= floor && d <= Constants.MAX_SLASH_DELAY_SECONDS;
         bool s = _call(caller, address(config), abi.encodeCall(AssayConfig.setSlashDelay, (d)));
         if (s != want) _violate("role", "setSlashDelay outcome mismatch");
     }

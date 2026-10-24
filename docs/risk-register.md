@@ -114,7 +114,7 @@ aspiration.
 - **Provider stake.** The admin `registerVerifier`s a key it holds, `setArbiter`s an accomplice
   (the arbiter cannot be removed, only replaced), `setSlashDelay`s 10 minutes, and raises the
   slash parameters with `updateConfig` (`slashCapBps` up to 5,000, `slashAgentBps` 10,000,
-  `penaltyAmount` and `verifierDailyCap` large). Its key proposes against each provider naming its
+  `penaltyAmount` large). Its key proposes against each provider naming its
   own beneficiary; the provider's dispute is upheld by the accomplice; `executeSlash` pays after
   10 minutes — repeatable per provider and per window. A dispute does not help, and the old
   "the owner acts inside the 72 h delay" remedy is gone, because the same key shortens the delay.
@@ -123,7 +123,7 @@ aspiration.
 - **Redemption ordering.** It can pin `redeemer` to itself.
 - **Freezing.** It can pause, and block any address, holding every exit closed (§18).
 
-**What limits it:** the caps per record, per provider window and per key-day, and how fast the
+**What limits it:** the caps per record and per provider window, and how fast the
 owner replaces the admin (`setAdmin`) and the fresh admin revokes the rogue key and unpauses.
 **Monitoring (required, off chain):** page on every `ConfigUpdated`, `VerifierRegistered`,
 `ArbiterSet`, `SlashDelaySet`, `PauseToggled` and `BlockedSet` from `AssayConfig`.
@@ -160,6 +160,14 @@ Safe's presence on 4663 was measured (`chain-facts.md`) and blocks nothing. Movi
 A halted Orbit sequencer freezes withdrawals. The mitigation is the parent chain's force-inclusion
 path, and **the delay is an Orbit configuration that must be read from the actual chain and written into the
 runbook.** It is not a contract concern and there is no contract-side mitigation.
+
+Two timing assumptions rest on it (review 2026-10-23 L-4, runbook §8): the 48 h slash-delay floor
+(D-23) assumes a force-inclusion window of at most 24 h, which is **not yet measured** on
+Robinhood's parent chain (`SequencerInbox.maxTimeVariation()`); and D-24's margin between the
+withdraw/tighten delay and the longest voucher life (10,800 − 7,620 = 3,180 s) is below the 1 h of
+forward clock drift Arbitrum allows a sequencer, so a sequencer that runs its clock ahead by more
+than that can break "signed means collectable". Accepted (trusted sequencer); the backend alerts
+on drift.
 
 ## 8. No gasless first deposit
 
@@ -228,8 +236,8 @@ until `pendingSlash == atRisk`, at which point `free == 0` and further proposals
 
 The scenario, because "a leaked key can grief" is too abstract to act on:
 
-> A verifier key leaks at 09:00. The holder does not execute anything — executing costs them
-> nothing but would burn the key's `verifierDailyCap` and leave a `SlashExecuted` event. Instead
+> A verifier key leaks at 09:00. The holder does not execute anything — executing would leave a
+> `SlashExecuted` event and pay only after the slash delay, inside which the key is revoked. Instead
 > they submit proposals against one provider until `pendingSlash == atRisk`, in one block, for the
 > price of the gas. That provider's `withdrawStake` now returns `InsufficientUnbondingStake` for
 > every amount. Release requires `cancelSlash` (admin or arbiter) or `expireSlash`, and
@@ -248,9 +256,31 @@ proposal and no provider-side objection. Adding any of them would need state the
 deliberately does not hold, and would weaken the property that a judgement can be submitted by
 anyone — which is what stops the platform being able to suppress one.
 
-**The real mitigation is operational and it is `revokeVerifier`.** A provider reporting a frozen
-exit with reservations they do not recognise is a key-compromise incident, and revocation both
-stops the bleeding and releases what is already held.
+**Since D-26 the freeze also stops the provider's income.** The escrow pays a provider only while
+`bonded - pendingSlash >= minimumStake`, so the same reservations that freeze an exit make every
+voucher to that provider refuse `ProviderBelowMinimumStake` (RETRY, then expiry after the redeem
+grace) until they are released. For a provider bonded at the minimum one record is enough; one at
+1.5 x the minimum needs about 51 records of 1 USDG, a few cents of gas each on L2. A thief can
+therefore halt payments to every provider in one block. This is the price of closing F-M1 (a
+provider freezing its own stake with records it disputes itself and going on being paid).
+
+**Revocation alone does not release anything** (review 2026-10-24 M-2). `revokeVerifier` writes
+only the key's own entry; `pendingSlash` is untouched, so the freeze and the payment halt stay
+until every record is released. What revocation does is open the door (D-27): from that block,
+**anyone** may call `expireSlash` on each of the key's Pending or Disputed records, whatever its
+deadline and even while paused (`CancelReason.VerifierUnavailable`). There is no batch expire on
+chain; many records go in one transaction through a multicall contract, or the admin or arbiter use
+`cancelSlashBatch` (64 per transaction). Vouchers to the halted providers RETRY meanwhile and are
+lost once the halt outlasts the 2-hour redeem grace, so release is time-critical.
+`test/AssayStake.freeStake.t.sol::test_D27_aRevokedKeysRecordsAreReleasedAtOnceByAnyoneAndPaymentsResume`
+replays the incident end to end.
+
+**The real mitigation is operational: revoke, then release.** A provider reporting a frozen
+exit, or payments refused, with reservations they do not recognise is a key-compromise incident.
+Follow `docs/deploy-runbook.md` §6.8: revoke the key, release every record it signed, verify that
+payments resume, then rotate to a new key. Detection does not depend on a provider's report: the
+backend's `EvmSlashProposalWatcher` raises a CRITICAL alert within about 2 minutes on a
+`SlashProposed` it did not plan (see entry 18).
 
 ## 12. `revokeVerifier` is doubly irreversible, and one of the two effects is not the obvious one
 
@@ -283,13 +313,13 @@ they can be re-judged under the replacement key, and paste the address rather th
 
 The two-step exit's guarantee — a buyer cannot withdraw out from under a voucher they have already
 signed — covers **only vouchers signed before `requestWithdraw`**. That half is real, and it is what
-`WITHDRAW_DELAY_SECONDS (3,600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2,220)` buys. The other half
+`WITHDRAW_DELAY_SECONDS (10,800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7,620)` buys. The other half
 is false, and the contract does not pretend otherwise:
 
-> A buyer requests a withdrawal at `T`; it matures at `T + 3600`. The backend writes a 402 at
-> `T + 1400` and the buyer signs a voucher with `issuedAt = T + 1400`, `expiresAt = T + 1700`. That
-> voucher stays redeemable until `T + 1700 + 1800 = T + 3500`, which is fine — but a voucher signed
-> at **`T + 1381` or later** is redeemable past `T + 3600`. `withdraw()` reads no
+> A buyer requests a withdrawal at `T`; it matures at `T + 10,800`. The backend writes a 402 at
+> `T + 3,000` and the buyer signs a voucher with `issuedAt = T + 3,000`, `expiresAt = T + 3,300`.
+> That voucher stays redeemable until `T + 3,300 + 7,200 = T + 10,500`, which is fine — but a
+> voucher signed at **`T + 3,181` or later** (10,800 − 7,620 + 1) is redeemable past `T + 10,800`. `withdraw()` reads no
 > outstanding-voucher state, pays `min(requested, balance)`, and the later redemption then fails
 > `EscrowInsufficient`. **The provider has already served the request.**
 
@@ -314,9 +344,9 @@ after the provider served it. Repeatable at no cost (business finding 7, review 
 rows were absorbed this way (`DelegateIsRevoked`).
 
 **Since D-21:** every such tightening binds an already-valid voucher only after
-`TIGHTEN_DELAY_SECONDS` (3,600 s), longer than any voucher lives (2,220 s): the caps in force before
+`TIGHTEN_DELAY_SECONDS` (10,800 s), longer than any voucher lives (7,620 s): the caps in force before
 a lowering, and a revoked grant's authority, are held for that long, and a grant's `validUntil`
-can no longer be set less than 3,600 s ahead. Raising applies at once. The exit delay already had
+can no longer be set less than 10,800 s ahead. Raising applies at once. The exit delay already had
 the same shape (§13), so a payer can no longer strand a signed voucher or withdraw the money it
 needs before it is redeemed.
 
@@ -330,21 +360,21 @@ needs before it is redeemed.
 - Vouchers signed after a withdrawal request (§13) and pause, blocklist or outage beyond a
   voucher's deadline are unchanged.
 
-## 14a. A revoked (or stolen) delegate key can sign NEW vouchers for up to an hour — ACCEPTED, owner decision pending
+## 14a. A revoked (or stolen) delegate key can sign NEW vouchers for up to three hours — ACCEPTED, owner decision pending
 
 **Who it affects:** the payer. Review 2026-10-16 step 5, F2 (Medium, design trade-off).
 
 During the grace the chain cannot tell a voucher signed before the revocation from one signed
 after it: `issuedAt` is chosen by the signer. So a key the payer revokes because it was stolen
-can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 3,600 s after the
+can still sign fresh vouchers that redeem until `CapsHeld.until` (at most 10,800 s after the
 revocation, never past `validUntil`). Before D-21 `revokeDelegate` and `setLimits(0, 0)` were
-instant kill switches; now nothing the payer can do stops on-chain spending for that hour —
+instant kill switches; now nothing the payer can do stops on-chain spending for those three hours —
 lowering the escrow caps is held too, and `requestWithdraw` does not block redeems.
 
 **The bound (quantified):** the extra spend after the revocation is at most
 `min(heldDelegateMaxPerWindow - carried, heldEscrowWindow - carriedEscrow, balance)`, where
 `carried` is the delegate's window spend decayed to the redemption instant; the decay over the
-hour returns at most 3,600 / 86,400 ≈ 4.2% of the window, so the bound is about one held delegate
+three hours returns at most 10,800 / 86,400 = 12.5% of the window, so the bound is about one held delegate
 window. Each voucher is also at most the held `maxVoucherAmount`. The money goes to an ACTIVE
 provider, not to the thief, so the thief must also control or collude with a registered provider,
 and the vouchers must be submitted by the REDEEMER — which happens only under a backend compromise
@@ -352,7 +382,7 @@ or a backend bug (`Constants.sol` already assumes the backend may be compromised
 
 **Why accepted:** it is the price of "signed means collectable" (§14) and of "the platform never
 owes providers". Gating the held caps on `issuedAt <= revokedAt + skew` does not change the
-amount bound (a thief backdates `issuedAt`); it only shortens the usable time to about 2,100 s.
+amount bound (a thief backdates `issuedAt`); it only shortens the usable time to about 7,500 s.
 The alternative — a payer `freeze` with no grace, where the platform carries the debt of the
 vouchers it strands — is more contract surface and is the owner's decision (pending).
 
@@ -366,46 +396,45 @@ vouchers it strands — is more contract surface and is the owner's decision (pe
 - **F3, a merged hold.** A voucher is checked against the current pair or the held pair, each
   WHOLE, so a single lower-one-raise-the-other change never combines (old per-call, new window).
   One slot holds one pair, though: a SECOND lowering while a hold still runs merges the two pairs
-  field by field (and restarts the hour from the second lowering), because a voucher valid at
+  field by field (and restarts the three hours from the second lowering), because a voucher valid at
   that instant may rely on either. Only then can a held pair be one the payer never set as a
   whole, and only payer calls create it. The merge carries forward: a payer who lowers again
   within each hour keeps the first and loosest pair in force for as long as that pattern goes
   on. For the escrow's own caps there is no end; for a delegate the bound is `validUntil`,
   which a re-grant can extend. So the total stays within the field-wise max of every pair in
-  force since the last gap of more than 3,600 s between lowerings, all of them caps the payer
+  force since the last gap of more than 10,800 s between lowerings, all of them caps the payer
   set. Only the payer can cause it (a delegate, the redeemer or a relayer cannot write or extend
   a hold), and only by tightening repeatedly; it matters most when a payer lowers several times
   after a key leak (F2). A second slot or a per-pair `until` would remove it; not worth the
   storage. A cheaper fix exists for the escrow's caps only: drop the running hold from the
-  merge once every voucher that relied on it has expired (written more than 2,220 s ago, i.e.
-  `until + 2,220 < now + TIGHTEN_DELAY`). A delegate hold's `until` may already be cut to
+  merge once every voucher that relied on it has expired (written more than 7,620 s ago, i.e.
+  `until + 7,620 < now + TIGHTEN_DELAY`). A delegate hold's `until` may already be cut to
   `validUntil`, so its age cannot be read back from it without a new field. Not built, to keep
   the two hold paths one rule; revisit if repeated lowering becomes a real pattern.
 - **F7, more signing keys than the list limit.** A revoked delegate in its grace is unlisted but
   can still sign, so revoke-and-grant churn can give a payer more than `MAX_DELEGATES_PER_PAYER`
-  signing keys for up to an hour. Only the payer can cause it, and lookups go through a mapping,
+  signing keys for up to three hours. Only the payer can cause it, and lookups go through a mapping,
   so it costs no gas and blocks nothing.
 - **F8, a relayed grant signed close to the minimum.** `authorizeDelegateBySig` needs
-  `validUntil >= now + 3,600` at the block that lands it. A grant SIGNED with
-  `validUntil ≈ signTime + 3,600` reverts with `DelegateValidUntilInvalid` if it is relayed later.
+  `validUntil >= now + 10,800` at the block that lands it. A grant SIGNED with
+  `validUntil ≈ signTime + 10,800` reverts with `DelegateValidUntilInvalid` if it is relayed later.
   Liveness only: the front end signs with a margin of at least the relay deadline
-  (`validUntil >= now + 3,600 + deadline window`).
+  (`validUntil >= now + 10,800 + deadline window`).
 
 ## 15. The redeemer can censor or delay a provider's payment — no fallback yet
 
 **Who it affects:** providers.
 
 `redeemVoucher*` is pinned to `params().redeemer` (D-10), and a voucher stays redeemable for at
-most `MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS` (2,220 s) after `issuedAt`. A redeemer that is down
+most `MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS` (7,620 s since D-24; it was 2,220 s) after `issuedAt`. A redeemer that is down
 for longer than that, or that withholds one provider's vouchers, leaves that provider unpaid for
 calls it served. The buyer is unharmed: their balance stays theirs.
 
 **The fallback that was specified and not built (2026-10-12):** anyone may redeem after an
-admin-set delay in [1 h, 7 d]. As specified it could never fire: every voucher is dead before an
-hour has passed. Making it fire would need either bounds below the shortest redeemable life
-(about 1,800 s), or a longer redeemable life. A longer life means a longer withdraw delay
-(`WITHDRAW_DELAY_SECONDS` must outlive every voucher signed before the request), and a
-third-party redeemer could then void lower seqs. A redesign is pending: only the voucher's named
+admin-set delay in [1 h, 7 d]. As specified it could never fire before D-24: every voucher was
+dead within 2,220 s. Since D-24 a voucher stays redeemable up to 7,620 s (the shortest redeemable
+life is about 7,200 s, the grace), so a delay of 1 h to about 2 h could fire, and since D-23 a
+redemption out of order no longer voids lower seqs. It is still not built. A redesign is pending: only the voucher's named
 provider, after a fixed delay of about 10 to 15 minutes, with every other rule unchanged.
 
 **What the contract does not do:** nothing today. **Mitigations:** the redeemer and the relayer
@@ -422,6 +451,10 @@ voucher of that payer fail `VoucherSeqNotIncreasing` for ever. Withdrawal still 
 **Now:** `seq <= seqHigh + MAX_SEQ_GAP` (1,000,000, a constant), on every path and for every
 signer kind. The backend refuses to issue or admit a seq past the same bound. The residual
 cost of a hostile jump is one million unusable seqs, and the next one is still admitted.
+
+**Since D-23** a high seq voids no other voucher (replay is per `(payer, seq)`), so a hostile jump
+costs nothing on chain; the cap now only keeps `seqHigh` low enough for the backend's allocator,
+which issues new seqs above it.
 
 ## 17. A withheld relayed signature could undo a later direct decision — closed by D-18
 
@@ -478,17 +511,73 @@ key is revoked.
 **All or wait (audits A M-1, B B1, C C2, fixed; owner decision on audit F R4).**
 `executeSlash` is permissionless, so a payment cut by a rolling window let the provider pick the
 instant and discharge a judgement for dust. Now a record is paid its whole reservation or not at
-all: it executes only when it fits under the provider's window AND the key's daily cap, otherwise
-`SlashWindowNotDrained` and it stays Pending. `applied == reserved` for every executed record. The
-accepted cost: an honest judgement that never fits within its 7-day grace expires unpaid, so
-`verifierDailyCap` must be sized with large headroom.
+all: it executes only when it fits under the provider's window, otherwise `SlashWindowNotDrained`
+and it stays Pending. `applied == reserved` for every executed record. The accepted cost: an honest
+judgement that never fits within its 7-day grace expires unpaid.
+
+**No per-verifier-key window (D-25, review 2026-10-23 M-1 / T-4).** Until D-25 a record also had to
+fit the signing key's rolling daily window (`verifierDailyCap`). That window was one
+first-come-first-served resource shared by every provider the key judged, and `executeSlash` is
+permissionless, so anyone able to fill it could make every other provider's slash wait until it
+expired: the reviewer's PoC kept a 500 USDG key-day full with self-slashes (attestations for calls
+the attacker bought from its own provider, beneficiary its own agent) for about 171 USDG a day and
+voided every honest slash signed by that key. The key window is gone; `verifierDailyCap` stays in
+`ParamSet` and is not read on chain; the backend only displays it and enforces no per-key budget
+with it. **A stolen verifier key has no amount bound:** until it is revoked it can reserve against
+every provider and, after the delay, take up to each provider's cap allowance per rolling day
+(review 2026-10-24 F-M2 measured 540 USDG in one day over six 1,000 USDG providers, against the
+old 500 USDG key cap). The bound is `revokeVerifier`, which reaches backwards and voids every
+record the key signed that has not executed, used within the slash delay (at least 48 h off the
+test chains, D-23; the test chains allow 10 minutes). Detection of any proposal whose attestation
+the backend did not issue exists: the backend's `EvmSlashProposalWatcher` reads `SlashProposed`
+every 2 minutes and raises a CRITICAL alert on an unknown request id, or on a known one with a
+different beneficiary or penalty. It does not compare provider, verifier or policy, and it never
+revokes or releases anything. Its alerts always reach the log; delivery to Telegram or a webhook
+must be enabled in the deployment (planned), and until it is, the delay buys time only if someone
+reads the log. The response is `docs/deploy-runbook.md` §6.8. Disputes and the arbiter remain the provider's own
+defence. **Residual, accepted:** a provider can
+still fill its OWN window with self-slashes, so a victim's record against that provider waits and
+may expire (`test/AssayStake.crowding.t.sol`); it costs the provider 30 % of each self-slash (the
+platform share) and it shields only itself. The backend refuses attestations whose beneficiary is
+linked to the provider. Per-provider FIFO execution would close it on chain; it is parked to keep
+the contract simple.
+
+**A provider freezing its OWN stake (review 2026-10-24 F-M1, D-26).** Sybil buyers buy a
+provider's calls and it fails them on purpose; the backend's linkage check sees no link and signs
+up to the per-provider budget; the provider disputes every record, which holds its reservation for
+up to 30 days. After about ten days `pendingSlash == atRisk` and every honest proposal against it
+reverts `NothingToSlash`. Before D-26 it went on being paid, because the redeem gate read `bonded`.
+Now the gate reads `bonded - pendingSlash`, so it is refused payment as soon as its free stake is
+under the minimum (`test/AssayStake.freeStake.t.sol`). **Residual, accepted:** the freeze itself
+still blocks honest proposals while it lasts, and costs the provider nothing on chain if the
+arbiter never rules; what it no longer buys is income. Arbiter attention to providers that dispute
+many records a day is the off-chain half.
+
+**A reservation is whole or refused (review 2026-10-24 F-L1, D-26).** `proposeSlash` used to cut
+a reservation to the provider's `free` stake; a provider that withdrew down to a few units of free
+stake and then landed a leaked attestation spent its `requestId` for a few base units. Now
+`min(penalty, capAllowance)` must fit in `free` or the proposal reverts `NothingToSlash`, nothing
+is written, and the same attestation lands later (before its expiry, or re-signed). The cut to
+`capAllowance` stays: a provider that withdrew to `atRisk = 40` still has a judgement reserved at 4
+units, while earning nothing (`bonded` is 0).
+
+**An unsplittable reservation is refused at proposal (review 2026-10-23 L-1).** `proposeSlash`
+is permissionless, and until D-26 it cut a reservation to the provider's `free` stake. A provider holding
+matured unbonding stake and a valid attestation (for example one left in public calldata by a
+failed batched proposal) could withdraw down to `pendingSlash + 1` and land it itself: the record
+reserved one base unit, could never split, expired, and burnt the `requestId`. Now `proposeSlash`
+refuses `PenaltyTooSmallToSplit` unless the reservation gives a non-zero agent share and, when the
+split has one, a non-zero platform share, so nothing is written and the attestation can land later.
+Since D-26 a short `free` refuses `NothingToSlash` before this check, which is now reached only by a
+penalty or a cap allowance too small to divide. A split lowered after proposal can still make a record unsplittable at execution (it waits, then
+expires); that is the admin's choice, not the provider's.
 
 **A pause longer than 7 days voids pending and upheld slashes (A L-1, B B4, C C6).** The grace and
 the dispute timeout keep running while paused, `executeSlash` is closed and `expireSlash` is not.
 The provider's rolling window is not frozen either. Runbook §6.7.
 
-**Execution-time pricing (B3).** The split (`slashAgentBps`, `slashPlatformBps`), the `treasury`
-and the `verifierDailyCap` are read when a record executes, not when it was proposed, so a
+**Execution-time pricing (B3).** The split (`slashAgentBps`, `slashPlatformBps`) and the `treasury`
+are read when a record executes, not when it was proposed, so a
 parameter change re-prices every record in flight. Only `capAllowance`, `reserved`, the beneficiary
 and `executableAt` are frozen.
 

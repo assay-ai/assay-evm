@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
@@ -513,9 +513,9 @@ contract AssayEscrowBySigTest is Fixture {
     function test_theWithdrawDelayOutlivesEveryVoucherSignedBeforeTheRequest() public {
         uint64 derived = Constants.CLOCK_SKEW_TOLERANCE_SECONDS
             + Constants.VOUCHER_MAX_LIFETIME_SECONDS + Constants.REDEEM_GRACE_SECONDS;
-        assertEq(Constants.MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS, derived, "2,220 is derived");
-        assertEq(derived, 2_220);
-        assertGt(Constants.WITHDRAW_DELAY_SECONDS, derived, "3,600 > 2,220");
+        assertEq(Constants.MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS, derived, "7,620 is derived");
+        assertEq(derived, 7_620);
+        assertGt(Constants.WITHDRAW_DELAY_SECONDS, derived, "10,800 > 7,620");
 
         string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
         assertEq(

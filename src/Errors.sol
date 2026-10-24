@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// The shared error catalogue — one name per condition, across all three contracts.
 ///
@@ -119,10 +119,12 @@ error BadNonce();
 
 // --- voucher -----------------------------------------------------------------
 error VoucherSeqZero();
-error VoucherSeqNotIncreasing();
+/// EVM only (D-23), replacing `VoucherSeqNotIncreasing`: this `(payer, seq)` was already redeemed
+/// (its `heldPayments` record is not `None`). Also what a voucher that already landed gets.
+error VoucherSeqUsed();
 /// EVM only. `seq > seqHigh + Constants.MAX_SEQ_GAP`: one voucher may not move the high-water mark
-/// so far that it strands the payer's sequence space (a `seq` of `2^64 - 1` would void every
-/// later voucher for ever).
+/// so far past the payer's other seqs that the backend's allocator, which issues above
+/// `seqHigh`, runs out of room.
 error VoucherSeqGapTooLarge();
 error VoucherExpired();
 error VoucherNotYetValid();
@@ -226,7 +228,7 @@ error SlashNotDisputed();
 error NotArbiter();
 /// A party `AssayConfig.blocked()` names, at a door the blocklist closes.
 error AddressBlocked();
-/// `setSlashDelay` outside `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]`.
+/// `setSlashDelay` outside `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (D-23).
 error InvalidSlashDelay();
 /// `upholdSlash` at or after `disputedAt + DISPUTE_TIMEOUT_SECONDS`: only `expireSlash` remains.
 error DisputeTimedOut();

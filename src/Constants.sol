@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// Every value here is copied from the Anchor program's `programs/x402-payment/src/constants.rs`
 /// (repository `assay-solana`), with the source line noted on each. They are **copied, never
@@ -33,15 +33,27 @@ library Constants {
     ///
     /// **Since the dispute upgrade this is the DEFAULT, not the delay.** The live value is
     /// `AssayConfig.slashDelaySeconds()`, which the admin may set inside
-    /// `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` and which
+    /// `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (D-23) and which
     /// reads back as this constant until it is first set — so a proxy upgraded from the earlier
     /// code keeps 72 hours. A stolen admin key can shorten it to the minimum, never to zero, and
     /// a proposal's `executableAt` is frozen when it is made.
     uint64 internal constant SLASH_DELAY_SECONDS = 72 * 3600;
 
-    /// EVM only. The shortest settable slash delay (and therefore dispute window). Ten minutes:
-    /// long enough for a test run to dispute, short enough to be useful on a testnet.
-    uint64 internal constant MIN_SLASH_DELAY_SECONDS = 10 * 60;
+    /// EVM only (D-23). The shortest slash delay (and therefore dispute window) on any chain that
+    /// is not a test chain: 48 hours. A provider whose `disputeSlash` is censored, or stuck
+    /// behind a sequencer outage, can still land it through the L1 delayed inbox (Arbitrum
+    /// force inclusion, 24 h by default on an Orbit chain such as Robinhood Chain); the floor
+    /// keeps the window above that with a margin, whoever holds the admin key.
+    uint64 internal constant MIN_SLASH_DELAY_SECONDS = 48 * 3600;
+
+    /// EVM only (D-23). The shortest slash delay on a test chain ([`ROBINHOOD_TESTNET_CHAIN_ID`]
+    /// or [`LOCAL_CHAIN_ID`]): ten minutes, long enough for a test run to dispute.
+    uint64 internal constant MIN_SLASH_DELAY_SECONDS_TESTNET = 10 * 60;
+
+    /// EVM only (D-23). The chains on which [`MIN_SLASH_DELAY_SECONDS_TESTNET`] applies. Every
+    /// other chain id, a future mainnet included, gets the production floor.
+    uint256 internal constant ROBINHOOD_TESTNET_CHAIN_ID = 46_630;
+    uint256 internal constant LOCAL_CHAIN_ID = 31_337;
 
     /// EVM only. The longest settable slash delay: 22 days, the largest value the earlier
     /// delay-to-unbonding coupling ever admitted (`MAX_UNBONDING_PERIOD_SECONDS - 8 d`). A fixed
@@ -54,14 +66,15 @@ library Constants {
     /// nobody rules on must not become a hold for ever.
     uint64 internal constant DISPUTE_TIMEOUT_SECONDS = 30 * 86_400;
 
-    /// constants.rs — `WITHDRAW_DELAY_SECONDS: i64 = 3_600`. Sized by the invariant noted
-    /// below [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`], not chosen.
-    uint64 internal constant WITHDRAW_DELAY_SECONDS = 3600;
+    /// D-24: three hours (`constants.rs` has `3_600`). Sized by the invariant noted below
+    /// [`MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS`] (10,800 > 7,620), not chosen: it must outlive the
+    /// longest redeemable voucher, which D-24 lengthened.
+    uint64 internal constant WITHDRAW_DELAY_SECONDS = 3 * 3600;
 
     /// EVM only. How long a payer's TIGHTENING (revoking a delegate, shortening its horizon,
     /// lowering a delegate's or the escrow's caps) waits before it binds a voucher that was
     /// already valid: until then the previous authority and caps still redeem it. It is the exit
-    /// delay, for the exit delay's reason — it outlives every voucher (3,600 > 2,220), so no payer
+    /// delay, for the exit delay's reason — it outlives every voucher (10,800 > 7,620), so no payer
     /// call can make an already-admitted voucher unredeemable before its deadline.
     uint64 internal constant TIGHTEN_DELAY_SECONDS = WITHDRAW_DELAY_SECONDS;
 
@@ -87,8 +100,10 @@ library Constants {
     /// the provider as it does in the slash design.
     uint64 internal constant HELD_TIMEOUT_SECONDS = 7 * 86_400;
 
-    /// constants.rs — `REDEEM_GRACE_SECONDS: i64 = 30 * 60`.
-    uint64 internal constant REDEEM_GRACE_SECONDS = 30 * 60;
+    /// D-24: two hours (`constants.rs` has `30 * 60`). How long after `expiresAt` a voucher may
+    /// still be redeemed, so a redeemer, RPC or pause outage of up to about two hours loses no
+    /// call that was already served. Its cost is the two delays sized above it.
+    uint64 internal constant REDEEM_GRACE_SECONDS = 2 * 3600;
 
     /// constants.rs — `VOUCHER_MAX_LIFETIME_SECONDS: i64 = 5 * 60`. The widest window a
     /// voucher may claim for itself, `expiresAt - issuedAt`. The original design put this bound in
@@ -101,14 +116,14 @@ library Constants {
     uint64 internal constant CLOCK_SKEW_TOLERANCE_SECONDS = 120;
 
     /// constants.rs — derived, not typed, exactly as the Anchor source derives it, so it
-    /// cannot disagree with the three constants it is the sum of. 2,220s = 37 minutes.
+    /// cannot disagree with the three constants it is the sum of. 7,620s = 2 h 7 min (D-24).
     uint64 internal constant MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS =
         CLOCK_SKEW_TOLERANCE_SECONDS + VOUCHER_MAX_LIFETIME_SECONDS + REDEEM_GRACE_SECONDS;
 
     // **The invariant constants.rs makes a build failure, and where it went.**
     //
     // ```text
-    // WITHDRAW_DELAY_SECONDS (3600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2220)
+    // WITHDRAW_DELAY_SECONDS (10800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7620)
     // ```
     //
     // A buyer's withdrawal must not land while a voucher they signed *before* asking for it is
@@ -118,7 +133,7 @@ library Constants {
     // constant expression cannot invoke one — so it becomes two things, and both of them exist:
     //
     //   1. HERE, NOW: `test/Types.t.sol::test_withdrawDelayOutlivesTheLongestRedeemableVoucher`
-    //      derives the 2,220 from its three terms rather than typing it, and asserts the
+    //      derives the 7,620 from its three terms rather than typing it, and asserts the
     //      inequality. A red test instead of a red build.
     //   2. `AssayEscrow.initialize` checks the same inequality and reverts
     //      [`WithdrawDelayTooShort`]. Runtime rather than a constructor because these contracts
@@ -195,10 +210,11 @@ library Constants {
 
     // --- EVM only --------------------------------------------------------------------------
 
-    /// The furthest one redeemed voucher may move a payer's `seqHigh`: a redemption needs
-    /// `seq <= seqHigh + MAX_SEQ_GAP`. Without it a single voucher with `seq = 2^64 - 1` (signed by
-    /// the payer or by any delegate) moves the high-water mark to the top of the type, and every
-    /// later voucher of that payer fails `VoucherSeqNotIncreasing` for ever. A constant, not a
+    /// The furthest one redeemed voucher may move a payer's `seqHigh`: a redemption above it
+    /// needs `seq <= seqHigh + MAX_SEQ_GAP`. Since D-23 a high seq voids no other voucher, but
+    /// without the cap a single voucher with `seq = 2^64 - 1` (signed by the payer or by any
+    /// delegate) moves the high-water mark to the top of the type, and the backend, which
+    /// allocates new seqs above `seqHigh`, has nothing left to issue. A constant, not a
     /// parameter: the backend allocates seqs one at a time, so a million unredeemed numbers ahead
     /// of the chain is already far outside normal operation, and a bound an admin could raise is a
     /// bound a stolen admin key removes. No Anchor counterpart.

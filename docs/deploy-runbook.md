@@ -152,7 +152,9 @@ forge script script/Deploy.s.sol \
 ```
 
 For 4663, the RPC is `https://rpc.mainnet.chain.robinhood.com` and the verifier URL is
-`https://robinhoodchain.blockscout.com/api/`.
+`https://robinhoodchain.blockscout.com/api/`. **With solc 0.8.38 the inline Blockscout
+verification fails** (Blockscout there accepts up to 0.8.36): drop `--verify …` and verify on
+Sourcify as in §4.
 
 Each contract is deployed twice over: the implementation plainly, then an `ERC1967Proxy` in front
 of it whose constructor data is the `initialize` call. **The proxy is initialised in the same
@@ -222,7 +224,7 @@ proxy**:
 forge verify-contract <implementation> src/AssayEscrow.sol:AssayEscrow \
   --chain-id 46630 --verifier blockscout \
   --verifier-url https://explorer.testnet.chain.robinhood.com/api/ \
-  --compiler-version 0.8.24 \
+  --compiler-version 0.8.38 \
   --show-standard-json-input > verification/AssayEscrow.impl.standard.json
 
 # the proxy — its constructor args are (implementation, initializer calldata)
@@ -230,10 +232,33 @@ forge verify-contract <proxy> \
   lib/openzeppelin/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
   --chain-id 46630 --verifier blockscout \
   --verifier-url https://explorer.testnet.chain.robinhood.com/api/ \
-  --compiler-version 0.8.24 \
+  --compiler-version 0.8.38 \
   --constructor-args $(cast abi-encode "constructor(address,bytes)" <implementation> <initializerArgs>) \
   --show-standard-json-input > verification/AssayEscrow.proxy.standard.json
 ```
+
+**Blockscout on Robinhood Chain verifies only up to solc 0.8.36, and this build uses 0.8.38**
+(SOL-2026-7, review 2026-10-23 L-3), so `--verify --verifier blockscout` in §3 is expected to fail.
+Verify on **Sourcify** instead, through its v2 API with the standard-JSON input forge emits (the
+forge nightly's own Sourcify client failed in testing, so do not rely on `--verifier sourcify`):
+
+```sh
+forge verify-contract <implementation> src/AssayEscrow.sol:AssayEscrow \
+  --chain-id 46630 --compiler-version 0.8.38 \
+  --show-standard-json-input > verification/AssayEscrow.impl.standard.json
+
+jq -n --slurpfile std verification/AssayEscrow.impl.standard.json \
+  '{stdJsonInput: $std[0], compilerVersion: "0.8.38", contractIdentifier: "src/AssayEscrow.sol:AssayEscrow"}' \
+  | curl -sS -X POST -H 'content-type: application/json' --data @- \
+      https://sourcify.dev/server/v2/verify/46630/<implementation>
+# → {"verificationId": "..."}; poll GET https://sourcify.dev/server/v2/verify/<verificationId>
+```
+
+`compilerVersion` may need the full build string Sourcify lists for 0.8.38 (`0.8.38+commit.…`);
+take it from `solc --version` of the binary forge used. Repeat for each implementation and for
+each `ERC1967Proxy` (`lib/openzeppelin/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy`; Sourcify reads
+constructor arguments from the creation transaction). The Blockscout commands below stay valid
+for a build at or below 0.8.36.
 
 Verification goes through **standard-JSON input**, which works whatever the metadata setting. Commit both emitted standard-JSONs beside the deployment record. Verifying the proxy is
 what gives Blockscout its "Read as Proxy" tab, which is how an operator sees the live
@@ -403,12 +428,26 @@ set `expiresAt` far enough out to cover that tail.
 ### 6.7 Executing slashes, pauses and parameter changes
 
 - **All or wait (D-20).** `executeSlash` pays a record its WHOLE reservation or nothing. When the
-  provider's or the key's rolling window cannot take all of it, it refuses `SlashWindowNotDrained`
-  (the backend maps it to WAIT) and the record stays Pending; retry as the windows drain (they
-  reopen linearly over 24 h). There is no partial payment and no last-day exception: **an honest
-  slash crowded out for the whole 7-day grace expires unpaid.** So size `verifierDailyCap` with
-  large headroom over a day's expected judgements (or spread the load over more keys), and never
-  lower it below records already in flight.
+  provider's rolling window cannot take all of it, it refuses `SlashWindowNotDrained` (the backend
+  maps it to WAIT) and the record stays Pending; retry as the window drains (it reopens linearly
+  over 24 h). There is no partial payment and no last-day exception: **an honest slash crowded out
+  for the whole 7-day grace expires unpaid.** There is no per-key window on chain (D-25):
+  `verifierDailyCap` is not read by the contracts, and the backend only displays it; it is not a
+  per-key budget anywhere. **A stolen verifier key is bounded only by `revokeVerifier` within the
+  slash delay** (at least 48 h off the test chains, D-23): revocation reaches backwards and voids
+  every record the key signed that has not executed, and makes each of them releasable by anyone
+  at once (§6.8). Detection of a proposal whose attestation the backend did not issue exists: the
+  backend's `EvmSlashProposalWatcher` checks `SlashProposed` every 2 minutes and raises a CRITICAL
+  alert (`slash_proposal_unknown`, `slash_proposal_mismatch`). **Enable its delivery** (Telegram or
+  webhook) in the deployment; until that is done the alert reaches only the log, so watch the log.
+- **Keep a buffer above `minimumStake` (D-26).** The escrow pays a provider only while
+  `freeBondedOf(provider) = bonded - pendingSlash >= minimumStake`. Every standing record
+  (Pending or Disputed) counts against it until it executes, is cancelled or expires, so a
+  provider bonded at exactly the minimum stops being paid by its first pending slash.
+- **A judgement is reserved whole or not at all (D-26).** `proposeSlash` reserves
+  `min(penalty, capAllowance)` and refuses `NothingToSlash` when the provider's free stake cannot
+  cover it; nothing is written, and the same attestation can be proposed again once free stake is
+  back (before it expires, or re-signed under the same `requestId`).
 - **A pause longer than 7 days voids slashes.** The grace and the 30-day dispute timeout keep
   running while paused; `executeSlash` is closed and `expireSlash` is open to anyone. **Before a
   long pause, and again right after the unpause**, list every Pending or upheld record whose
@@ -421,18 +460,50 @@ set `expiresAt` far enough out to cover that tail.
 - **Only if that is impractical** (many providers): raise `unbondingPeriodSeconds` temporarily
   before the unpause (`updateConfig`), so no provider whose slashes were voided can exit before
   they are re-proposed (audit B B6). This delays every provider's exit, not just the affected ones.
-- **Two penalties per key-day.** `updateConfig` refuses `verifierDailyCap < 2 * penaltyAmount`
-  (`InvalidVerifierDailyCap`, audit G G-1), so one maximal record can never fill a key's day.
+- **`verifierDailyCap` must be non-zero** (`InvalidVerifierDailyCap`); nothing else bounds it since
+  D-25 removed the on-chain key window and audit G G-1's `>= 2 * penaltyAmount` with it. It bounds
+  nothing either: neither the contracts nor the backend enforce it.
 - **Two penalties per provider-day at the minimum.** `updateConfig` refuses
   `minimumStake * slashCapBps / 10_000 < 2 * penaltyAmount` (`InvalidMinimumStake`, review
   2026-10-15 R-1), so a provider at the minimum fits two maximal records in its capped day. Raise
   `minimumStake` (or lower `penaltyAmount`) before raising the penalty; a provider slashed below
   the minimum can still have one record fill its day.
-- **Parameters re-price records in flight.** The split, the `treasury` and the `verifierDailyCap`
-  are read at execution time, not at proposal: an `updateConfig` changes what every pending record
+- **Parameters re-price records in flight.** The split and the `treasury` are read at execution
+  time, not at proposal: an `updateConfig` changes what every pending record
   will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
   frozen.
 - **Key expiry.** The backend runs a key-expiry monitor (§6.6 gives the tail a key must cover).
+
+### 6.8 Incident: a stolen verifier key (D-27)
+
+Since D-26 a stolen key halts payments as well as exits: each record it lands reserves stake, and a
+provider whose free stake (`bonded - pendingSlash`) drops below `minimumStake` is refused at
+`redeemVoucher` (`ProviderBelowMinimumStake`). One record halts a provider at the minimum, about 51
+records of 1 USDG one at 1.5 x the minimum. Vouchers to a halted provider RETRY and are lost once the
+halt outlasts the 2-hour redeem grace, so work through these steps without pausing between them.
+
+1. **Revoke.** The admin calls `revokeVerifier(<key>)` on AssayConfig. Check the address first
+   (`verifierKey(address)`): revocation is irreversible (risk register §12). Revocation alone
+   releases nothing: the reservations stay and payments stay refused.
+2. **Release every record of that key.** List the key's open records from the logs:
+   `SlashProposed` events with `verifier == <key>`, minus the request ids already in a
+   `SlashExecuted` or `SlashCancelled`, confirmed with `slashRecordOf(id)` (status Pending or
+   Disputed). Then call `expireSlash(id)` on each. It is **permissionless**, immediate whatever the
+   record's deadline, works on Disputed records and while paused, and emits `SlashCancelled` with
+   `VerifierUnavailable`. There is no batch expire on chain: send many in one transaction through
+   a multicall contract (each `expireSlash` is atomic on its own; with Multicall3 `aggregate3` and
+   `allowFailure`, an id somebody else already released does not stop the rest). The relayer, an
+   operator wallet or any provider can send it; the admin or arbiter can also use
+   `cancelSlashBatch` (up to 64 ids, atomic). Start with the providers whose
+   `freeBondedOf(provider) < minimumStake`.
+3. **Verify payments resume.** For every affected provider `stakeOf(provider).pendingSlash` holds
+   only records from other keys, `freeBondedOf(provider) >= minimumStake`, and the redeemer's next
+   redemptions to it land. Check that the backend's slash hold has lifted for those providers.
+4. **Rotate.** Generate a new key, enrol it with `registerVerifier` (§6.4) and switch the backend's
+   signer to it. Honest records the stolen key had in flight were released with the rest and their
+   request ids are spent; the backend does not re-judge them automatically (re-signing from a
+   database that may be the compromised part is unsafe). List them from the backend, record them in
+   the incident write-up, and decide any remedy for their buyers by hand, off chain.
 
 ### 6.3 Changing the owner or the admin (D-17)
 
@@ -528,6 +599,11 @@ half is the last paragraph.
    If an upgrade makes Stake or Escrow call a Config function that does not exist yet, upgrade
    Config in the same session first (`_plan` always runs Config, Stake, Escrow in that order), and
    on a Safe send the `safeCalldata()` lines as ONE MultiSend transaction in that order.
+   **D-26 (the free-stake redeem gate): a fresh deploy is preferred.** If it is an upgrade,
+   **upgrade AssayStake before AssayEscrow**: the new Escrow calls `AssayStake.freeBondedOf`, which
+   an old Stake implementation does not have, so an Escrow upgraded first makes every redemption
+   revert with empty data until Stake follows. Keep both in one session (one MultiSend on a Safe),
+   in `_plan`'s order.
 3. **The OWNER signs** `upgradeToAndCall`:
    - a Ledger: `forge script script/UpgradeByOwner.s.sol --rpc-url <rpc> --broadcast --ledger --sender <owner>`
      with `IMPL_<NAME>=<address from step 1>` (and `CALL_<NAME>=<reinitialiser calldata>` if any);
@@ -652,6 +728,24 @@ deployment automatically — which is the property that makes a redeploy safe an
 
 A halted Orbit sequencer freezes withdrawals; the mitigation is the parent chain's force-inclusion
 path. It is not a contract concern.
+
+**Two timing assumptions this depends on (review 2026-10-23 L-4).**
+
+1. **The 48 h slash-delay floor (D-23) assumes a 24 h force-inclusion window.** A force-included
+   transaction is timestamped `max(parent-chain enqueue time, previous L2 block time)`, so a
+   censored `disputeSlash` lands with the current time; it is defended only if it can be forced in
+   before `executableAt`. 48 h covers Arbitrum One's default 24 h `delaySeconds` with margin, but
+   **Robinhood's own value is not measured yet**: read `SequencerInbox.maxTimeVariation()` on
+   Robinhood's parent chain (see below for why it cannot be read from the L3) and confirm
+   `delaySeconds` plus a margin is below `minSlashDelaySeconds()`. If it is not, raise the floor
+   before mainnet.
+2. **The D-24 margin is smaller than the sequencer clock drift Arbitrum allows.**
+   `WITHDRAW_DELAY_SECONDS` / `TIGHTEN_DELAY_SECONDS` (10,800 s) exceed the longest redeemable
+   voucher life (7,620 s) by **3,180 s**, while a sequencer may stamp blocks up to 1 h (3,600 s)
+   ahead of real time. A faulty or malicious sequencer that runs the clock forward by more than
+   3,180 s inside one voucher's life can mature a withdrawal, or bind a tightening, before a voucher
+   signed earlier is redeemed ("signed means collectable" breaks). This needs a misbehaving trusted
+   sequencer and is accepted; the backend alerts when `block.timestamp` drifts from wall-clock time.
 
 **Still owed, and here is exactly why.** The force-inclusion window is
 `SequencerInbox.maxTimeVariation()` on the **parent** chain, not a value any L3 precompile

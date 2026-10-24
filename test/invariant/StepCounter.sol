@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// Counts every fuzzed handler call, refused or not, so `InvariantsTest.afterInvariant` can tell
 /// a full campaign run from a shrunk or replayed sequence.

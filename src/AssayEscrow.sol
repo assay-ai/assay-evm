@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -36,8 +36,9 @@ import "./Errors.sol";
 ///
 /// **No role — not the owner, not the admin, not the redeemer — has a door that moves a token to
 /// an address of its choosing**; the owner's only residual power over this money is the upgrade
-/// itself (D-17, `test/NoTokenDoors.t.sol`). There is no `closeEscrow`: closing would reset
-/// `seqHigh` and replay every in-window voucher.
+/// itself (D-17, `test/NoTokenDoors.t.sol`). There is no `closeEscrow`: closing would have to
+/// clear `heldPayments`, the per-seq record that refuses a replay, and so replay every
+/// in-window voucher.
 ///
 /// # What this is a port of
 ///
@@ -86,7 +87,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// compares against a clock is `uint64`.
     struct Escrow {
         uint128 balance; //            slot 0
-        uint64 seqHigh; //              ↑ strictly-increasing high-water mark (state.rs)
+        uint64 seqHigh; //              ↑ highest seq redeemed; the gap cap's anchor (D-23)
         uint64 authNonce; //            ↑ meta-transaction nonce — EVM only
         uint64 maxVoucherAmount; //    slot 1   0 = refuse every redeem (state.rs)
         uint64 maxPerWindow; //         ↑       0 = refuse every redeem (state.rs)
@@ -157,8 +158,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// Caps a payer LOWERED, still honoured until `until` ("signed means collectable"). One slot.
     /// While `now <= until` a voucher passes if it fits the current pair of caps OR this pair,
     /// each pair checked whole ([`_heldRefusal`]), so a voucher that was valid when the payer
-    /// tightened stays redeemable for `TIGHTEN_DELAY` (3,600 s), longer than any voucher lives
-    /// (2,220 s). A delegate's hold never runs past the grant's `validUntil` before the change.
+    /// tightened stays redeemable for `TIGHTEN_DELAY` (10,800 s), longer than any voucher lives
+    /// (7,620 s). A delegate's hold never runs past the grant's `validUntil` before the change.
     /// Raising a cap takes effect at once. Every write emits [`CapsHeld`].
     struct PriorCaps {
         uint64 maxVoucherAmount;
@@ -197,8 +198,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 collectableAt; //      slot 1
     }
 
-    /// `payer → seq → held payment`. A seq is redeemed at most once per payer (`seqHigh`), so a
-    /// record is written at most once. Appended before `__gap`, which shrank by the two slots this
+    /// `payer → seq → held payment`. **The replay rule (D-23)**: a `(payer, seq)` whose record
+    /// is not `None` was redeemed, and records are never deleted, so a seq is redeemed at most
+    /// once per payer, in any order, and a record is written at most once. Appended before `__gap`, which shrank by the two slots this
     /// mapping and [`totalHeld`] take (D-7). `internal` for [`escrowOf`]'s reason: [`held`]
     /// returns the struct.
     mapping(address => mapping(uint64 => HeldPayment)) internal heldPayments;
@@ -293,6 +295,33 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         if (msg.sender != CONFIG.owner()) revert NotOwner();
     }
 
+    // --- shared call sites ------------------------------------------------------------------
+    //
+    // Each external read below has several callers. Under `via_ir` every inline call site
+    // carries its own copy of the call, returndata checks and ABI decoding, so routing them
+    // through one internal function is a size saving only: the same call, with the same
+    // arguments, at the same point of every caller, reverting with the same data.
+
+    /// The one `CONFIG.params()` call site (see the note above).
+    function _params() internal view returns (ParamSet memory) {
+        return CONFIG.params();
+    }
+
+    /// The one `CONFIG.assertActive` call site: the pause and blocklist check of every door.
+    function _assertActive(address a, address b, address c) internal view {
+        CONFIG.assertActive(a, b, c);
+    }
+
+    /// A direct payer decision consumes `authNonce` (D-18); checked, like every counter here.
+    function _bumpAuthNonce(address payer) internal {
+        escrows[payer].authNonce += 1;
+    }
+
+    /// Both halves of [`_pullExact`]'s before/after delta, and no other read (see there).
+    function _assetBalance() internal view returns (uint256) {
+        return ASSET.balanceOf(address(this));
+    }
+
     function escrowOf(address buyer) external view returns (Escrow memory) {
         return escrows[buyer];
     }
@@ -330,7 +359,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// `disputeSlash`, `cancelSlash`, `expireSlash`, and the config roles' own calls. **It never
     /// moves anybody's money**: there is no seize and no sweep, and a paused exit reopens on
     /// unpause with the balance untouched. The same doors refuse a blocked party
-    /// (`AssayConfig.blocked`); both checks are the one `CONFIG.assertActive` call.
+    /// (`AssayConfig.blocked`); both checks are the one `CONFIG.assertActive` call, made through
+    /// [`_assertActive`].
     ///
     /// **This is checks → INTERACTION → effects, and it is not strict CEI. Read this before
     /// copying the shape.** The pull has to happen before the credit, because what is credited is
@@ -346,7 +376,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// before the transfer, with the transfer strictly last, and `nonReentrant` is load-bearing
     /// there in a way it is not here.
     function depositFor(address buyer, uint64 amount) public nonReentrant {
-        CONFIG.assertActive(buyer, msg.sender, address(0));
+        _assertActive(buyer, msg.sender, address(0));
         if (buyer == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount(); // deposit_stake.rs
         _pullExact(msg.sender, amount);
@@ -370,9 +400,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// extensions; here the asset is an opaque upgradeable proxy that could grow a transfer fee
     /// after deployment, so the check has to be made on every transfer instead of once.
     function _pullExact(address from, uint64 amount) internal {
-        uint256 before = ASSET.balanceOf(address(this));
+        uint256 before = _assetBalance();
         ASSET.safeTransferFrom(from, address(this), amount);
-        if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
+        if (_assetBalance() - before != amount) revert TransferAmountMismatch();
     }
 
     /// `deposit_stake.rs` — "Deposits accumulate: a second deposit adds to the first, it
@@ -418,9 +448,10 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// The submitter is pinned to `Config::redeemer` and is consulted
     /// about nothing else: it cannot aim the money anywhere, because the provider comes out of the
-    /// signed voucher and the treasury out of Config. The pin is about `seq` — a redemption
-    /// advances `seqHigh`, so anyone who could land one could void every voucher a buyer had
-    /// already served.
+    /// signed voucher and the treasury out of Config. Since D-23 a redemption voids no other
+    /// voucher (seqs are consumed one by one, in any order), so the pin no longer guards the
+    /// sequence; it stays because the redeemer decides WHEN a served call is charged, which is
+    /// the backend's verdict (D-10).
     ///
     /// **The whole authority over the money is the buyer's authorisation of the EIP-712 voucher**
     /// — its own signature, or a delegate's within the caps the buyer set on chain
@@ -433,9 +464,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// let a Config upgrade mid-transaction hand this function a redeemer from one parameter set
     /// and a treasury from another; `IAssayConfig.params`'s own note makes the same argument.
     function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        _redeem(v, sig, p); // the pause is `_redeem`'s `CONFIG.assertActive` (audit F R7)
+        _redeem(v, sig, p); // the pause is `_redeem`'s `_assertActive` (audit F R7)
     }
 
     /// **Batching returns on EVM, because the constraint that forbade it does not exist here.**
@@ -469,8 +500,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// the replay rule to live, and `test_theBatchDelegatesToTheOneRedeemPathInTheSource` pins the
     /// delegation as source text so the copy cannot appear quietly.
     ///
-    /// `seq` is therefore NOT a batch-wide rule: it is `seq > seqHigh` per escrow, applied item by
-    /// item, so two payers' sequences in one batch constrain each other in no way at all.
+    /// `seq` is therefore NOT a batch-wide rule: it is "this `(payer, seq)` is unused", applied
+    /// item by item (D-23), so the items may come in any order and two payers' sequences
+    /// constrain each other in no way at all.
     ///
     /// `nonReentrant` sits on this external entry point only. [`_redeem`] is internal and must not
     /// carry the modifier — with it, the loop would deadlock on its second item.
@@ -478,9 +510,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         external
         nonReentrant
     {
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        // No pause check here: every item's `CONFIG.assertActive` in `_redeem` refuses
+        // No pause check here: every item's `_assertActive` in `_redeem` refuses
         // `ProgramPaused` (audit F R7), so an empty or malformed batch is diagnosed first.
 
         uint256 n = vs.length;
@@ -505,8 +537,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// **It consumes `authNonce`**, like every payer decision (D-18): a `SetLimitsBySig` signature
     /// the relayer withheld can then never land after this call and undo it.
     function setLimits(uint64 maxVoucherAmount, uint64 maxPerWindow) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
-        escrows[msg.sender].authNonce += 1;
+        _assertActive(msg.sender, address(0), address(0));
+        _bumpAuthNonce(msg.sender);
         _setLimits(msg.sender, maxVoucherAmount, maxPerWindow);
     }
 
@@ -567,7 +599,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
-        CONFIG.assertActive(buyer, address(0), address(0));
+        _assertActive(buyer, address(0), address(0));
         _consumeAuth(
             buyer,
             Voucher712.hashSetLimits(buyer, maxVoucherAmount, maxPerWindow, nonce, deadline),
@@ -584,7 +616,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// The delay is `WITHDRAW_DELAY_SECONDS`, sized by `constants.rs`'s build-time assertion
     /// rather than chosen: every voucher the buyer signed *before* asking for their money back is
-    /// dead before the withdrawal matures (3,600 > 2,220). `initialize` re-states that inequality
+    /// dead before the withdrawal matures (10,800 > 7,620). `initialize` re-states that inequality
     /// because Solidity has no `const _: () = assert!(…)`.
     ///
     /// It does NOT block [`redeemVoucher`], exactly as the Anchor original does not. A voucher
@@ -595,8 +627,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// **It consumes `authNonce`**, like every payer decision (D-18): a withheld
     /// `RequestWithdrawBySig` can then never cancel or restart this request.
     function requestWithdraw(uint64 amount) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
-        escrows[msg.sender].authNonce += 1;
+        _assertActive(msg.sender, address(0), address(0));
+        _bumpAuthNonce(msg.sender);
         _requestWithdraw(msg.sender, amount);
     }
 
@@ -611,7 +643,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
-        CONFIG.assertActive(buyer, address(0), address(0));
+        _assertActive(buyer, address(0), address(0));
         _consumeAuth(
             buyer,
             Voucher712.hashRequestWithdraw(buyer, amount, nonce, deadline),
@@ -640,10 +672,10 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// # The half of the guarantee this delay does NOT buy — a backend obligation
     ///
-    /// `WITHDRAW_DELAY_SECONDS (3,600) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (2,220)` guarantees
+    /// `WITHDRAW_DELAY_SECONDS (10,800) > MAX_VOUCHER_REDEEMABLE_LIFE_SECONDS (7,620)` guarantees
     /// that a voucher signed **before** this call cannot outlive the delay. It says nothing about
     /// one signed after: a voucher signed at `T + 1381` or later is still redeemable past
-    /// `T + 3600`, [`withdraw`] reads no outstanding-voucher state and pays `min(requested,
+    /// `T + 10800`, [`withdraw`] reads no outstanding-voucher state and pays `min(requested,
     /// balance)`, and the redemption then fails [`EscrowInsufficient`] — **after the provider has
     /// served the request.**
     ///
@@ -737,7 +769,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// **`totalFunded` is not touched.** It is the lifetime money-in counter, so a balance that
     /// falls must not move it; `_credit` is its only writer.
     function withdraw() external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         Escrow storage e = escrows[msg.sender];
 
         uint64 requested = e.withdrawRequested;
@@ -825,9 +857,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// payer with no second address to disagree with) and with **one deliberate reordering**:
     ///
     /// **`seq` is checked BEFORE the signature; `redeem_voucher.rs` checks it after.**
-    /// The EVM design specifies it here. It is strictly cheaper — a stale voucher is
-    /// refused without paying for `ecrecover` — and it leaks nothing, because `seqHigh` is public
-    /// state that `escrowOf` already returns to anybody who asks. Recorded in
+    /// The EVM design specifies it here. It is strictly cheaper — a replayed voucher is
+    /// refused without paying for `ecrecover` — and it leaks nothing, because the record is
+    /// public state that `held` already returns to anybody who asks. Recorded in
     /// `docs/divergences.md`.
     ///
     /// **`ProviderBelowMinimumStake` is reinstated** at the Anchor program's position, after the
@@ -849,7 +881,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// callbacks" is a statement about today only.
     ///
     /// A refusal rolls all of it back, exactly as an Anchor `require!` does — so a redemption
-    /// refused for `EscrowInsufficient` leaves `seqHigh` where it was
+    /// refused for `EscrowInsufficient` leaves its seq unused and `seqHigh` where it was
     /// (`tests/escrow.rs::an_underfunded_escrow_refuses_without_consuming_the_sequence`).
     function _redeem(Voucher calldata v, bytes calldata sig, ParamSet memory p) internal {
         // Through [`Cast.toUint64`] like every other narrowing in `src/`, and not because
@@ -877,7 +909,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         //   `v.expiresAt + REDEEM_GRACE_SECONDS` — because of the two checks ABOVE it, and this
         //   one IS an ordering invariant with two legs: the lifetime bound pins
         //   `expiresAt <= issuedAt + 300`, the skew bound pins `issuedAt <= nowTs + 120`, so
-        //   `expiresAt + 1800 <= nowTs + 2220`. Move either of them below this line and a voucher
+        //   `expiresAt + 7200 <= nowTs + 7620`. Move either of them below this line and a voucher
         //   with a large `expiresAt` (leg one) or a large `issuedAt` (leg two) answers
         //   `Panic(0x11)` instead of its named refusal. Both legs are pinned, at exact and
         //   `type(uint64).max` inputs, by `test_boundary_theVoucherClockWindowIsBoundedAtBothEnds`.
@@ -894,14 +926,19 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         }
         if (nowTs > v.expiresAt + Constants.REDEEM_GRACE_SECONDS) revert VoucherExpired();
 
-        // `state.rs::admit_seq`. Strictly increasing, gaps allowed: exactly
-        // one redemption per `(buyer, seq)` as a fact of the chain, with one `uint64` and no
-        // bitmap. Moved above the signature by design — see the note above.
+        // D-23, replacing `state.rs::admit_seq`'s strictly increasing `seq_high`: exactly one
+        // redemption per `(buyer, seq)`, in ANY order, read off the record this redemption is
+        // about to write anyway (so the read also warms the slot the effects below store into).
+        // A lower seq landing after a higher one is no longer lost. Moved above the signature by
+        // design — see the note above.
         Escrow storage e = escrows[v.payer];
         if (v.seq == 0) revert VoucherSeqZero();
-        if (v.seq <= e.seqHigh) revert VoucherSeqNotIncreasing();
-        // D-17: the jump cap. `v.seq > e.seqHigh` was just checked, so the difference cannot wrap.
-        if (v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) revert VoucherSeqGapTooLarge();
+        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();
+        // D-17: the jump cap, now only on a seq above the high-water mark; the guard is what
+        // keeps the subtraction from wrapping.
+        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {
+            revert VoucherSeqGapTooLarge();
+        }
 
         // `redeem_voucher.rs`, widened for delegation. [`_voucherAuthority`] is the whole
         // authority over the money: the payer's key, or a delegate the payer authorised. It
@@ -912,7 +949,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         // The pause and the blocklist — payer, payee and (when there is one) the delegate that
         // signed. Here and not at the entry point because the delegate is only known once the
         // signature has been recovered; this is the redeem paths' only pause check (audit F R7).
-        CONFIG.assertActive(v.payer, v.provider, delegate);
+        _assertActive(v.payer, v.provider, delegate);
 
         // `state.rs::admit_spend`. A limit of `0` refuses everything, so an
         // unarmed escrow needs no separate branch. A voucher passes if it fits the current pair
@@ -950,8 +987,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         }
 
         // `redeem_voucher.rs` — being paid is the counterpart of being slashable.
-        // `bonded` only: stake already asked back is not backing anybody's traffic.
-        if (STAKE.bondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
+        // `bonded` only: stake already asked back is not backing anybody's traffic. And FREE
+        // bonded only (D-26): stake reserved by standing slash records is not backing it either.
+        if (STAKE.freeBondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
 
         // `redeem_voucher.rs`. Its job is the DIAGNOSIS: without it `e.balance -=` still
         // refuses, but as `Panic(0x11)`, which is not what an operator needs to read.
@@ -962,7 +1000,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 collectableAt = nowTs + CONFIG.collectHoldSeconds();
 
         // --- effects -------------------------------------------------------------------------
-        e.seqHigh = v.seq;
+        if (v.seq > e.seqHigh) e.seqHigh = v.seq;
         e.balance -= v.amount;
         // The truncation is unreachable — `spent` is at most an effective `maxPerWindow`, checked
         // above, and every cap is a `uint64`. It goes through [`Cast.toUint64`] anyway, and it is
@@ -1031,7 +1069,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// Effects strictly before interactions, under `nonReentrant`, as on [`_redeem`].
     function collectHeld(address payer, uint64 seq) external nonReentrant {
-        _collectHeld(payer, seq, CONFIG.params());
+        _collectHeld(payer, seq, _params());
     }
 
     /// [`collectHeld`] over many records, **atomically**, like [`redeemVoucherBatch`]: one bad
@@ -1042,7 +1080,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         nonReentrant
     {
         _assertBatch(payers.length, seqs.length);
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         for (uint256 i = 0; i < payers.length; ++i) {
             _collectHeld(payers[i], seqs[i], p);
         }
@@ -1060,7 +1098,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// It transfers no token and is not pause-gated: it only moves held money back to a balance
     /// that every exit door still guards.
     function refundHeld(address payer, uint64 seq) external nonReentrant {
-        if (msg.sender != CONFIG.params().redeemer) revert NotRedeemer();
+        if (msg.sender != _params().redeemer) revert NotRedeemer();
         _refundHeld(payer, seq);
     }
 
@@ -1070,7 +1108,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         nonReentrant
     {
         _assertBatch(payers.length, seqs.length);
-        if (msg.sender != CONFIG.params().redeemer) revert NotRedeemer();
+        if (msg.sender != _params().redeemer) revert NotRedeemer();
         for (uint256 i = 0; i < payers.length; ++i) {
             _refundHeld(payers[i], seqs[i]);
         }
@@ -1093,7 +1131,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         if (msg.sender != p.redeemer) opensAt += Constants.HELD_TIMEOUT_SECONDS;
         if (block.timestamp < opensAt) revert HeldNotYetCollectable();
         address provider = h.provider;
-        CONFIG.assertActive(payer, provider, address(0));
+        _assertActive(payer, provider, address(0));
 
         // --- effects -------------------------------------------------------------------------
         uint64 amount = h.amount;
@@ -1367,8 +1405,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 maxPerWindow,
         uint64 validUntil
     ) external nonReentrant {
-        CONFIG.assertActive(msg.sender, delegate, address(0));
-        escrows[msg.sender].authNonce += 1;
+        _assertActive(msg.sender, delegate, address(0));
+        _bumpAuthNonce(msg.sender);
         _authorizeDelegate(msg.sender, delegate, maxVoucherAmount, maxPerWindow, validUntil);
     }
 
@@ -1386,7 +1424,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
-        CONFIG.assertActive(payer, delegate, address(0));
+        _assertActive(payer, delegate, address(0));
         _consumeAuth(
             payer,
             Voucher712.hashAuthorizeDelegate(
@@ -1405,7 +1443,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// within the caps in force now — as a withdrawal request waits out the vouchers signed
     /// before it. Consumes `authNonce` (see [`authorizeDelegate`]).
     function revokeDelegate(address delegate) external nonReentrant {
-        escrows[msg.sender].authNonce += 1;
+        _bumpAuthNonce(msg.sender);
         _revokeDelegate(msg.sender, delegate);
     }
 

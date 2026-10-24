@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
@@ -227,7 +227,7 @@ contract AssayStakeDisputeTest is Fixture {
     }
 
     /// Upholding does not lift either cap or the verifier re-check.
-    function test_upholdThenExecuteStillAppliesTheCapsAndTheKeyCheck() public {
+    function test_upholdThenExecuteStillMetersTheProviderWindowAndTheKeyCheck() public {
         _propose(ID);
         _propose(bytes32("d2"));
         _dispute(ID);
@@ -239,27 +239,18 @@ contract AssayStakeDisputeTest is Fixture {
         // F2: the ruling does not pull execution before the frozen executableAt.
         vm.warp(stake.slashRecordOf(ID).executableAt);
 
-        // The key's daily cap, read live at execution, now sits below the reservation (the
-        // penalty ceiling comes down with it: audit C7 keeps penaltyAmount <= verifierDailyCap).
-        // All or wait (D-20): a 1 USDG record can never fit a 0.4 USDG key-day, so it waits —
-        // to the last instant of its grace — and then expires unpaid.
-        ParamSet memory p = config.params();
-        p.penaltyAmount = 200_000; // G-1: cap >= 2 * penalty
-        p.verifierDailyCap = 400_000;
-        vm.prank(admin);
-        config.updateConfig(p);
-
-        vm.expectRevert(SlashWindowNotDrained.selector);
+        // The upheld record executes through the ordinary door: whole, and metered against the
+        // provider's rolling window like any other (the uphold lifted no cap).
         stake.executeSlash(ID);
-        assertEq(stake.slashRecordOf(ID).applied, 0, "the uphold lifted no cap");
+        assertEq(stake.slashRecordOf(ID).applied, 1_000_000, "paid whole");
+        assertEq(stake.stakeOf(provider).slashedInWindow, 1_000_000, "and metered");
 
-        // And the key re-check: revoked after the ruling, neither can ever pay.
+        // And the key re-check: revoked after the ruling, the other can never pay.
         vm.prank(admin);
         config.revokeVerifier(verifierAddr);
         vm.expectRevert(VerifierRevoked.selector);
         stake.executeSlash(bytes32("d2"));
         stake.expireSlash(bytes32("d2"));
-        stake.expireSlash(ID);
         assertEq(stake.stakeOf(provider).pendingSlash, 0);
     }
 
@@ -518,17 +509,17 @@ contract AssayStakeDisputeTest is Fixture {
         assertEq(oldExecutableAt, uint64(block.timestamp) + Constants.SLASH_DELAY_SECONDS);
 
         vm.prank(admin);
-        config.setSlashDelay(Constants.MIN_SLASH_DELAY_SECONDS);
+        config.setSlashDelay(Constants.MIN_SLASH_DELAY_SECONDS_TESTNET);
 
         assertEq(stake.slashRecordOf(ID).executableAt, oldExecutableAt, "frozen at proposal");
         _propose(bytes32("d2"));
         assertEq(
             stake.slashRecordOf(bytes32("d2")).executableAt,
-            uint64(block.timestamp) + Constants.MIN_SLASH_DELAY_SECONDS
+            uint64(block.timestamp) + Constants.MIN_SLASH_DELAY_SECONDS_TESTNET
         );
 
         // The short delay is the short dispute window.
-        vm.warp(block.timestamp + Constants.MIN_SLASH_DELAY_SECONDS);
+        vm.warp(block.timestamp + Constants.MIN_SLASH_DELAY_SECONDS_TESTNET);
         vm.prank(provider);
         vm.expectRevert(DisputeWindowClosed.selector);
         stake.disputeSlash(bytes32("d2"));

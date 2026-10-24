@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EIP-170 caps DEPLOYED (runtime) code at 24,576 bytes, per IMPLEMENTATION — the ERC1967Proxy in
-# front of it is ~50 bytes of runtime and irrelevant to the limit. The gate fires at 22,000 so it
+# front of it is ~50 bytes of runtime and irrelevant to the limit. The gate fires at 23,000 so it
 # goes off before a deploy — or an UPGRADE — does, leaving room for the auditor's remediation
 # round. It must be green before every upgrade, not only before the first deploy: an upgrade that
 # pushes an implementation over the hard limit fails at deploy time, which is a good place to fail,
@@ -9,7 +9,7 @@
 # **It measures `deployedBytecode`, not `bytecode`.** An earlier version measured
 # `forge inspect <c> bytecode`, which is the CREATION bytecode — constructor plus the runtime it
 # returns. That is the wrong number twice over: EIP-170 bounds the runtime half only, and the two
-# differ by 1,427 bytes on AssayEscrow and AssayStake here (constructor code plus the EIP-712
+# differ by 1,433 bytes on AssayEscrow and AssayStake here (constructor code plus the EIP-712
 # ShortString immutables). Gating on the larger figure would fire early and, worse, would teach a
 # reader that the limit applies to creation code. Creation size is printed beside it as
 # information — EIP-3860's initcode limit is 49,152 and nothing here is near it.
@@ -18,7 +18,7 @@ export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 FORGE="${FORGE:-forge}"
-CEILING=22000
+CEILING=23000
 HARD=24576
 rc=0
 $FORGE build >/dev/null

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
@@ -235,7 +235,7 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
     /// a 100% slash cap is not a cap.
     ///
     /// `penaltyAmount` has no bound of its own: `0` is on-chain shadow mode.
-    /// Its only ceiling is the cross-check against `verifierDailyCap` below (audit C7).
+    /// Its only ceiling is the provider-day cross-check against `minimumStake` below.
     ///
     /// Parameters only. The role table (the redeemer is not the arbiter) is
     /// [`_assertRolesDistinct`]'s, and the slash delay is no longer coupled to the unbonding
@@ -272,13 +272,13 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         ) {
             revert InvalidMinimumStake();
         }
+        // `verifierDailyCap` is not read on chain since D-25 (`executeSlash` meters only the
+        // provider's window). The field stays in `ParamSet` for ABI and layout stability; the
+        // backend only displays it and enforces no per-key budget with it. A stolen verifier key
+        // is bounded by `revokeVerifier` within the slash delay (D-25). A zero is still refused
+        // as a misconfiguration. Its old `>= 2 * penaltyAmount` bound (audit G G-1) protected
+        // the on-chain key window and went with it.
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
-        // At least two maximal judgements must fit in one key-day (audit G G-1): with all or
-        // wait, a cap of one penalty lets a single record fill the day and crowd out the next.
-        // `uint256`, so a large `penaltyAmount` cannot overflow the doubling.
-        if (uint256(p.verifierDailyCap) < 2 * uint256(p.penaltyAmount)) {
-            revert InvalidVerifierDailyCap();
-        }
     }
 
     // -------------------------------------------------------------------------------------
@@ -296,9 +296,9 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
     ///   is that place. Storing it would cost a slot per key to serve a query `eth_getLogs`
     ///   already answers.
     /// - `slashed_in_window` / `slash_window_started_at` — **the per-key rolling daily cap, which
-    ///   lives in AssayStake** (D-3). It is a consequence of slashing, and putting it here
-    ///   would hand AssayStake write authority over this contract, which is the one property the
-    ///   three-contract split exists to deny. Its absence is the design, not an omission.
+    ///   is not enforced on chain at all** (D-25): a key-wide window was a shared resource one
+    ///   party could fill to make every other provider's slash expire. It never lived here
+    ///   either way (D-3): AssayStake must not have write authority over this contract.
     ///
     /// The two booleans are `state.rs`'s `status` plus the account existence Anchor gets for
     /// free, and **both are load-bearing**: `registered` is what makes enrolment one-shot, and
@@ -532,21 +532,32 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
     /// window. A record already proposed keeps the `executableAt` frozen into it.
     ///
     /// Reads back as `Constants.SLASH_DELAY_SECONDS` until set, so an upgraded proxy keeps 72
-    /// hours with no initializer call.
+    /// hours with no initializer call. Never below [`minSlashDelaySeconds`], so a value stored
+    /// before the floor existed (or on another chain id) cannot outlive it.
     function slashDelaySeconds() public view override returns (uint64) {
         uint64 d = _slashDelaySeconds;
-        return d == 0 ? Constants.SLASH_DELAY_SECONDS : d;
+        if (d == 0) return Constants.SLASH_DELAY_SECONDS;
+        uint64 floor = minSlashDelaySeconds();
+        return d < floor ? floor : d;
     }
 
-    /// Fixed bounds, `[MIN_SLASH_DELAY_SECONDS, MAX_SLASH_DELAY_SECONDS]` (10 min to 22 days),
+    /// D-23: 48 hours on every chain but the test chains, where it is ten minutes.
+    function minSlashDelaySeconds() public view override returns (uint64) {
+        return block.chainid == Constants.ROBINHOOD_TESTNET_CHAIN_ID
+            || block.chainid == Constants.LOCAL_CHAIN_ID
+            ? Constants.MIN_SLASH_DELAY_SECONDS_TESTNET
+            : Constants.MIN_SLASH_DELAY_SECONDS;
+    }
+
+    /// Fixed bounds, `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (48 h, or 10 min on a
+    /// test chain, to 22 days),
     /// independent of the unbonding period (audit F R3): once proposed, a penalty is held by
     /// `pendingSlash` and no unbonding exit can take it, however long the delay
     /// (`test_longDelayShortUnbondingCannotBeOutrun`).
     function setSlashDelay(uint64 newDelay) external onlyAdmin {
-        if (
-            newDelay < Constants.MIN_SLASH_DELAY_SECONDS
-                || newDelay > Constants.MAX_SLASH_DELAY_SECONDS
-        ) revert InvalidSlashDelay();
+        if (newDelay < minSlashDelaySeconds() || newDelay > Constants.MAX_SLASH_DELAY_SECONDS) {
+            revert InvalidSlashDelay();
+        }
         emit SlashDelaySet(slashDelaySeconds(), newDelay);
         _slashDelaySeconds = newDelay;
     }

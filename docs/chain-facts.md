@@ -261,6 +261,13 @@ The deterministic CREATE2 deployer (`0x4e59b448…`) and Multicall3 are both liv
 3. Confirm `decimals()` is **6**. If it is anything else, **stop** — the 1:1 USD peg
    mapping and the `uint64` amount width both rest on that number, and the correct
    response is to re-open the design, not to widen a type.
+4. **Measure the force-inclusion window** (review 2026-10-23 L-4): `maxTimeVariation()` on the
+   `SequencerInbox` of Robinhood's parent chain, recorded here and in the runbook §8. The 48 h
+   slash-delay floor (D-23) assumes `delaySeconds` is at most 24 h; if it is longer, raise the
+   floor before the mainnet deploy.
+5. **Sequencer clock drift** is not measured either: Arbitrum lets a sequencer stamp blocks up to
+   1 h ahead of real time, which is more than D-24's 3,180 s margin (10,800 − 7,620). Accepted as
+   a trusted-sequencer assumption; the backend alerts on `block.timestamp` drift.
 
 ---
 

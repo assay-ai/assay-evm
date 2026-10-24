@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 /// The EIP-712 voucher. Eight fields, binding strictly more than the Solana 239-byte layout:
 /// the domain tag becomes `name`+`version`, the program id becomes `verifyingContract`, and

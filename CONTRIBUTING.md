@@ -20,7 +20,7 @@ What is welcome:
 You may read, build and test the code for noncommercial purposes under the licence.
 
 Requirements: [Foundry](https://book.getfoundry.sh/getting-started/installation) (developed with
-forge 1.2.1-nightly; solc 0.8.24 is pinned in `foundry.toml`). Dependencies are vendored under
+forge 1.2.1-nightly; solc 0.8.38 is pinned in `foundry.toml`). Dependencies are vendored under
 `lib/`.
 
 ```sh

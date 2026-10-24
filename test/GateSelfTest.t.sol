@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 
@@ -11,8 +11,8 @@ import {Test} from "forge-std/Test.sol";
 /// the same reason.
 contract GateSelfTest is Test {
     /// EIP-170 bounds RUNTIME bytecode. The first version of `check-sizes.sh` was written from
-    /// measured CREATION bytecode, and the two differ by 1,427 bytes on both money contracts here —
-    /// so a gate on creation bytecode is 1,427 bytes stricter than the rule it names, on the two
+    /// measured CREATION bytecode, and the two differ by 1,433 bytes on both money contracts here —
+    /// so a gate on creation bytecode is 1,433 bytes stricter than the rule it names, on the two
     /// contracts closest to the limit. It measures `deployedBytecode` today; this is what stops it
     /// drifting back.
     ///

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
-pragma solidity 0.8.24;
+pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 import {Fixture} from "../../helpers/Fixture.sol";
@@ -12,6 +12,7 @@ import {Constants} from "../../../src/Constants.sol";
 import {
     SlashAttestation, ResponseClass, SlashStatus, ParamSet, Voucher
 } from "../../../src/Types.sol";
+import {PenaltyTooSmallToSplit} from "../../../src/Errors.sol";
 
 /// Library wrappers so a revert inside the library is observable as a revert of a call.
 contract LibProbe {
@@ -174,6 +175,13 @@ contract AuditDSlashEdgesTest is Fixture {
         uint256 capAllowance = (uint256(bond) * cap) / 10_000;
         if (capAllowance == 0) {
             vm.expectRevert();
+            stake.proposeSlash(a, sig);
+            return;
+        }
+        // Review 2026-10-23 L-1: a reservation the split cannot divide is refused at proposal.
+        uint64 want = penalty < capAllowance ? penalty : uint64(capAllowance);
+        if (Fee.bpsOf(want, agent) == 0 || (plat != 0 && Fee.bpsOf(want, plat) == 0)) {
+            vm.expectRevert(PenaltyTooSmallToSplit.selector);
             stake.proposeSlash(a, sig);
             return;
         }
