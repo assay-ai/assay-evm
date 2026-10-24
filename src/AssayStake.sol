@@ -149,6 +149,11 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         CONFIG.assertCanSign(verifier);
     }
 
+    /// Both halves of `depositStakeFor`'s before/after delta, and no other read.
+    function _assetBalance() internal view returns (uint256) {
+        return ASSET.balanceOf(address(this));
+    }
+
     function stakeOf(address provider) external view returns (ProviderStake memory) {
         return stakes[provider];
     }
@@ -231,9 +236,9 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         if (provider == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 before = ASSET.balanceOf(address(this));
+        uint256 before = _assetBalance();
         ASSET.safeTransferFrom(msg.sender, address(this), amount);
-        if (ASSET.balanceOf(address(this)) - before != amount) revert TransferAmountMismatch();
+        if (_assetBalance() - before != amount) revert TransferAmountMismatch();
 
         ProviderStake storage s = stakes[provider];
         // Deposits accumulate: a second deposit adds to the first (deposit_stake.rs).
