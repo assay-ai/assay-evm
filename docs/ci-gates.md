@@ -145,10 +145,13 @@ would make the gate compare against the wrong commit.
 
 EIP-170, per implementation, gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
 0.8.38, `via_ir`, 200 runs): AssayConfig 7,405 · AssayEscrow 20,312 · AssayStake 13,759 (runtime
-bytes, CBOR metadata included). Down from 22,598 and 15,159 by routing each repeated external read
-of Config (`params`, `assertActive`, `paused`, `assertCanSign`) and of the asset (`balanceOf`)
-through one internal call site per contract: under `via_ir` every inline external call carries
-its own copy of the call, returndata checks and ABI decoding.
+bytes, CBOR metadata included). Down from 22,598 and 15,159 by routing each repeated external call
+to Config (the reads `params` and `paused`, the reverting checks `assertActive` and
+`assertCanSign`) and to the asset (`balanceOf`) through one internal call site per contract: under
+`via_ir` every inline external call carries its own copy of the call, returndata checks and ABI
+decoding. AssayEscrow also shares the direct doors' `authNonce` increment, a storage write, through
+one internal function (41 bytes). The free-stake read of the redeem gate (`freeBondedOf`, D-26) has
+a single call site and is left inline.
 
 **Why 23,000 (raised from 22,000 on 2026-10-24, owner decision).** AssayEscrow grew to 21,752 bytes
 through D-20 to D-22, +194 with D-23, and +652 from the compiler move to 0.8.38 (SOL-2026-7); lower

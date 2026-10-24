@@ -31,10 +31,10 @@ import "./Errors.sol";
 /// **Pause closes the deposit and exit half too, since the dispute upgrade** — a deliberate
 /// reversal, by the owner's decision, of the earlier rule (and of `withdraw_stake.rs`)
 /// that owner exits are never paused. `depositStake(For)`, `requestUnstake` and `withdrawStake`
-/// call `CONFIG.assertActive`, which refuses while paused and refuses a blocked provider (or
-/// funder). What stays open while paused is what only releases or freezes a hold:
-/// `disputeSlash`, `cancelSlash`, `expireSlash`, and `upholdSlash` (which moves no money). The
-/// pause still moves nobody's funds anywhere; there is no seize and no sweep.
+/// call `CONFIG.assertActive` (through `_assertActive`), which refuses while paused and refuses a
+/// blocked provider (or funder). What stays open while paused is what only releases or freezes a
+/// hold: `disputeSlash`, `cancelSlash`, `expireSlash`, and `upholdSlash` (which moves no money).
+/// The pause still moves nobody's funds anywhere; there is no seize and no sweep.
 contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -389,9 +389,9 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     ///
     /// **Permissionless to SUBMIT: the authority is the signature, not the sender.** On Solana
     /// the `VerifierKey` PDA is passed and `require_signed_by` proves that key signed. Here
-    /// `Sig.recover` yields the signer and `CONFIG.assertCanSign` decides whether that address
-    /// may judge — one fewer parameter, one fewer place for the caller to point at the wrong
-    /// account, and the same property.
+    /// `Sig.recover` yields the signer and `CONFIG.assertCanSign` (via `_assertCanSign`) decides
+    /// whether that address may judge — one fewer parameter, one fewer place for the caller to
+    /// point at the wrong account, and the same property.
     ///
     /// **The replay lock.** `slashRecords[requestId].status != None` is the EVM counterpart of
     /// the Anchor `init` on a PDA seeded by the signed `request_id`: a captured attestation can
@@ -546,7 +546,8 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// judgement, its beneficiary and its amount were all fixed at proposal, and every one of
     /// them is read from the record rather than from the caller.
     ///
-    /// **THE CRUX OF THE WHOLE TWO-PHASE DESIGN is `CONFIG.assertCanSign(rec.verifier)`.** A key
+    /// **THE CRUX OF THE WHOLE TWO-PHASE DESIGN is `CONFIG.assertCanSign(rec.verifier)`**, made
+    /// through the one call site `_assertCanSign`. A key
     /// revoked or expired inside the window can never pay, so `revokeVerifier` reaches backwards
     /// into every judgement that key already signed, and [`expireSlash`] then releases the
     /// collateral. That is what turns revocation from a stop into a cleanup.

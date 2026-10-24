@@ -359,7 +359,8 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// `disputeSlash`, `cancelSlash`, `expireSlash`, and the config roles' own calls. **It never
     /// moves anybody's money**: there is no seize and no sweep, and a paused exit reopens on
     /// unpause with the balance untouched. The same doors refuse a blocked party
-    /// (`AssayConfig.blocked`); both checks are the one `CONFIG.assertActive` call.
+    /// (`AssayConfig.blocked`); both checks are the one `CONFIG.assertActive` call, made through
+    /// [`_assertActive`].
     ///
     /// **This is checks → INTERACTION → effects, and it is not strict CEI. Read this before
     /// copying the shape.** The pull has to happen before the credit, because what is credited is
@@ -465,7 +466,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
         ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        _redeem(v, sig, p); // the pause is `_redeem`'s `CONFIG.assertActive` (audit F R7)
+        _redeem(v, sig, p); // the pause is `_redeem`'s `_assertActive` (audit F R7)
     }
 
     /// **Batching returns on EVM, because the constraint that forbade it does not exist here.**
@@ -511,7 +512,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     {
         ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        // No pause check here: every item's `CONFIG.assertActive` in `_redeem` refuses
+        // No pause check here: every item's `_assertActive` in `_redeem` refuses
         // `ProgramPaused` (audit F R7), so an empty or malformed batch is diagnosed first.
 
         uint256 n = vs.length;
