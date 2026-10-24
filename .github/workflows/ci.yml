@@ -22,10 +22,22 @@ jobs:
 
       # The gas figures and the bytecode pins are measured with exactly this forge build
       # (`forge --version` prints 1.2.1-nightly, commit 7e68208e…). The tag v1.2.1 is a DIFFERENT
-      # commit, so the nightly is pinned by name.
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: nightly-7e68208eaae86342998f4a713d27a538ce5a3fbb
+      # commit, so the nightly is pinned by name. foundryup now refuses releases without a
+      # Sigstore attestation, which this older nightly lacks, so the tarball is downloaded
+      # directly and pinned by its SHA-256 instead.
+      - name: Install forge (pinned nightly, SHA-256 checked)
+        env:
+          FOUNDRY_TAG: nightly-7e68208eaae86342998f4a713d27a538ce5a3fbb
+          FOUNDRY_SHA256: c42bf9f806229accce470efd9448fc0b5693f4e02de4a95b3d7b05296cecb60e
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/foundry.tgz \
+            "https://github.com/foundry-rs/foundry/releases/download/${FOUNDRY_TAG}/foundry_nightly_linux_amd64.tar.gz"
+          echo "${FOUNDRY_SHA256}  /tmp/foundry.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.foundry/bin"
+          tar -xzf /tmp/foundry.tgz -C "$HOME/.foundry/bin"
+          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
+          "$HOME/.foundry/bin/forge" --version
 
       - name: Format check
         run: forge fmt --check
