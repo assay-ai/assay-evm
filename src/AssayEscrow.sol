@@ -307,6 +307,11 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         return CONFIG.params();
     }
 
+    /// The one `CONFIG.assertActive` call site: the pause and blocklist check of every door.
+    function _assertActive(address a, address b, address c) internal view {
+        CONFIG.assertActive(a, b, c);
+    }
+
     function escrowOf(address buyer) external view returns (Escrow memory) {
         return escrows[buyer];
     }
@@ -360,7 +365,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// before the transfer, with the transfer strictly last, and `nonReentrant` is load-bearing
     /// there in a way it is not here.
     function depositFor(address buyer, uint64 amount) public nonReentrant {
-        CONFIG.assertActive(buyer, msg.sender, address(0));
+        _assertActive(buyer, msg.sender, address(0));
         if (buyer == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount(); // deposit_stake.rs
         _pullExact(msg.sender, amount);
@@ -521,7 +526,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// **It consumes `authNonce`**, like every payer decision (D-18): a `SetLimitsBySig` signature
     /// the relayer withheld can then never land after this call and undo it.
     function setLimits(uint64 maxVoucherAmount, uint64 maxPerWindow) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         escrows[msg.sender].authNonce += 1;
         _setLimits(msg.sender, maxVoucherAmount, maxPerWindow);
     }
@@ -583,7 +588,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
-        CONFIG.assertActive(buyer, address(0), address(0));
+        _assertActive(buyer, address(0), address(0));
         _consumeAuth(
             buyer,
             Voucher712.hashSetLimits(buyer, maxVoucherAmount, maxPerWindow, nonce, deadline),
@@ -611,7 +616,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// **It consumes `authNonce`**, like every payer decision (D-18): a withheld
     /// `RequestWithdrawBySig` can then never cancel or restart this request.
     function requestWithdraw(uint64 amount) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         escrows[msg.sender].authNonce += 1;
         _requestWithdraw(msg.sender, amount);
     }
@@ -627,7 +632,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
-        CONFIG.assertActive(buyer, address(0), address(0));
+        _assertActive(buyer, address(0), address(0));
         _consumeAuth(
             buyer,
             Voucher712.hashRequestWithdraw(buyer, amount, nonce, deadline),
@@ -753,7 +758,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// **`totalFunded` is not touched.** It is the lifetime money-in counter, so a balance that
     /// falls must not move it; `_credit` is its only writer.
     function withdraw() external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         Escrow storage e = escrows[msg.sender];
 
         uint64 requested = e.withdrawRequested;
@@ -933,7 +938,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         // The pause and the blocklist — payer, payee and (when there is one) the delegate that
         // signed. Here and not at the entry point because the delegate is only known once the
         // signature has been recovered; this is the redeem paths' only pause check (audit F R7).
-        CONFIG.assertActive(v.payer, v.provider, delegate);
+        _assertActive(v.payer, v.provider, delegate);
 
         // `state.rs::admit_spend`. A limit of `0` refuses everything, so an
         // unarmed escrow needs no separate branch. A voucher passes if it fits the current pair
@@ -1115,7 +1120,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         if (msg.sender != p.redeemer) opensAt += Constants.HELD_TIMEOUT_SECONDS;
         if (block.timestamp < opensAt) revert HeldNotYetCollectable();
         address provider = h.provider;
-        CONFIG.assertActive(payer, provider, address(0));
+        _assertActive(payer, provider, address(0));
 
         // --- effects -------------------------------------------------------------------------
         uint64 amount = h.amount;
@@ -1389,7 +1394,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 maxPerWindow,
         uint64 validUntil
     ) external nonReentrant {
-        CONFIG.assertActive(msg.sender, delegate, address(0));
+        _assertActive(msg.sender, delegate, address(0));
         escrows[msg.sender].authNonce += 1;
         _authorizeDelegate(msg.sender, delegate, maxVoucherAmount, maxPerWindow, validUntil);
     }
@@ -1408,7 +1413,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 deadline,
         bytes calldata sig
     ) external nonReentrant {
-        CONFIG.assertActive(payer, delegate, address(0));
+        _assertActive(payer, delegate, address(0));
         _consumeAuth(
             payer,
             Voucher712.hashAuthorizeDelegate(
