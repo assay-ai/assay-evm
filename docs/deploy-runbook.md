@@ -500,8 +500,10 @@ halt outlasts the 2-hour redeem grace, so work through these steps without pausi
    only records from other keys, `freeBondedOf(provider) >= minimumStake`, and the redeemer's next
    redemptions to it land. Check that the backend's slash hold has lifted for those providers.
 4. **Rotate.** Generate a new key, enrol it with `registerVerifier` (§6.4) and switch the backend's
-   signer to it. Honest records the stolen key had in flight were released with the rest; re-judge
-   them under the new key from the backend's own evidence (new request ids).
+   signer to it. Honest records the stolen key had in flight were released with the rest and their
+   request ids are spent; the backend does not re-judge them automatically (re-signing from a
+   database that may be the compromised part is unsafe). List them from the backend, record them in
+   the incident write-up, and decide any remedy for their buyers by hand, off chain.
 
 ### 6.3 Changing the owner or the admin (D-17)
 
