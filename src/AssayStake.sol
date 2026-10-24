@@ -130,9 +130,25 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// so clamping is correct and truncation would be a silent under-report. The `Cast` after
     /// the clamp can never revert — that is the point of the clamp — and it is written anyway
     /// under `Cast`'s no-exceptions rule.
-    function bondedOf(address provider) external view override returns (uint64) {
+    function bondedOf(address provider) external view returns (uint64) {
         uint128 b = stakes[provider].bonded;
         return b > type(uint64).max ? type(uint64).max : Cast.toUint64(b);
+    }
+
+    /// The bonded stake no standing slash record has reserved: `bonded - pendingSlash`, floored
+    /// at zero, saturated like [`bondedOf`]. This is what the escrow's redeem gate reads (D-26):
+    /// stake held back by `Pending` or `Disputed` records is not backing new traffic, so a
+    /// provider cannot freeze its stake with records it disputes itself and keep being paid.
+    ///
+    /// `pendingSlash` is reserved against `atRisk = bonded + unbonding`, and a withdrawal must
+    /// leave it covered, so once the unbonding has left it sits entirely on `bonded`. Charging it
+    /// all to `bonded` now is the conservative reading of where it will end up.
+    function freeBondedOf(address provider) external view override returns (uint64) {
+        ProviderStake storage s = stakes[provider];
+        uint128 b = s.bonded;
+        uint128 pending = s.pendingSlash;
+        uint128 free = b > pending ? b - pending : 0;
+        return free > type(uint64).max ? type(uint64).max : Cast.toUint64(free);
     }
 
     function DOMAIN_SEPARATOR() external view returns (bytes32) {
@@ -406,8 +422,13 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         uint128 free = atRisk - s.pendingSlash;
         uint64 reserved = a.penalty;
         if (reserved > capAllowance) reserved = capAllowance;
-        if (reserved > free) reserved = Cast.toUint64(free);
-        if (reserved == 0) revert NothingToSlash();
+        // All or nothing against `free` (D-26): a judgement the provider's free stake cannot
+        // cover in full is refused, not written short. A short record would spend the
+        // `requestId` for less than the cap allows; refused, the attestation stays unconsumed
+        // and can be proposed again once other records release their reservations. The
+        // `capAllowance` cut above is the ceiling itself and stays. `reserved >= 1` here (a zero
+        // penalty is `ZeroAmount`, a zero ceiling `SlashCapExceeded`), so `free == 0` lands here.
+        if (reserved > free) revert NothingToSlash();
         // A reservation the current split cannot divide is refused here (review 2026-10-23 L-1):
         // written, it could never execute (`PenaltyTooSmallToSplit`), would expire, and would
         // burn the `requestId` for good. The agent share must be non-zero, and so must the

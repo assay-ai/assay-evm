@@ -254,16 +254,17 @@ contract AssayStakeSlashTest is Fixture {
         assertEq(stake.stakeOf(thin).pendingSlash, 500_000);
     }
 
-    /// `reserved = min(penalty, capAllowance, atRisk - pendingSlash)`, and this is the third
-    /// term binding: three judgements against a provider whose free balance runs out under the
-    /// last one. Reservations stack up to the whole stake and no further — `propose_slash.rs`'s
-    /// "a leaked key can freeze a provider's exit … it cannot take it".
+    /// `reserved = min(penalty, capAllowance)`, and it must fit in `atRisk - pendingSlash` WHOLE
+    /// (D-26): three judgements against a provider whose free balance runs short under the last
+    /// one. The third is refused rather than written short, so its `requestId` is not spent for
+    /// less than the ceiling allows; once a standing record releases its reservation, the SAME
+    /// attestation lands in full. Reservations still stack up to the whole stake and no further.
     ///
     /// The cap is raised to its MAXIMUM first, because at the fixture's 1,000 bps the ceiling is
     /// exactly a tenth of `atRisk` and the free term can then only ever EQUAL it, never fall
-    /// below it — an arrangement in which this clamp is unreachable and the test would prove
+    /// below it — an arrangement in which this refusal is unreachable and the test would prove
     /// nothing.
-    function test_theFreeBalanceClampsAReservationTheCapWouldHaveAllowed() public {
+    function test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut() public {
         ParamSet memory p = config.params();
         p.slashCapBps = Constants.MAX_SLASH_CAP_BPS; // 5,000 — half of atRisk
         vm.prank(admin);
@@ -272,23 +273,27 @@ contract AssayStakeSlashTest is Fixture {
         address thin = address(0x7417);
         _stakeFor(thin, 2_500_000);
 
+        SlashAttestation[3] memory as_;
         bytes32[3] memory ids = [bytes32("f1"), bytes32("f2"), bytes32("f3")];
         for (uint256 i = 0; i < 3; i++) {
-            SlashAttestation memory a = _att(ids[i], 1_000_000);
-            a.provider = thin;
-            stake.proposeSlash(a, _sign(a, verifierKeyPk));
+            as_[i] = _att(ids[i], 1_000_000);
+            as_[i].provider = thin;
         }
+        stake.proposeSlash(as_[0], _sign(as_[0], verifierKeyPk));
+        stake.proposeSlash(as_[1], _sign(as_[1], verifierKeyPk));
+        assertEq(stake.stakeOf(thin).pendingSlash, 2_000_000);
 
-        assertEq(stake.slashRecordOf(bytes32("f1")).reserved, 1_000_000);
-        assertEq(stake.slashRecordOf(bytes32("f2")).reserved, 1_000_000);
-        assertEq(stake.slashRecordOf(bytes32("f3")).reserved, 500_000, "clamped to what was free");
-        assertEq(stake.slashRecordOf(bytes32("f3")).penalty, 1_000_000, "the judgement is intact");
-        assertEq(stake.stakeOf(thin).pendingSlash, 2_500_000);
+        // 500_000 free, 1_000_000 wanted: refused, nothing written, nothing reserved.
+        _expect(as_[2], verifierKeyPk, NothingToSlash.selector);
+        assertEq(uint8(stake.slashRecordOf(bytes32("f3")).status), uint8(SlashStatus.None));
+        assertEq(stake.stakeOf(thin).pendingSlash, 2_000_000, "nothing reserved");
 
-        // And nothing more can be reserved: free is now zero.
-        SlashAttestation memory over = _att(bytes32("f4"), 1_000_000);
-        over.provider = thin;
-        _expect(over, verifierKeyPk, NothingToSlash.selector);
+        // A standing record released: the same attestation lands, reserved in full.
+        vm.prank(admin);
+        stake.cancelSlash(bytes32("f1"));
+        stake.proposeSlash(as_[2], _sign(as_[2], verifierKeyPk));
+        assertEq(stake.slashRecordOf(bytes32("f3")).reserved, 1_000_000, "reserved in full");
+        assertEq(stake.stakeOf(thin).pendingSlash, 2_000_000);
     }
 
     /// A provider with nothing at risk cannot be judged.

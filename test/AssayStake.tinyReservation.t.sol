@@ -11,7 +11,9 @@ import "../src/Errors.sol";
 /// calldata) could withdraw down to `pendingSlash + 1` and then land it: the record reserved one
 /// base unit, could never split (`PenaltyTooSmallToSplit`), expired, and burnt the `requestId`.
 /// Now a reservation the current split cannot divide is refused at proposal, nothing is written,
-/// and the same attestation can be landed again once there is stake to reserve.
+/// and the same attestation can be landed again once there is stake to reserve. Since D-26 a
+/// short `free` no longer cuts a reservation at all (it refuses `NothingToSlash`), so the split
+/// check is reached only by a penalty or a cap allowance too small to divide.
 contract AssayStakeTinyReservationTest is Fixture {
     uint256 internal vPk = 0x7E5717;
     address internal p2 = address(0x9A11);
@@ -50,7 +52,8 @@ contract AssayStakeTinyReservationTest is Fixture {
         vm.warp(vm.getBlockTimestamp() + 14 days + 1);
     }
 
-    /// The reviewer's PoC, turned around.
+    /// The reviewer's PoC, turned around. Since D-26 the refusal is `NothingToSlash`: free stake
+    /// one unit short of the penalty refuses the whole judgement instead of cutting it.
     function test_L1_aReservationTooSmallToSplitIsRefusedAndBurnsNothing() public {
         _bondAndUnbond(200_000_000);
         SlashAttestation memory a1 = _att("first", 1_000_000);
@@ -62,7 +65,7 @@ contract AssayStakeTinyReservationTest is Fixture {
         uint64 out = stake.withdrawableOf(p2) - 1; // leave pendingSlash + 1
         vm.prank(p2);
         stake.withdrawStake(out);
-        vm.expectRevert(PenaltyTooSmallToSplit.selector);
+        vm.expectRevert(NothingToSlash.selector);
         stake.proposeSlash(a2, sig2);
         assertEq(uint8(stake.slashRecordOf("second").status), uint8(SlashStatus.None), "no record");
         assertEq(stake.stakeOf(p2).pendingSlash, 1_000_000, "nothing reserved");

@@ -273,10 +273,11 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
             revert InvalidMinimumStake();
         }
         // `verifierDailyCap` is not read on chain since D-25 (`executeSlash` meters only the
-        // provider's window). The field stays in `ParamSet` for ABI and layout stability and is
-        // the off-chain verifier's own per-key budget, so a zero is still refused as a
-        // misconfiguration. Its old `>= 2 * penaltyAmount` bound (audit G G-1) protected the
-        // on-chain key window and went with it.
+        // provider's window). The field stays in `ParamSet` for ABI and layout stability; the
+        // backend only displays it and enforces no per-key budget with it. A stolen verifier key
+        // is bounded by `revokeVerifier` within the slash delay (D-25). A zero is still refused
+        // as a misconfiguration. Its old `>= 2 * penaltyAmount` bound (audit G G-1) protected
+        // the on-chain key window and went with it.
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
     }
 

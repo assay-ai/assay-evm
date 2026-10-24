@@ -13,5 +13,6 @@ pragma solidity 0.8.38;
 /// `MONEY_MAX_ATOMIC_UNITS` width `ProviderStake.bonded` has on Solana — not a
 /// cumulative counter.
 interface IAssayStakeView {
-    function bondedOf(address provider) external view returns (uint64);
+    /// `bonded - pendingSlash`, floored at zero (D-26).
+    function freeBondedOf(address provider) external view returns (uint64);
 }

@@ -256,9 +256,16 @@ proposal and no provider-side objection. Adding any of them would need state the
 deliberately does not hold, and would weaken the property that a judgement can be submitted by
 anyone — which is what stops the platform being able to suppress one.
 
+**Since D-26 the freeze also stops the provider's income.** The escrow pays a provider only while
+`bonded - pendingSlash >= minimumStake`, so the same reservations that freeze an exit make every
+voucher to that provider refuse `ProviderBelowMinimumStake` (RETRY, then expiry after the redeem
+grace) until they are released. For a provider bonded at the minimum one record is enough. This
+is the price of closing F-M1 (a provider freezing its own stake with records it disputes itself and
+going on being paid); revocation releases it the same way it releases the exit.
+
 **The real mitigation is operational and it is `revokeVerifier`.** A provider reporting a frozen
-exit with reservations they do not recognise is a key-compromise incident, and revocation both
-stops the bleeding and releases what is already held.
+exit, or payments refused, with reservations they do not recognise is a key-compromise incident,
+and revocation both stops the bleeding and releases what is already held.
 
 ## 12. `revokeVerifier` is doubly irreversible, and one of the two effects is not the obvious one
 
@@ -500,23 +507,50 @@ permissionless, so anyone able to fill it could make every other provider's slas
 expired: the reviewer's PoC kept a 500 USDG key-day full with self-slashes (attestations for calls
 the attacker bought from its own provider, beneficiary its own agent) for about 171 USDG a day and
 voided every honest slash signed by that key. The key window is gone; `verifierDailyCap` stays in
-`ParamSet` and is not read on chain. A leaked verifier key is bounded instead by `revokeVerifier`
-(which voids every record it signed), the slash delay (at least 48 h off the test chains, D-23),
-the dispute and arbiter path, and each provider's own window. **Residual, accepted:** a provider can
+`ParamSet` and is not read on chain; the backend only displays it and enforces no per-key budget
+with it. **A stolen verifier key has no amount bound:** until it is revoked it can reserve against
+every provider and, after the delay, take up to each provider's cap allowance per rolling day
+(review 2026-10-24 F-M2 measured 540 USDG in one day over six 1,000 USDG providers, against the
+old 500 USDG key cap). The bound is `revokeVerifier`, which reaches backwards and voids every
+record the key signed that has not executed, used within the slash delay (at least 48 h off the
+test chains, D-23; the test chains allow 10 minutes). Detection of any proposal whose attestation
+the backend did not issue, alerting via Telegram, is planned and **not built yet**; until it is,
+the delay buys time only if someone looks. Disputes and the arbiter remain the provider's own
+defence. **Residual, accepted:** a provider can
 still fill its OWN window with self-slashes, so a victim's record against that provider waits and
 may expire (`test/AssayStake.crowding.t.sol`); it costs the provider 30 % of each self-slash (the
 platform share) and it shields only itself. The backend refuses attestations whose beneficiary is
 linked to the provider. Per-provider FIFO execution would close it on chain; it is parked to keep
 the contract simple.
 
+**A provider freezing its OWN stake (review 2026-10-24 F-M1, D-26).** Sybil buyers buy a
+provider's calls and it fails them on purpose; the backend's linkage check sees no link and signs
+up to the per-provider budget; the provider disputes every record, which holds its reservation for
+up to 30 days. After about ten days `pendingSlash == atRisk` and every honest proposal against it
+reverts `NothingToSlash`. Before D-26 it went on being paid, because the redeem gate read `bonded`.
+Now the gate reads `bonded - pendingSlash`, so it is refused payment as soon as its free stake is
+under the minimum (`test/AssayStake.freeStake.t.sol`). **Residual, accepted:** the freeze itself
+still blocks honest proposals while it lasts, and costs the provider nothing on chain if the
+arbiter never rules; what it no longer buys is income. Arbiter attention to providers that dispute
+many records a day is the off-chain half.
+
+**A reservation is whole or refused (review 2026-10-24 F-L1, D-26).** `proposeSlash` used to cut
+a reservation to the provider's `free` stake; a provider that withdrew down to a few units of free
+stake and then landed a leaked attestation spent its `requestId` for a few base units. Now
+`min(penalty, capAllowance)` must fit in `free` or the proposal reverts `NothingToSlash`, nothing
+is written, and the same attestation lands later (before its expiry, or re-signed). The cut to
+`capAllowance` stays: a provider that withdrew to `atRisk = 40` still has a judgement reserved at 4
+units, while earning nothing (`bonded` is 0).
+
 **An unsplittable reservation is refused at proposal (review 2026-10-23 L-1).** `proposeSlash`
-cuts a reservation to the provider's `free` stake, and it is permissionless. A provider holding
+is permissionless, and until D-26 it cut a reservation to the provider's `free` stake. A provider holding
 matured unbonding stake and a valid attestation (for example one left in public calldata by a
 failed batched proposal) could withdraw down to `pendingSlash + 1` and land it itself: the record
 reserved one base unit, could never split, expired, and burnt the `requestId`. Now `proposeSlash`
 refuses `PenaltyTooSmallToSplit` unless the reservation gives a non-zero agent share and, when the
 split has one, a non-zero platform share, so nothing is written and the attestation can land later.
-A split lowered after proposal can still make a record unsplittable at execution (it waits, then
+Since D-26 a short `free` refuses `NothingToSlash` before this check, which is now reached only by a
+penalty or a cap allowance too small to divide. A split lowered after proposal can still make a record unsplittable at execution (it waits, then
 expires); that is the admin's choice, not the provider's.
 
 **A pause longer than 7 days voids pending and upheld slashes (A L-1, B B4, C C6).** The grace and

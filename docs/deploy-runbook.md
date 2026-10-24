@@ -432,7 +432,20 @@ set `expiresAt` far enough out to cover that tail.
   maps it to WAIT) and the record stays Pending; retry as the window drains (it reopens linearly
   over 24 h). There is no partial payment and no last-day exception: **an honest slash crowded out
   for the whole 7-day grace expires unpaid.** There is no per-key window on chain (D-25):
-  `verifierDailyCap` is not read by the contracts and is only the backend's own per-key budget.
+  `verifierDailyCap` is not read by the contracts, and the backend only displays it; it is not a
+  per-key budget anywhere. **A stolen verifier key is bounded only by `revokeVerifier` within the
+  slash delay** (at least 48 h off the test chains, D-23): revocation reaches backwards and voids
+  every record the key signed that has not executed. Detection of a proposal whose attestation the
+  backend did not issue is planned (an alert to the operators' Telegram channel) but not built yet; until it
+  is, watch `SlashProposed` for unknown request ids by hand and revoke on the first one.
+- **Keep a buffer above `minimumStake` (D-26).** The escrow pays a provider only while
+  `freeBondedOf(provider) = bonded - pendingSlash >= minimumStake`. Every standing record
+  (Pending or Disputed) counts against it until it executes, is cancelled or expires, so a
+  provider bonded at exactly the minimum stops being paid by its first pending slash.
+- **A judgement is reserved whole or not at all (D-26).** `proposeSlash` reserves
+  `min(penalty, capAllowance)` and refuses `NothingToSlash` when the provider's free stake cannot
+  cover it; nothing is written, and the same attestation can be proposed again once free stake is
+  back (before it expires, or re-signed under the same `requestId`).
 - **A pause longer than 7 days voids slashes.** The grace and the 30-day dispute timeout keep
   running while paused; `executeSlash` is closed and `expireSlash` is open to anyone. **Before a
   long pause, and again right after the unpause**, list every Pending or upheld record whose
@@ -446,7 +459,8 @@ set `expiresAt` far enough out to cover that tail.
   before the unpause (`updateConfig`), so no provider whose slashes were voided can exit before
   they are re-proposed (audit B B6). This delays every provider's exit, not just the affected ones.
 - **`verifierDailyCap` must be non-zero** (`InvalidVerifierDailyCap`); nothing else bounds it since
-  D-25 removed the on-chain key window and audit G G-1's `>= 2 * penaltyAmount` with it.
+  D-25 removed the on-chain key window and audit G G-1's `>= 2 * penaltyAmount` with it. It bounds
+  nothing either: neither the contracts nor the backend enforce it.
 - **Two penalties per provider-day at the minimum.** `updateConfig` refuses
   `minimumStake * slashCapBps / 10_000 < 2 * penaltyAmount` (`InvalidMinimumStake`, review
   2026-10-15 R-1), so a provider at the minimum fits two maximal records in its capped day. Raise

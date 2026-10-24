@@ -959,8 +959,9 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         }
 
         // `redeem_voucher.rs` — being paid is the counterpart of being slashable.
-        // `bonded` only: stake already asked back is not backing anybody's traffic.
-        if (STAKE.bondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
+        // `bonded` only: stake already asked back is not backing anybody's traffic. And FREE
+        // bonded only (D-26): stake reserved by standing slash records is not backing it either.
+        if (STAKE.freeBondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
 
         // `redeem_voucher.rs`. Its job is the DIAGNOSIS: without it `e.balance -=` still
         // refuses, but as `Panic(0x11)`, which is not what an operator needs to read.

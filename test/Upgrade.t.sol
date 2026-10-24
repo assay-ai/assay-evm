@@ -476,6 +476,7 @@ contract UpgradeTest is Fixture {
             "eip712Domain()",
             "executeSlash(bytes32)",
             "expireSlash(bytes32)",
+            "freeBondedOf(address)",
             "initialize(address,address)",
             "proposeSlash((bytes32,address,address,uint8,uint64,bytes32,uint64,uint64),bytes)",
             "proxiableUUID()",
@@ -490,10 +491,9 @@ contract UpgradeTest is Fixture {
             "upholdSlash(bytes32)",
             "upholdSlashBatch(bytes32[])",
             "withdrawStake(uint64)",
-            "withdrawableOf(address)",
-            "" // the 30th slot is deliberately empty: a 30th function makes this test red
+            "withdrawableOf(address)" // all 30 slots used since D-26: a 31st function makes this red
         ];
-        _assertSurface("AssayStake", 29, _dyn30(expected));
+        _assertSurface("AssayStake", 30, _dyn30(expected));
     }
 
     /// Both directions, as the escrow's pin does them: nothing exported that is not on the list,

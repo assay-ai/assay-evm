@@ -1969,3 +1969,16 @@ exists; their named tests were removed or rewritten (`test_D25_oneKeyIsNotMetere
 `test_audit_M1b_anotherProvidersExecutionsDoNotDelayThisOne`,
 `test_D25_theDailyCapNoLongerBoundsThePenalty`, `test/AssayStake.crowding.t.sol`). Audit D's
 handler now asserts the retired slot is never written. Not yet mutated.
+
+### Review 2026-10-24 (F-M1 / F-L1, D-26: free stake for the redeem gate, whole reservations)
+
+The escrow's stake floor reads `freeBondedOf` (`bonded - pendingSlash`, floored at 0), and
+`proposeSlash` refuses `NothingToSlash` instead of cutting a reservation to `free`. Row P7 above
+mutates the clamp that this replaced; its named test is now
+`test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut`. Run on the non-fork suite (604 tests).
+
+| # | Guard | Mutation | Named test | Observed |
+|---|---|---|---|---|
+| FS1 | `freeBondedOf`: `free = b > pending ? b - pending : 0` | → `free = b` (back to `bondedOf`) | `test_F_M1_aProviderWhoseStakeIsReservedBelowTheMinimumIsNotPaid`, `test_freeBondedOfIsBondedMinusPendingSlash` | **DIES**: `602 passed; 2 failed` — `[FAIL: assertion failed: 200000000 != 100000000]` and `[FAIL: assertion failed: 100000000 != 99000000]` |
+| FS2 | `proposeSlash`: `if (reserved > free) revert NothingToSlash();` | → `if (reserved > free) reserved = Cast.toUint64(free);` (the old clamp) | `test_F_L1_aShortFreeBalanceRefusesTheJudgementAndBurnsNothing`, `test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut`, `test_L1_aReservationTooSmallToSplitIsRefusedAndBurnsNothing`, `test_F_M1_…` | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected` / `PenaltyTooSmallToSplit() != NothingToSlash()` |
+| FS3 | same | line deleted | the same four | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected`. Without it `pendingSlash` can exceed `atRisk` |
