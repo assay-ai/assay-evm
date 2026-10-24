@@ -134,6 +134,11 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         return CONFIG.params();
     }
 
+    /// The one `CONFIG.assertActive` call site: the pause and blocklist check of every door.
+    function _assertActive(address a, address b, address c) internal view {
+        CONFIG.assertActive(a, b, c);
+    }
+
     function stakeOf(address provider) external view returns (ProviderStake memory) {
         return stakes[provider];
     }
@@ -212,7 +217,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// `nonReentrant` is present — the same finding `test/MUTATION-LOG.md` rows E4 and E23
     /// record on `AssayEscrow.depositFor`. The modifier is the belt.
     function depositStakeFor(address provider, uint64 amount) public nonReentrant {
-        CONFIG.assertActive(provider, msg.sender, address(0));
+        _assertActive(provider, msg.sender, address(0));
         if (provider == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
@@ -246,7 +251,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     ///
     /// Pause-gated and blocklist-gated since the dispute upgrade, like [`withdrawStake`].
     function requestUnstake(uint64 amount) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         if (amount == 0) revert ZeroAmount();
         ProviderStake storage s = stakes[msg.sender];
         if (amount > s.bonded) revert InsufficientBondedStake();
@@ -285,7 +290,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// reversing `withdraw_stake.rs`. Neither gate moves the stake anywhere: it stays the
     /// provider's, and the door reopens when the pause lifts or the block is removed.
     function withdrawStake(uint64 amount) external nonReentrant {
-        CONFIG.assertActive(msg.sender, address(0), address(0));
+        _assertActive(msg.sender, address(0), address(0));
         if (amount == 0) revert ZeroAmount();
         ProviderStake storage s = stakes[msg.sender];
 
