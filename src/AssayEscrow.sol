@@ -295,6 +295,18 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         if (msg.sender != CONFIG.owner()) revert NotOwner();
     }
 
+    // --- shared call sites ------------------------------------------------------------------
+    //
+    // Each external read below has several callers. Under `via_ir` every inline call site
+    // carries its own copy of the call, returndata checks and ABI decoding, so routing them
+    // through one internal function is a size saving only: the same call, with the same
+    // arguments, at the same point of every caller, reverting with the same data.
+
+    /// The one `CONFIG.params()` call site (see the note above).
+    function _params() internal view returns (ParamSet memory) {
+        return CONFIG.params();
+    }
+
     function escrowOf(address buyer) external view returns (Escrow memory) {
         return escrows[buyer];
     }
@@ -436,7 +448,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// let a Config upgrade mid-transaction hand this function a redeemer from one parameter set
     /// and a treasury from another; `IAssayConfig.params`'s own note makes the same argument.
     function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
         _redeem(v, sig, p); // the pause is `_redeem`'s `CONFIG.assertActive` (audit F R7)
     }
@@ -482,7 +494,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         external
         nonReentrant
     {
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
         // No pause check here: every item's `CONFIG.assertActive` in `_redeem` refuses
         // `ProgramPaused` (audit F R7), so an empty or malformed batch is diagnosed first.
@@ -1041,7 +1053,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     ///
     /// Effects strictly before interactions, under `nonReentrant`, as on [`_redeem`].
     function collectHeld(address payer, uint64 seq) external nonReentrant {
-        _collectHeld(payer, seq, CONFIG.params());
+        _collectHeld(payer, seq, _params());
     }
 
     /// [`collectHeld`] over many records, **atomically**, like [`redeemVoucherBatch`]: one bad
@@ -1052,7 +1064,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         nonReentrant
     {
         _assertBatch(payers.length, seqs.length);
-        ParamSet memory p = CONFIG.params();
+        ParamSet memory p = _params();
         for (uint256 i = 0; i < payers.length; ++i) {
             _collectHeld(payers[i], seqs[i], p);
         }
@@ -1070,7 +1082,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// It transfers no token and is not pause-gated: it only moves held money back to a balance
     /// that every exit door still guards.
     function refundHeld(address payer, uint64 seq) external nonReentrant {
-        if (msg.sender != CONFIG.params().redeemer) revert NotRedeemer();
+        if (msg.sender != _params().redeemer) revert NotRedeemer();
         _refundHeld(payer, seq);
     }
 
@@ -1080,7 +1092,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         nonReentrant
     {
         _assertBatch(payers.length, seqs.length);
-        if (msg.sender != CONFIG.params().redeemer) revert NotRedeemer();
+        if (msg.sender != _params().redeemer) revert NotRedeemer();
         for (uint256 i = 0; i < payers.length; ++i) {
             _refundHeld(payers[i], seqs[i]);
         }
