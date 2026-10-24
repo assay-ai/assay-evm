@@ -4,7 +4,20 @@ pragma solidity 0.8.38;
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {SlashAttestation, ResponseClass, SlashStatus, Voucher} from "../src/Types.sol";
+import {CancelReason} from "../src/Types.sol";
+import {AssayStake} from "../src/AssayStake.sol";
+import {Vm} from "forge-std/Vm.sol";
 import "../src/Errors.sol";
+
+/// A stand-in for a generic multicall contract (e.g. Multicall3): one transaction, many
+/// `expireSlash` calls, sent by anybody. The contract has no batch expire of its own.
+contract ExpireReaper {
+    function reap(AssayStake stake, bytes32[] calldata ids) external {
+        for (uint256 i = 0; i < ids.length; ++i) {
+            stake.expireSlash(ids[i]);
+        }
+    }
+}
 
 /// D-26, review 2026-10-24 F-M1 and F-L1. Both are about stake that standing slash records have
 /// already reserved (`pendingSlash`).
@@ -218,5 +231,80 @@ contract AssayStakeFreeStakeTest is Fixture {
         _propose("leaked", p, victim);
         assertEq(stake.slashRecordOf("leaked").reserved, 4);
         assertEq(stake.freeBondedOf(p), 0, "and it is not paid");
+    }
+
+    /// D-27, review 2026-10-24 M-2: the stolen-verifier-key incident, end to end. With D-26 the
+    /// thief's records halt the provider's payments in the block they land. Revoking the key is
+    /// not enough by itself (the reservations stay), but every record that key signed is
+    /// releasable AT ONCE by anybody through `expireSlash`, Pending or Disputed, whatever its
+    /// deadline, and even while the program is paused. A record signed by another, still valid
+    /// key is untouched.
+    function test_D27_aRevokedKeysRecordsAreReleasedAtOnceByAnyoneAndPaymentsResume() public {
+        uint256 honestPk = 0x40E57;
+        vm.prank(admin);
+        config.registerVerifier(vm.addr(honestPk), "h", uint64(vm.getBlockTimestamp()) + 300 days);
+        _setBonded(provider, 150_000_000); // 1.5 x the minimum
+        _redeem(1);
+
+        // One honest record from the live key.
+        SlashAttestation memory h = _att("honest", provider, victim);
+        stake.proposeSlash(h, VoucherSigner.signAttestation(honestPk, stake.DOMAIN_SEPARATOR(), h));
+
+        // The thief: 50 records of 1 USDG take free stake from 149 to 99 < 100.
+        bytes32[] memory ids = new bytes32[](50);
+        for (uint256 i = 0; i < ids.length; ++i) {
+            ids[i] = keccak256(abi.encode("thief", i));
+            _propose(ids[i], provider, sybilAgent);
+        }
+        // The provider disputes a fifth of them; the rest stay Pending.
+        for (uint256 i = 0; i < ids.length; i += 5) {
+            vm.prank(provider);
+            stake.disputeSlash(ids[i]);
+        }
+        assertEq(stake.freeBondedOf(provider), 99_000_000);
+        _expectRedeemRefused(2);
+
+        // Before revocation the door is shut: every deadline is days away.
+        vm.expectRevert(SlashNotExpired.selector);
+        stake.expireSlash(ids[1]);
+        vm.expectRevert(SlashNotExpired.selector);
+        stake.expireSlash(ids[0]); // disputed
+
+        // 1. Revoke. The reservations are still there, so payments are still refused.
+        vm.prank(admin);
+        config.revokeVerifier(vm.addr(vPk));
+        _expectRedeemRefused(2);
+
+        // 2. Release every record of that key, in one transaction, by a stranger, with no
+        //    warp, while the program is paused (release paths are not pause-gated).
+        vm.prank(admin);
+        config.setPaused(true);
+        ExpireReaper reaper = new ExpireReaper();
+        vm.recordLogs();
+        vm.prank(address(0xA11CE));
+        reaper.reap(stake, ids);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 released;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics[0] != AssayStake.SlashCancelled.selector) continue;
+            (CancelReason reason,,,) =
+                abi.decode(logs[i].data, (CancelReason, uint64, uint64, uint64));
+            assertEq(uint8(reason), uint8(CancelReason.VerifierUnavailable), "reason");
+            released++;
+        }
+        assertEq(released, ids.length, "one SlashCancelled per record");
+        for (uint256 i = 0; i < ids.length; ++i) {
+            assertEq(uint8(stake.slashRecordOf(ids[i]).status), uint8(SlashStatus.Cancelled));
+        }
+        vm.prank(admin);
+        config.setPaused(false);
+
+        // 3. Payments resume; the honest record still stands and is not releasable.
+        assertEq(stake.stakeOf(provider).pendingSlash, PEN, "only the honest record remains");
+        assertEq(stake.freeBondedOf(provider), 149_000_000);
+        _redeem(2);
+        assertEq(uint8(stake.slashRecordOf("honest").status), uint8(SlashStatus.Pending));
+        vm.expectRevert(SlashNotExpired.selector);
+        stake.expireSlash("honest");
     }
 }

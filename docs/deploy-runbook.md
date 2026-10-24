@@ -435,9 +435,11 @@ set `expiresAt` far enough out to cover that tail.
   `verifierDailyCap` is not read by the contracts, and the backend only displays it; it is not a
   per-key budget anywhere. **A stolen verifier key is bounded only by `revokeVerifier` within the
   slash delay** (at least 48 h off the test chains, D-23): revocation reaches backwards and voids
-  every record the key signed that has not executed. Detection of a proposal whose attestation the
-  backend did not issue is planned (an alert to the operators' Telegram channel) but not built yet; until it
-  is, watch `SlashProposed` for unknown request ids by hand and revoke on the first one.
+  every record the key signed that has not executed, and makes each of them releasable by anyone
+  at once (§6.8). Detection of a proposal whose attestation the backend did not issue exists: the
+  backend's `EvmSlashProposalWatcher` checks `SlashProposed` every 2 minutes and raises a CRITICAL
+  alert (`slash_proposal_unknown`, `slash_proposal_mismatch`). **Enable its delivery** (Telegram or
+  webhook) in the deployment; until that is done the alert reaches only the log, so watch the log.
 - **Keep a buffer above `minimumStake` (D-26).** The escrow pays a provider only while
   `freeBondedOf(provider) = bonded - pendingSlash >= minimumStake`. Every standing record
   (Pending or Disputed) counts against it until it executes, is cancelled or expires, so a
@@ -471,6 +473,35 @@ set `expiresAt` far enough out to cover that tail.
   will pay and to whom. Only `capAllowance`, `reserved`, the beneficiary and `executableAt` are
   frozen.
 - **Key expiry.** The backend runs a key-expiry monitor (§6.6 gives the tail a key must cover).
+
+### 6.8 Incident: a stolen verifier key (D-27)
+
+Since D-26 a stolen key halts payments as well as exits: each record it lands reserves stake, and a
+provider whose free stake (`bonded - pendingSlash`) drops below `minimumStake` is refused at
+`redeemVoucher` (`ProviderBelowMinimumStake`). One record halts a provider at the minimum, about 51
+records of 1 USDG one at 1.5 x the minimum. Vouchers to a halted provider RETRY and are lost once the
+halt outlasts the 2-hour redeem grace, so work through these steps without pausing between them.
+
+1. **Revoke.** The admin calls `revokeVerifier(<key>)` on AssayConfig. Check the address first
+   (`verifierKey(address)`): revocation is irreversible (risk register §12). Revocation alone
+   releases nothing: the reservations stay and payments stay refused.
+2. **Release every record of that key.** List the key's open records from the logs:
+   `SlashProposed` events with `verifier == <key>`, minus the request ids already in a
+   `SlashExecuted` or `SlashCancelled`, confirmed with `slashRecordOf(id)` (status Pending or
+   Disputed). Then call `expireSlash(id)` on each. It is **permissionless**, immediate whatever the
+   record's deadline, works on Disputed records and while paused, and emits `SlashCancelled` with
+   `VerifierUnavailable`. There is no batch expire on chain: send many in one transaction through
+   a multicall contract (each `expireSlash` is atomic on its own; with Multicall3 `aggregate3` and
+   `allowFailure`, an id somebody else already released does not stop the rest). The relayer, an
+   operator wallet or any provider can send it; the admin or arbiter can also use
+   `cancelSlashBatch` (up to 64 ids, atomic). Start with the providers whose
+   `freeBondedOf(provider) < minimumStake`.
+3. **Verify payments resume.** For every affected provider `stakeOf(provider).pendingSlash` holds
+   only records from other keys, `freeBondedOf(provider) >= minimumStake`, and the redeemer's next
+   redemptions to it land. Check that the backend's slash hold has lifted for those providers.
+4. **Rotate.** Generate a new key, enrol it with `registerVerifier` (§6.4) and switch the backend's
+   signer to it. Honest records the stolen key had in flight were released with the rest; re-judge
+   them under the new key from the backend's own evidence (new request ids).
 
 ### 6.3 Changing the owner or the admin (D-17)
 
@@ -566,6 +597,11 @@ half is the last paragraph.
    If an upgrade makes Stake or Escrow call a Config function that does not exist yet, upgrade
    Config in the same session first (`_plan` always runs Config, Stake, Escrow in that order), and
    on a Safe send the `safeCalldata()` lines as ONE MultiSend transaction in that order.
+   **D-26 (the free-stake redeem gate): a fresh deploy is preferred.** If it is an upgrade,
+   **upgrade AssayStake before AssayEscrow**: the new Escrow calls `AssayStake.freeBondedOf`, which
+   an old Stake implementation does not have, so an Escrow upgraded first makes every redemption
+   revert with empty data until Stake follows. Keep both in one session (one MultiSend on a Safe),
+   in `_plan`'s order.
 3. **The OWNER signs** `upgradeToAndCall`:
    - a Ledger: `forge script script/UpgradeByOwner.s.sol --rpc-url <rpc> --broadcast --ledger --sender <owner>`
      with `IMPL_<NAME>=<address from step 1>` (and `CALL_<NAME>=<reinitialiser calldata>` if any);

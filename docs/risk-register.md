@@ -259,13 +259,28 @@ anyone — which is what stops the platform being able to suppress one.
 **Since D-26 the freeze also stops the provider's income.** The escrow pays a provider only while
 `bonded - pendingSlash >= minimumStake`, so the same reservations that freeze an exit make every
 voucher to that provider refuse `ProviderBelowMinimumStake` (RETRY, then expiry after the redeem
-grace) until they are released. For a provider bonded at the minimum one record is enough. This
-is the price of closing F-M1 (a provider freezing its own stake with records it disputes itself and
-going on being paid); revocation releases it the same way it releases the exit.
+grace) until they are released. For a provider bonded at the minimum one record is enough; one at
+1.5 x the minimum needs about 51 records of 1 USDG, a few cents of gas each on L2. A thief can
+therefore halt payments to every provider in one block. This is the price of closing F-M1 (a
+provider freezing its own stake with records it disputes itself and going on being paid).
 
-**The real mitigation is operational and it is `revokeVerifier`.** A provider reporting a frozen
-exit, or payments refused, with reservations they do not recognise is a key-compromise incident,
-and revocation both stops the bleeding and releases what is already held.
+**Revocation alone does not release anything** (review 2026-10-24 M-2). `revokeVerifier` writes
+only the key's own entry; `pendingSlash` is untouched, so the freeze and the payment halt stay
+until every record is released. What revocation does is open the door (D-27): from that block,
+**anyone** may call `expireSlash` on each of the key's Pending or Disputed records, whatever its
+deadline and even while paused (`CancelReason.VerifierUnavailable`). There is no batch expire on
+chain; many records go in one transaction through a multicall contract, or the admin or arbiter use
+`cancelSlashBatch` (64 per transaction). Vouchers to the halted providers RETRY meanwhile and are
+lost once the halt outlasts the 2-hour redeem grace, so release is time-critical.
+`test/AssayStake.freeStake.t.sol::test_D27_aRevokedKeysRecordsAreReleasedAtOnceByAnyoneAndPaymentsResume`
+replays the incident end to end.
+
+**The real mitigation is operational: revoke, then release.** A provider reporting a frozen
+exit, or payments refused, with reservations they do not recognise is a key-compromise incident.
+Follow `docs/deploy-runbook.md` §6.8: revoke the key, release every record it signed, verify that
+payments resume, then rotate to a new key. Detection does not depend on a provider's report: the
+backend's `EvmSlashProposalWatcher` raises a CRITICAL alert within about 2 minutes on a
+`SlashProposed` it did not plan (see entry 18).
 
 ## 12. `revokeVerifier` is doubly irreversible, and one of the two effects is not the obvious one
 
@@ -514,8 +529,12 @@ every provider and, after the delay, take up to each provider's cap allowance pe
 old 500 USDG key cap). The bound is `revokeVerifier`, which reaches backwards and voids every
 record the key signed that has not executed, used within the slash delay (at least 48 h off the
 test chains, D-23; the test chains allow 10 minutes). Detection of any proposal whose attestation
-the backend did not issue, alerting via Telegram, is planned and **not built yet**; until it is,
-the delay buys time only if someone looks. Disputes and the arbiter remain the provider's own
+the backend did not issue exists: the backend's `EvmSlashProposalWatcher` reads `SlashProposed`
+every 2 minutes and raises a CRITICAL alert on an unknown request id, or on a known one with a
+different beneficiary or penalty. It does not compare provider, verifier or policy, and it never
+revokes or releases anything. Its alerts always reach the log; delivery to Telegram or a webhook
+must be enabled in the deployment (planned), and until it is, the delay buys time only if someone
+reads the log. The response is `docs/deploy-runbook.md` §6.8. Disputes and the arbiter remain the provider's own
 defence. **Residual, accepted:** a provider can
 still fill its OWN window with self-slashes, so a victim's record against that provider waits and
 may expire (`test/AssayStake.crowding.t.sol`); it costs the provider 30 % of each self-slash (the
