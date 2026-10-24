@@ -312,6 +312,11 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         CONFIG.assertActive(a, b, c);
     }
 
+    /// A direct payer decision consumes `authNonce` (D-18); checked, like every counter here.
+    function _bumpAuthNonce(address payer) internal {
+        escrows[payer].authNonce += 1;
+    }
+
     function escrowOf(address buyer) external view returns (Escrow memory) {
         return escrows[buyer];
     }
@@ -527,7 +532,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// the relayer withheld can then never land after this call and undo it.
     function setLimits(uint64 maxVoucherAmount, uint64 maxPerWindow) external nonReentrant {
         _assertActive(msg.sender, address(0), address(0));
-        escrows[msg.sender].authNonce += 1;
+        _bumpAuthNonce(msg.sender);
         _setLimits(msg.sender, maxVoucherAmount, maxPerWindow);
     }
 
@@ -617,7 +622,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// `RequestWithdrawBySig` can then never cancel or restart this request.
     function requestWithdraw(uint64 amount) external nonReentrant {
         _assertActive(msg.sender, address(0), address(0));
-        escrows[msg.sender].authNonce += 1;
+        _bumpAuthNonce(msg.sender);
         _requestWithdraw(msg.sender, amount);
     }
 
@@ -1395,7 +1400,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         uint64 validUntil
     ) external nonReentrant {
         _assertActive(msg.sender, delegate, address(0));
-        escrows[msg.sender].authNonce += 1;
+        _bumpAuthNonce(msg.sender);
         _authorizeDelegate(msg.sender, delegate, maxVoucherAmount, maxPerWindow, validUntil);
     }
 
@@ -1432,7 +1437,7 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// within the caps in force now — as a withdrawal request waits out the vouchers signed
     /// before it. Consumes `authNonce` (see [`authorizeDelegate`]).
     function revokeDelegate(address delegate) external nonReentrant {
-        escrows[msg.sender].authNonce += 1;
+        _bumpAuthNonce(msg.sender);
         _revokeDelegate(msg.sender, delegate);
     }
 
