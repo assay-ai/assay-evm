@@ -139,6 +139,11 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
         CONFIG.assertActive(a, b, c);
     }
 
+    /// The one `CONFIG.paused()` call site.
+    function _paused() internal view returns (bool) {
+        return CONFIG.paused();
+    }
+
     function stakeOf(address provider) external view returns (ProviderStake memory) {
         return stakes[provider];
     }
@@ -391,7 +396,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// `nonReentrant` is belt with no brace behind it, exactly as `test/MUTATION-LOG.md` row
     /// T13 records for the escrow's four limit and withdrawal doors.
     function proposeSlash(SlashAttestation calldata a, bytes calldata sig) external nonReentrant {
-        if (CONFIG.paused()) revert ProgramPaused();
+        if (_paused()) revert ProgramPaused();
         if (a.penalty == 0) revert ZeroAmount();
         // The stake proxy itself would keep the share as an untracked balance. (Stake holds no
         // reference to the escrow; the backend never names it.)
@@ -547,7 +552,7 @@ contract AssayStake is Initializable, UUPSUpgradeable, IAssayStakeView, EIP712, 
     /// `test_everyEffectIsWrittenBeforeTheSlashTransfers` is the brace, and it observes the
     /// effects from inside the first payout.
     function executeSlash(bytes32 requestId) external nonReentrant {
-        if (CONFIG.paused()) revert ProgramPaused();
+        if (_paused()) revert ProgramPaused();
 
         SlashRecord storage rec = slashRecords[requestId];
         if (rec.status != SlashStatus.Pending) revert SlashNotPending();
