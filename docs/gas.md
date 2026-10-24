@@ -348,17 +348,19 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
-| `AssayConfig` | 7,466 | 30.4% | 7,675 |
-| `AssayEscrow` | 17,228 | 70.1% | 18,655 |
-| `AssayStake` | 14,791 | 60.2% | 16,218 |
+| `AssayConfig` | 7,405 | 30.1% | 7,636 |
+| `AssayEscrow` | 20,312 | 82.6% | 21,745 |
+| `AssayStake` | 13,759 | 56.0% | 15,192 |
 
-Re-measured for D-19 (the dispute upgrade); the commit before it measured AssayConfig 6,136,
-AssayEscrow 16,202 and AssayStake 13,041.
+Measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
+(`docs/ci-gates.md` §4 has the history). For D-19 (the dispute upgrade, on the earlier compiler) the figures
+were AssayConfig 7,466, AssayEscrow 17,228 and AssayStake 14,791.
 
-The gate fires at **22,000**, leaving room for an auditor's remediation round and for the append a
+The gate fires at **23,000** (raised from 22,000 on 2026-10-24, reasons in `docs/ci-gates.md` §4),
+leaving room for an auditor's remediation round and for the append a
 future upgrade adds. If a contract ever goes over it, **the gate does not move** — the contract
 splits, and the reason is recorded in the pull request that does it.
 
 The creation column is information only. EIP-3860 bounds initcode at 49,152 bytes and nothing here
-is within a factor of three of it. The two columns differ by 1,427 bytes on both money contracts:
+is within a factor of three of it. The two columns differ by 1,433 bytes on both money contracts:
 constructor code plus the EIP-712 ShortString immutables, which are returned as part of neither.

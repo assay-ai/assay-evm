@@ -9,7 +9,7 @@
 # **It measures `deployedBytecode`, not `bytecode`.** An earlier version measured
 # `forge inspect <c> bytecode`, which is the CREATION bytecode — constructor plus the runtime it
 # returns. That is the wrong number twice over: EIP-170 bounds the runtime half only, and the two
-# differ by 1,427 bytes on AssayEscrow and AssayStake here (constructor code plus the EIP-712
+# differ by 1,433 bytes on AssayEscrow and AssayStake here (constructor code plus the EIP-712
 # ShortString immutables). Gating on the larger figure would fire early and, worse, would teach a
 # reader that the limit applies to creation code. Creation size is printed beside it as
 # information — EIP-3860's initcode limit is 49,152 and nothing here is near it.
