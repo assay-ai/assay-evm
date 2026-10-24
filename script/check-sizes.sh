@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # EIP-170 caps DEPLOYED (runtime) code at 24,576 bytes, per IMPLEMENTATION — the ERC1967Proxy in
-# front of it is ~50 bytes of runtime and irrelevant to the limit. The gate fires at 22,000 so it
+# front of it is ~50 bytes of runtime and irrelevant to the limit. The gate fires at 23,000 so it
 # goes off before a deploy — or an UPGRADE — does, leaving room for the auditor's remediation
 # round. It must be green before every upgrade, not only before the first deploy: an upgrade that
 # pushes an implementation over the hard limit fails at deploy time, which is a good place to fail,
@@ -18,7 +18,7 @@ export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 FORGE="${FORGE:-forge}"
-CEILING=22000
+CEILING=23000
 HARD=24576
 rc=0
 $FORGE build >/dev/null

@@ -143,9 +143,18 @@ would make the gate compare against the wrong commit.
 
 ## 4. `./script/check-sizes.sh`
 
-EIP-170, per implementation, gated at 22,000 of the 24,576 hard limit. Measured today:
-AssayConfig 7,466 · AssayEscrow 17,228 · AssayStake 14,791 (runtime bytes, CBOR metadata included;
-re-measured for D-19).
+EIP-170, per implementation, gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
+0.8.38, `via_ir`, 200 runs): AssayConfig 7,405 · AssayEscrow 22,598 · AssayStake 15,028 (runtime
+bytes, CBOR metadata included).
+
+**Why 23,000 (raised from 22,000 on 2026-10-24, owner decision).** AssayEscrow grew to 21,752 bytes
+through D-20 to D-22, +194 with D-23, and +652 from the compiler move to 0.8.38 (SOL-2026-7); lower
+`optimizer_runs` saves under 350 bytes. Robinhood Chain (4663 and 46630) is an Orbit chain configured
+with `MaxCodeSize = 98,304` (measured with `eth_estimateGas`: 98,305 is refused "limit 98304"), so the
+deploy target has room to spare. The gate stays below 24,576 on purpose: that is still the limit on
+Ethereum, Arbitrum One, Base, Optimism and most EVM chains, and the default in forge and anvil, so
+these contracts stay deployable elsewhere and testable with default tooling. An upgrade that would
+cross 23,000 splits AssayEscrow (first candidate: move the read-only views into a separate lens).
 
 It measures **`deployedBytecode`**, not `bytecode`. Creation bytecode is the wrong number: EIP-170 bounds runtime only, and the two differ by 1,427 bytes on both
 money contracts here. Creation size is printed **beside** the runtime one as information, which is
