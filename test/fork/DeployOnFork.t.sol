@@ -11,6 +11,7 @@ import {AssayEscrow} from "../../src/AssayEscrow.sol";
 import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
 import {ParamSet} from "../../src/Types.sol";
+import {Constants} from "../../src/Constants.sol";
 
 /// `Deploy.s.sol`'s sequence, executed against real 46630 state, with the runbook's own
 /// post-deploy checklist as assertions.
@@ -152,7 +153,7 @@ contract DeployOnForkTest is ForkFixture {
         escrow.deposit(10_000_000);
         emit log_named_uint("real USDG deposit gas", g - gasleft());
         escrow.requestWithdraw(10_000_000);
-        vm.warp(block.timestamp + 3_601); // WITHDRAW_DELAY_SECONDS = 3600
+        vm.warp(block.timestamp + Constants.WITHDRAW_DELAY_SECONDS + 1);
         escrow.withdraw();
         vm.stopPrank();
         assertEq(IERC20(RH_TESTNET_USDG).balanceOf(address(escrow)), 0);
