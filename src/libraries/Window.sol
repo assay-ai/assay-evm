@@ -4,29 +4,15 @@ pragma solidity 0.8.38;
 import {Constants} from "../Constants.sol";
 import {Cast} from "./Cast.sol";
 
-/// The rolling 24-hour counter, ported verbatim from
-/// the Anchor program's `programs/x402-payment/src/state.rs` (`decay_window`), in the
-/// `assay-solana` repository.
-///
-/// It DRAINS rather than resetting: a counter anchored at `startedAt` gives capacity back
-/// linearly across SLASH_WINDOW_SECONDS, rounding UP so capacity is returned late and never
-/// early. The documented residual is unchanged — an adversary can spend 2x across an
-/// arbitrary 24 hours, and that is accepted on both chains.
-///
-/// Two callers, one implementation: the buyer's spend window and the provider's slash window.
-/// (The verifier key's daily cap was a third until D-25 removed it.)
-///
-/// **What the unsigned port changes, and what it does not.** The Anchor original takes `i64`
-/// timestamps (Solana's `unix_timestamp` is signed) and reaches the "clock went backwards" case
-/// through `now.saturating_sub(window_started_at) <= 0`. Here every timestamp is `uint64`, so
-/// there is no negative elapsed time to saturate and the same case is `nowTs <= startedAt`. The
-/// mapping is exact at the extremes the Rust tests use: `i64::MIN`/`i64::MAX` as the two ends of
-/// the clock become `0`/`type(uint64).max`, and each of the three saturating cases lands on the
-/// same branch it lands on in Rust.
+/// @title Window
+/// @notice Rolling 24-hour counter that drains linearly over `SLASH_WINDOW_SECONDS`.
+/// @dev Remaining usage rounds up, so capacity is returned late, never early. Up to twice the
+/// limit can be consumed within any 24-hour span.
 library Window {
+    /// @dev Returns what remains of `counter`, started at `startedAt`, at time `nowTs`.
     function decay(uint64 counter, uint64 startedAt, uint64 nowTs) internal pure returns (uint64) {
         if (counter == 0) return 0;
-        // A clock that did not advance — or went backwards — returns capacity to nobody.
+        // No time elapsed (or the clock went backwards): nothing has drained.
         if (nowTs <= startedAt) return counter;
 
         uint64 elapsed = nowTs - startedAt;
@@ -34,9 +20,9 @@ library Window {
 
         uint256 window = Constants.SLASH_WINDOW_SECONDS;
         uint256 remaining = window - elapsed;
-        // div_ceil, in uint256 so `counter * remaining` cannot wrap.
+        // Ceiling division in uint256, so `counter * remaining` cannot overflow.
         uint256 carried = (uint256(counter) * remaining + window - 1) / window;
-        // Unreachable (`carried <= counter`), checked anyway: no money narrowing is a bare cast.
+        // `carried <= counter`, so this cannot revert; narrowed with a check regardless.
         return Cast.toUint64(carried);
     }
 }

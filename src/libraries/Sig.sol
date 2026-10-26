@@ -5,26 +5,15 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Constants} from "../Constants.sol";
 import "../Errors.sol";
 
-/// The one signature recovery in `src/`, shared by `AssayEscrow` and `AssayStake`. Four guards,
-/// all load-bearing, each refusal under its own name:
-///
-///   1. exactly 65 bytes — the 64-byte EIP-2098 compact form is refused, so every signature has
-///      exactly ONE acceptable encoding (backend idempotency keys rely on it). It must come first,
-///      or `calldataload` reads words that are not the signature;
-///   2. low-s (EIP-2) — a malleated twin is different bytes for the same message;
-///   3. `v` in {27, 28};
-///   4. signer != `address(0)` — garbage must not "recover" to the zero address.
-///
-/// Guards 2 and 4 duplicate checks `ECDSA.tryRecover` also makes; checking first is what gives
-/// each condition its own name. **That holds only while `ECDSA.tryRecover` is the call below**:
-/// replace it with a bare `ecrecover` and guards 2 and 4 become the only refusal of a malleated
-/// twin and of `address(0)`. The relative order of guards 2 and 3 is a preference, not an
-/// invariant.
-///
-/// `test_recoveryHappensAtExactlyOneCallSiteInSrc` counts recovery call sites across `src/` and
-/// allows exactly one, in this file.
+/// @title Sig
+/// @notice The single ECDSA signature recovery used by the protocol.
+/// @dev Requires a 65-byte signature, low `s` (EIP-2), `v` in {27, 28} and a non-zero signer,
+/// each with its own error. Compact (EIP-2098) signatures are refused so every signature has
+/// exactly one accepted encoding.
 library Sig {
+    /// @dev Returns the signer of `digest`; reverts on any malformed or invalid signature.
     function recover(bytes32 digest, bytes calldata sig) internal pure returns (address signer) {
+        // The length check must come first: the calldata reads below assume 65 bytes.
         if (sig.length != 65) revert InvalidSignature();
 
         bytes32 r;

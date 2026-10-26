@@ -12,158 +12,78 @@ import {Constants} from "./Constants.sol";
 import {IAssayConfig} from "./interfaces/IAssayConfig.sol";
 import "./Errors.sol";
 
-/// Parameters, the three roles (owner, admin, arbiter), the pause flag, the verifier registry,
-/// the address blocklist and the slash delay.
-///
-/// The port of `state.rs::Config` minus everything that is Solana bookkeeping. What was left
-/// behind, and where it went:
-///
-/// - `stake_mint` — on EVM the asset is an immutable of the contract that holds
-///   it, so the choice is made once at deployment of AssayStake / AssayEscrow rather than stored
-///   here. `initialize_config.rs` refuses Token-2022 for a reason that has an EVM analogue
-///   (fee-on-transfer and hook tokens break `vault >= total_staked`); that refusal becomes a
-///   decimals check and a measured-balance transfer in those contracts, not a field here.
-/// - `total_staked` / `total_deposited` / `total_withdrawn` / `total_slashed`
-///   — custody totals belong to the contract that holds the custody, which is AssayStake.
-/// - `bump` / `vault_bump` / `_reserved` — PDA artefacts. `_reserved`'s job
-///   (room for a later field without a redeploy) is done here by `__gap` plus UUPS.
-///
-/// This contract NEVER holds a token and never gains a function that moves one. It is the
-/// only shared leaf of the dependency graph, and both edges into it are views.
-///
-/// Deployed behind an ERC1967Proxy and upgraded through UUPS (D-1, amended by D-17).
-///
-/// # Three roles (D-17, D-19)
-///
-/// - **`owner()`** — OpenZeppelin's `Ownable2StepUpgradeable`, held cold (a Ledger or a Safe). It
-///   is the UUPS upgrade authority of all three contracts (the other two read `CONFIG.owner()`
-///   live), and it appoints the admin (`setAdmin`). It moves in two steps — `transferOwnership`
-///   then `acceptOwnership` by the incoming key — and can never be renounced or become
-///   `address(0)`. **It holds no door that moves a token**: no sweep, no rescue. Its one residual
-///   power over user money is the upgrade itself.
-/// - **`admin`** — operational and used often: `updateConfig`, `setPaused`, the verifier registry,
-///   and `cancelSlash` on AssayStake. Every value it sets is bounded by `_validate`.
-///   It can neither upgrade anything nor appoint its successor. It appoints the arbiter
-///   (`setArbiter`), sets the slash delay (`setSlashDelay`) and the escrow's collect hold
-///   (`setCollectHold`), and blocks or unblocks addresses.
-/// - **`arbiter`** — a person's wallet (or a Safe), never the backend. It rules on a disputed
-///   slash (`AssayStake.upholdSlash`), cancels a pending or disputed one (`cancelSlash`, beside
-///   the admin) and may BLOCK an address — never unblock it. It reads `address(0)` only before
-///   the first appointment; after that it is replaced, never unset. The admin, the arbiter, the
-///   redeemer and the verifiers are distinct keys ([`_assertRolesDistinct`]).
-///
-/// The owner's storage is ERC-7201 namespaced (`openzeppelin.storage.Ownable` and
-/// `openzeppelin.storage.Ownable2Step`), so adopting it appends no sequential slot.
+/// @title AssayConfig
+/// @notice Protocol parameters, roles, pause flag, verifier registry, address blocklist, slash
+/// delay and collect hold, read by AssayEscrow and AssayStake.
+/// @dev Never holds a token and nothing here can move one. Behind an ERC1967 proxy (UUPS).
+/// Owner (Ownable2Step, never renounceable): upgrades all three contracts and appoints the
+/// admin. Admin: bounded parameters, pause, verifiers, arbiter, slash delay, collect hold,
+/// blocklist. Arbiter: rules on disputed slashes, may block but never unblock.
+/// Admin, arbiter, redeemer and live verifiers are always distinct keys.
 contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable, IAssayConfig {
-    /// May change parameters, pause, enrol and revoke verifier keys, and cancel a
-    /// pending judgement. **It is not the upgrade authority**: that is `owner()`, which is also
-    /// what appoints this key (D-17).
+    /// @notice The operational admin; not the upgrade authority.
     address public admin;
 
-    /// The emergency stop. Since D-19 it closes every user door — deposits,
-    /// redemption, the exits, limits and delegate grants — and leaves open only what releases a
-    /// hold or removes authority (`revokeDelegate`, the dispute, cancel and expire doors).
+    /// @inheritdoc IAssayConfig
     bool public override paused;
 
-    /// The economic parameter set, stored as one struct so `params()` cannot hand a caller two
-    /// fields from two different reads.
+    /// @dev Stored as one struct so `params` always returns a consistent set.
     ParamSet internal _params;
 
-    /// Flattened to `(admin, params)`: the Anchor event lists
-    /// each parameter as its own field, and `ParamSet` is exactly that list, so a decoder gets
-    /// the same values under the same names one level down.
-    ///
-    /// **Two Anchor fields are absent, both deliberately.**
-    ///
-    /// `stake_mint` — on EVM the settlement asset is `AssayEscrow.ASSET` / `AssayStake.ASSET`,
-    /// an immutable fixed at each deployment rather than a parameter of `Config`. There is no
-    /// mint for `Config` to announce, and adding one would create a second place the asset is
-    /// named. Read the omission as the split, not as an oversight.
-    ///
-    /// `slash_provider_bps` — derived, never stored, on both chains: it is
-    /// `10_000 - slashAgentBps - slashPlatformBps`. The event carries the two shares it is the
-    /// complement of, so no information is lost.
+    /// @notice Emitted once by `initialize`.
     event ConfigInitialized(address indexed admin, ParamSet params);
 
-    /// `events.rs::PauseToggled`, field names kept. `at` is `i64` on Solana and `uint64` here,
-    /// matching `block.timestamp`.
+    /// @notice Emitted when the admin sets the pause flag.
     event PauseToggled(address indexed admin, bool paused, uint64 at);
 
-    /// `events.rs::ConfigUpdated`, flattened to `(admin, params)` for the same reason
-    /// [`ConfigInitialized`] is: the Anchor event lists each parameter as its own field and
-    /// `ParamSet` is exactly that list.
-    ///
-    /// `admin` is the admin that signed. `slash_provider_bps` is absent for the same reason it is
-    /// absent from [`ConfigInitialized`]: derived from the two shares the event carries.
+    /// @notice Emitted when the admin replaces the parameter set.
     event ConfigUpdated(address indexed admin, ParamSet params);
 
-    /// The owner replaced the admin.
+    /// @notice Emitted when the owner replaces the admin.
     event AdminSet(address indexed previousAdmin, address indexed newAdmin);
 
-    /// `set_paused.rs` — the `has_one = admin` constraint, raising `ErrorCode::NotAdmin`.
     modifier onlyAdmin() {
         if (msg.sender != admin) revert NotAdmin();
         _;
     }
 
-    /// The implementation is never initialised and never usable on its own. Without this,
-    /// anybody may call `initialize` on the implementation, become its admin, and (for a
-    /// UUPS implementation) call `upgradeToAndCall` on it directly.
+    /// @dev Locks the implementation so it can never be initialised directly.
     constructor() {
         _disableInitializers();
     }
 
-    /// An initialiser rather than a constructor because the contract is upgradeable (D-1), and a
-    /// constructor writes the implementation's storage rather than the proxy's. `initializer`
-    /// makes it callable exactly once — the EVM form of `init` on the singleton `["config"]` PDA,
-    /// which can succeed once and then never again.
-    ///
-    /// `initialParams` is validated **as a whole set**, exactly as `initialize_config.rs`
-    /// calls `config.validate()` after every field has landed rather than checking each
-    /// argument as it arrives. The two split shares are only meaningful together.
-    ///
-    /// **A fresh deployment names both roles, and neither may be the deployer's to keep.**
-    ///
-    /// **Initializer versions.** All three contracts start at version 1 (plain `initializer`) on
-    /// a fresh proxy. The first upgrade that needs an initialiser call therefore uses
-    /// `reinitializer(2)`, the next `reinitializer(3)`, and so on: a reused number reverts
-    /// `InvalidInitialization` inside the upgrade's `upgradeToAndCall`.
+    /// @notice Initialises the proxy once with validated parameters, the admin and the owner.
+    /// @param initialParams The parameter set, validated as a whole.
+    /// @param initialAdmin The operational admin; must be non-zero.
+    /// @param initialOwner The upgrade authority; must be non-zero.
+    /// @dev Later upgrades that need an initialiser use `reinitializer(2)`, `(3)`, and so on.
     function initialize(ParamSet memory initialParams, address initialAdmin, address initialOwner)
         external
         initializer
     {
-        // Not a port: on Solana the admin is `Signer<'info>` and a signature by the zero key is
-        // unforgeable, so `initialize_config` cannot receive one. Here it is a plain argument,
-        // and a config whose admin is `address(0)` can never be paused or upgraded again.
         if (initialAdmin == address(0)) revert InvalidAdmin();
-        // `__Ownable_init` refuses `address(0)` with `OwnableInvalidOwner(0)`.
         __Ownable_init(initialOwner);
         _validate(initialParams);
         admin = initialAdmin;
         _params = initialParams;
-        // `paused` is left at its zero value — `initialize_config.rs` writes `false`.
         emit ConfigInitialized(initialAdmin, initialParams);
     }
 
-    /// The upgrade door, for this contract — and through `CONFIG.owner()` for the other two.
-    /// Immediate, with no timelock (D-1); the authority is the owner (D-17).
+    /// @dev Upgrade authority is the owner; immediate, no timelock.
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    /// `Ownable.owner()`, re-declared only because `IAssayConfig` names it as well.
+    /// @inheritdoc IAssayConfig
     function owner() public view override(OwnableUpgradeable, IAssayConfig) returns (address) {
         return super.owner();
     }
 
-    /// Disabled. `Ownable2Step` already makes an accidental hand-over to a wrong address
-    /// recoverable (the wrong address never accepts); renouncing is the one move that is not, so
-    /// it does not exist here.
+    /// @notice Always reverts: ownership can never be renounced.
     function renounceOwnership() public pure override {
         revert OwnershipCannotBeRenounced();
     }
 
-    /// The owner appoints (or replaces) the admin, in one step: the owner is the recovery path if
-    /// the address is wrong, which is what the single-key D-6 handover never had.
-    /// The new admin may not hold another role ([`_assertRolesDistinct`]).
+    /// @notice Appoints or replaces the admin. Owner only.
+    /// @param newAdmin The new admin; non-zero and not holding another role.
     function setAdmin(address newAdmin) external onlyOwner {
         if (newAdmin == address(0)) revert InvalidAdmin();
         emit AdminSet(admin, newAdmin);
@@ -171,12 +91,8 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         _assertRolesDistinct();
     }
 
-    /// **The one place the role table lives** (audit F R5): the admin is not a live verifier; the
-    /// arbiter, once appointed, is neither the admin, nor the redeemer, nor a live verifier.
-    /// "Live" is registered and not revoked — an expired key is still live here, so it cannot be
-    /// re-used in another role. Called at the END of every writer of a role or of the redeemer
-    /// (`setAdmin`, `setArbiter`, `registerVerifier`, `updateConfig`), so a refusal rolls the
-    /// write back. A rule added later goes here and nowhere else.
+    /// @dev Reverts unless the admin is not a live verifier and the arbiter (once appointed) is
+    /// neither the admin, the redeemer nor a live verifier. Called last by every role writer.
     function _assertRolesDistinct() internal view {
         VerifierKey storage a = verifiers[admin];
         if (a.registered && !a.revoked) revert InvalidAdmin();
@@ -188,66 +104,37 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         }
     }
 
+    /// @inheritdoc IAssayConfig
     function params() external view override returns (ParamSet memory) {
         return _params;
     }
 
-    /// Reversible, admin-only, and it never adds a door — it can only
-    /// close one that already exists.
+    /// @notice Sets the pause flag. Admin only.
+    /// @param value True to pause, false to unpause.
     function setPaused(bool value) external onlyAdmin {
         paused = value;
         emit PauseToggled(msg.sender, value, uint64(block.timestamp));
     }
 
-    /// `update_config.rs`, one-for-one.
-    ///
-    /// **The shape differs and the behaviour does not.** Anchor takes eleven `Option`s, `None`
-    /// meaning "leave it"; Solidity has no `Option`, so the caller sends the WHOLE set — the
-    /// console reads `params()`, patches, and sends it back. What the two forms share is the
-    /// property that matters: the set that ends up in storage is validated as a set.
-    ///
-    /// Validated once, after every field has landed. The two split
-    /// shares are only meaningful together, and a field-at-a-time check would refuse a legal
-    /// move depending on the order the fields arrive in — moving `(6000, 3000)` to
-    /// `(3000, 7000)` transits `(6000, 7000)` if `platform` lands first.
-    ///
-    /// No timelock, no pending slot, no two-step handover, by design decision D-1 —
-    /// one logic on both chains. `update_config.rs`: "a 72-hour wait for the adverse
-    /// direction was built and retired because it defends against an injected transaction, not
-    /// against the holder of a hardware wallet."
-    ///
-    /// `unbondingPeriodSeconds` re-dates every unbonding already in flight, in both directions —
-    /// AssayStake's maturity check will read it live, as `ProviderStake::unbonding_matured` does.
-    /// Decide which you are doing before you sign.
-    ///
-    /// It never moves the admin: appointing the admin is the owner's `setAdmin` (D-17).
+    /// @notice Replaces the whole parameter set. Admin only; takes effect immediately.
+    /// @param p The new parameter set, validated as a whole.
+    /// @dev A new `unbondingPeriodSeconds` also applies to unbondings already in flight.
     function updateConfig(ParamSet calldata p) external onlyAdmin {
-        ParamSet memory q = p; // `_validate` takes memory; one copy on a cold path
+        ParamSet memory q = p;
         _validate(q);
         _params = q;
-        _assertRolesDistinct(); // the redeemer is never the arbiter
+        _assertRolesDistinct();
         emit ConfigUpdated(admin, q);
     }
 
-    /// Ported from `state.rs::Config::validate` and `validate_split`,
-    /// in that source's order. Every bound is a statement about a
-    /// parameter that has stopped being what it is called: a 100% take rate is not a take rate,
-    /// a 100% slash cap is not a cap.
-    ///
-    /// `penaltyAmount` has no bound of its own: `0` is on-chain shadow mode.
-    /// Its only ceiling is the provider-day cross-check against `minimumStake` below.
-    ///
-    /// Parameters only. The role table (the redeemer is not the arbiter) is
-    /// [`_assertRolesDistinct`]'s, and the slash delay is no longer coupled to the unbonding
-    /// period (audit F R3): a proposed penalty is held by `pendingSlash` however long the delay,
-    /// so only the breach-to-proposal leg needs `MIN_UNBONDING_PERIOD_SECONDS`.
+    /// @dev Reverts unless every parameter is within its bound. `penaltyAmount` may be 0
+    /// (shadow mode); otherwise a provider at `minimumStake` must fit two maximal penalties
+    /// under its slash cap.
     function _validate(ParamSet memory p) internal pure {
         if (p.treasury == address(0)) revert MissingBeneficiary();
         if (p.redeemer == address(0)) revert MissingRedeemer();
         if (p.takeRateBps > Constants.MAX_TAKE_RATE_BPS) revert InvalidTakeRateBps();
-        // `uint32` because the sum of two `uint16` overflows `uint16` — `state.rs` widens to
-        // `u32` for the same reason. Checked arithmetic would panic rather than revert with the
-        // name, and a `Panic(0x11)` is not the diagnosis an operator needs.
+        // Widened so the sum cannot overflow and panic instead of reverting with the name.
         if (p.slashAgentBps == 0 || uint32(p.slashAgentBps) + p.slashPlatformBps > 10_000) {
             revert InvalidSplitBps();
         }
@@ -261,98 +148,36 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
             revert UnbondingPeriodTooLong();
         }
         if (p.minimumStake == 0) revert InvalidMinimumStake();
-        // A provider at the minimum must fit two maximal records in one provider-day (the
-        // provider-side twin of G-1): with all or wait, a record that fills the whole cap pays
-        // only on an empty window, so one small execution a day starves it until it expires.
-        // With a penalty above 0 this also keeps that cap allowance above 0; a penalty of 0
-        // (shadow mode) slashes nothing, so it needs no allowance.
         if (
             uint256(p.minimumStake) * p.slashCapBps / Constants.BPS_DENOMINATOR
                 < 2 * uint256(p.penaltyAmount)
         ) {
             revert InvalidMinimumStake();
         }
-        // `verifierDailyCap` is not read on chain since D-25 (`executeSlash` meters only the
-        // provider's window). The field stays in `ParamSet` for ABI and layout stability; the
-        // backend only displays it and enforces no per-key budget with it. A stolen verifier key
-        // is bounded by `revokeVerifier` within the slash delay (D-25). A zero is still refused
-        // as a misconfiguration. Its old `>= 2 * penaltyAmount` bound (audit G G-1) protected
-        // the on-chain key window and went with it.
+        // Not read on chain; kept in `ParamSet` for ABI and layout stability. Zero is refused.
         if (p.verifierDailyCap == 0) revert InvalidVerifierDailyCap();
     }
 
-    // -------------------------------------------------------------------------------------
-    // the verifier registry — `register_verifier.rs`, `revoke_verifier.rs`, `state.rs`
-    // -------------------------------------------------------------------------------------
+    // --- verifier registry -------------------------------------------------------------------
 
-    /// `state.rs`, minus two fields that are deliberately not here.
-    ///
-    /// - `verifier` and `bump` — Solana PDA artefacts. There the pubkey is stored *as well as*
-    ///   seeded so `assert_can_sign` compares against stored state rather than the caller's
-    ///   account choice; here the key IS the mapping key, so there is nothing a caller could
-    ///   choose and nothing to cross-check.
-    /// - `label` — written to the event and never read on chain. `register_verifier.rs` stores
-    ///   it because a Solana account is the only place an operator can read it back; here the log
-    ///   is that place. Storing it would cost a slot per key to serve a query `eth_getLogs`
-    ///   already answers.
-    /// - `slashed_in_window` / `slash_window_started_at` — **the per-key rolling daily cap, which
-    ///   is not enforced on chain at all** (D-25): a key-wide window was a shared resource one
-    ///   party could fill to make every other provider's slash expire. It never lived here
-    ///   either way (D-3): AssayStake must not have write authority over this contract.
-    ///
-    /// The two booleans are `state.rs`'s `status` plus the account existence Anchor gets for
-    /// free, and **both are load-bearing**: `registered` is what makes enrolment one-shot, and
-    /// `revoked` is what stops a key. Neither is derived from a timestamp.
-    ///
-    /// The first draft of this port dropped `status` and read revocation off `revokedAt != 0`, on
-    /// the argument that two representations of one fact can disagree. That was wrong twice over.
-    /// Anchor carries **both** `status` and `revoked_at`, so collapsing them
-    /// is the divergence, not the parity; and the collapse put the whole control on a sentinel
-    /// that `0` is a legal stamp for — at `block.timestamp == 0` `revokeVerifier` wrote
-    /// `revokedAt = 0` and the revocation was a silent no-op, as a review measured.
-    /// `revoked` restores the reference's shape and closes that at every clock. `revokedAt` is now
-    /// what its Anchor twin is: the recorded instant, evidence for an investigator, read by no
-    /// predicate.
-    ///
-    /// All five fields pack into **one** slot (8 + 8 + 8 + 1 + 1 = 26 bytes), so a registration is
-    /// one `SSTORE` and `canSign` is one `SLOAD`. That follows from `state.rs`'s own field order;
-    /// reordering costs gas on the hottest read in the slash path.
+    /// @dev One storage slot per key. Registration is one-shot and revocation is permanent.
     struct VerifierKey {
-        /// Stamped from the clock the registration ran at, and read by nothing on
-        /// chain — it is the operator's and the investigator's, which is why only a whole-record
-        /// assertion can see it go wrong.
+        /// Registration timestamp; informational only.
         uint64 registeredAt;
-        /// When this key stops being accepted regardless of status. Always in the
-        /// future at registration and never further out than `MAX_VERIFIER_KEY_LIFETIME_SECONDS`.
+        /// Last timestamp (inclusive) at which the key may sign.
         uint64 expiresAt;
-        /// `0` until [`revokeVerifier`] runs, then the instant it ran — **which may
-        /// itself be `0`**, at genesis. Written once and never cleared. Evidence, not a predicate:
-        /// `revoked` is the predicate.
+        /// Revocation timestamp; evidence only, `revoked` is the predicate.
         uint64 revokedAt;
-        /// **No Anchor counterpart, and it carries the property that account had.** On Solana
-        /// "this address was never enrolled" is the absence of the `["verifier", pubkey]` PDA, and
-        /// `register_verifier`'s `init` is what makes enrolment one-shot. A Solidity mapping has
-        /// no absence — every unread slot reads back as zeros — so the flag has to exist, and it
-        /// is what `registerVerifier` keys its refusal on. Once true it is never set false again:
-        /// that is what makes revocation a one-way door, because a revoked address can never be
-        /// enrolled a second time.
+        /// Set on registration and never cleared, so an address can be enrolled only once.
         bool registered;
-        /// `state.rs`'s `VerifierStatus` — `false` is `Active`, `true` is `Revoked`. Set once,
-        /// by [`revokeVerifier`], with no edge back out.
+        /// Set by `revokeVerifier` and never cleared.
         bool revoked;
     }
 
-    /// `["verifier", verifier_pubkey]` as a mapping. One entry per key, never
-    /// removed — `revoke_verifier.rs`: closing the account would refund the rent and free
-    /// the address, at which point a key revoked during a breach can be quietly reinstated.
-    ///
-    /// **New storage, appended after every existing field and paid for out of `__gap`** (D-1):
-    /// this contract runs behind an ERC1967 proxy, so a slot inserted above `_params` would
-    /// reinterpret live state. `__gap` goes 50 → 49 in the same change.
+    /// @dev Entries are never deleted, so a revoked key can never be re-enrolled.
     mapping(address => VerifierKey) internal verifiers;
-    /// `events.rs`, field names kept. `label` is indexed nowhere and stored nowhere; this
-    /// event is the only place it exists, which is why the whole data payload matters.
 
+    /// @notice Emitted when the admin enrols a verifier key. `label` exists only in this event.
     event VerifierRegistered(
         address indexed verifier,
         address indexed admin,
@@ -361,40 +186,23 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         uint64 expiresAt
     );
 
-    /// `events.rs`, name and fields kept — including the `Event` suffix Anchor needs to
-    /// avoid colliding with its `VerifierRevoked` *error*, which this codebase also has.
+    /// @notice Emitted when the admin revokes a verifier key.
     event VerifierRevokedEvent(address indexed verifier, address indexed admin, uint64 revokedAt);
 
-    /// Admin-only, and deliberately not something the running
-    /// backend can do: the allowlist is what makes a stolen verifier key a recoverable incident,
-    /// and a service that could both sign and enrol would be enough to slash every provider. The
-    /// key may sign at once — an activation delay defends only against a stolen admin key, which
-    /// the threat model trusts (it is a Ledger).
-    ///
-    /// **Registration is one-shot, forever.** `register_verifier.rs` gets that from `init`
-    /// on a PDA that nothing closes; here it is the `registered` flag, which no path clears. That
-    /// is what makes [`revokeVerifier`] terminal rather than a pause, and it means rotation is
-    /// always a NEW address — never this one re-enrolled with a later expiry.
-    ///
-    /// Not gated on [`paused`], exactly as the Anchor instruction is not: this moves no money.
+    /// @notice Enrols a verifier key that may sign slash attestations at once. Admin only.
+    /// @param verifier The key's address; non-zero and never enrolled before.
+    /// @param label Free-form label, emitted only.
+    /// @param expiresAt Expiry, in the future and within `MAX_VERIFIER_KEY_LIFETIME_SECONDS`.
+    /// @dev Not pause-gated. Rotation always uses a new address.
     function registerVerifier(address verifier, bytes32 label, uint64 expiresAt)
         external
         onlyAdmin
     {
-        // Not a port: on Solana a `Pubkey::default()` verifier would still get a PDA and would
-        // simply be a key nobody can sign for. Here `address(0)` is the value every uninitialised
-        // slot and every failed `ecrecover` produces, so enrolling it would make a recovery
-        // failure look like a registered verifier at the `AssayStake` call site.
         if (verifier == address(0)) revert ZeroAddress();
         if (verifiers[verifier].registered) revert VerifierAlreadyRegistered();
 
         uint64 nowTs = uint64(block.timestamp);
-        // `register_verifier.rs`, both ends: strictly future, and no further out than the
-        // rotation ceiling. The ceiling is computed in `uint256` because Anchor adds it with
-        // `saturating_add` — a clock close enough to the end of the type makes the ceiling stop
-        // binding there, where Solidity's checked `+` would panic with `Panic(0x11)` instead of
-        // either admitting or naming a reason. `expiresAt` is `uint64`, so the widened comparison
-        // admits exactly what the saturating one does.
+        // Ceiling computed in uint256 so a clock near the end of uint64 cannot panic.
         if (
             expiresAt <= nowTs
                 || uint256(expiresAt) > uint256(nowTs) + Constants.MAX_VERIFIER_KEY_LIFETIME_SECONDS
@@ -407,80 +215,37 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
             registered: true,
             revoked: false
         });
-        _assertRolesDistinct(); // never the admin or the arbiter
+        _assertRolesDistinct();
         emit VerifierRegistered(verifier, msg.sender, label, nowTs, expiresAt);
     }
 
-    /// The emergency control, and the first step of incident response
-    /// for a suspected verifier key compromise.
-    ///
-    /// It is deliberately NOT timelocked and deliberately irreversible. **This is the single
-    /// control the two-phase slash exists to make usable**: `AssayStake.executeSlash` re-checks
-    /// [`assertCanSign`] on the record's verifier at execution time, so revoking a key voids every
-    /// judgement it signed that is still inside its slash delay — including ones already
-    /// proposed. A revocation that could be undone, or one that had to wait out a delay of its
-    /// own, would give that re-check nothing to find.
-    ///
-    /// A second revoke is **refused rather than ignored**: the state
-    /// is already what the operator wanted, so nothing is at risk either way, but `revokedAt` is
-    /// when the key stopped being trusted, and a silent overwrite would move that timestamp
-    /// forward past the window an investigator is trying to bound.
-    ///
-    /// Expiry is not consulted. An already-expired key may still be revoked, and should be: the
-    /// stamp is evidence, and `assertCanSign` will then name the revocation rather than the lapse.
+    /// @notice Permanently revokes a verifier key. Admin only; immediate and irreversible.
+    /// @param verifier The key to revoke; must be registered and not yet revoked.
+    /// @dev `executeSlash` re-checks the key, so this voids every unexecuted slash it signed.
     function revokeVerifier(address verifier) external onlyAdmin {
         VerifierKey storage k = verifiers[verifier];
-        // Checked before `revoked`, because a never-enrolled address reads back `revoked == false`
-        // and would otherwise be diagnosed as an active key.
         if (!k.registered) revert VerifierNotRegistered();
         if (k.revoked) revert VerifierAlreadyRevoked();
         k.revoked = true;
         k.revokedAt = uint64(block.timestamp);
-        // Nothing else in this function writes. `registeredAt` and `expiresAt` SURVIVE a
-        // revocation — deliberately: they are the audit trail (when the key was trusted, and
-        // until when it would have been), readable through `verifierKey`.
-        // `test_wrongState_revocationCanNeverBeUndone` is what refuses a "tidy up" edit here.
+        // `registeredAt` and `expiresAt` are kept as the audit trail.
         emit VerifierRevokedEvent(verifier, msg.sender, k.revokedAt);
     }
 
-    /// The whole entry, for operators and for the console. Reading `registered` is the only way
-    /// to tell "never enrolled" from "enrolled with every field at zero", which cannot happen but
-    /// is what a caller would have to assume without the flag.
+    /// @notice Returns the full registry entry of a verifier key.
+    /// @param verifier The key's address.
+    /// @return The stored entry; all zero if never registered.
     function verifierKey(address verifier) external view returns (VerifierKey memory) {
         return verifiers[verifier];
     }
 
-    /// `state.rs` as a predicate. Non-reverting, for `expireSlash`'s "the key can no
-    /// longer sign" branch, which needs the answer rather than a revert.
-    ///
-    /// **Every conjunct is a stored flag or the stored expiry — none is inferred from another
-    /// field being zero.** `registered` is not `expiresAt != 0` and `revoked` is not
-    /// `revokedAt != 0`, even though each pair agrees on every state this contract can reach
-    /// today. `test_theTwoFlagsAreLoadBearingAtEveryDoor` constructs, with `vm.store`, the states
-    /// where they disagree — which is what a future writer of this struct, or a layout change,
-    /// would produce.
-    ///
-    /// **All three conditions, in one place.** Anchor puts expiry inside `assert_can_sign` rather
-    /// than at the call site "because a key that outlived its registration is exactly as
-    /// unacceptable as one that was revoked", and the same argument makes
-    /// this a conjunction rather than three checks a caller might do two of.
-    ///
-    /// `<=` and not `<`: `state.rs` is `now <= self.expires_at`, so the shared instant belongs
-    /// to the key.
+    /// @inheritdoc IAssayConfig
     function canSign(address verifier) public view override returns (bool) {
         VerifierKey storage k = verifiers[verifier];
         return k.registered && !k.revoked && block.timestamp <= k.expiresAt;
     }
 
-    /// Reverting, for `proposeSlash` and `executeSlash`, so the diagnosis
-    /// survives to the caller instead of collapsing into one boolean.
-    ///
-    /// **The order is Anchor's**: status before expiry, so a key that is both
-    /// revoked and expired reverts [`VerifierRevoked`]. `VerifierNotRegistered` comes first and has
-    /// no Anchor counterpart — there the account's absence is the refusal, before the handler runs.
-    ///
-    /// `k.revoked`, not `k.revokedAt != 0`: see the struct. A key revoked at `block.timestamp == 0`
-    /// stamps `revokedAt = 0`, and under the sentinel spelling that revocation was a no-op.
+    /// @inheritdoc IAssayConfig
     function assertCanSign(address verifier) external view override {
         VerifierKey storage k = verifiers[verifier];
         if (!k.registered) revert VerifierNotRegistered();
@@ -488,39 +253,27 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         if (block.timestamp > k.expiresAt) revert VerifierKeyExpired();
     }
 
-    // -------------------------------------------------------------------------------------
-    // the dispute upgrade — arbiter, slash delay, blocklist (EVM only)
-    // -------------------------------------------------------------------------------------
+    // --- dispute: arbiter, slash delay, blocklist --------------------------------------------
 
-    /// The arbiter (see the contract header). Appended storage, paid for out of `__gap`.
+    /// @inheritdoc IAssayConfig
     address public override arbiter;
 
-    /// The admin-set slash delay; `0` means never set, which reads back as the default. Packed
-    /// beside `arbiter`, one slot for both.
+    /// @dev Admin-set slash delay in seconds; 0 means unset (use the default).
     uint64 internal _slashDelaySeconds;
 
-    /// The blocklist. One mapping, one slot. Read by the money contracts through
-    /// [`assertActive`]; nothing here can move a blocked party's funds.
-    ///
-    /// **It binds the SUBJECTS of a door — buyer, payer, payee (provider), delegate, provider,
-    /// funder — never the operators around them**: not a relayer landing a `…BySig`, not the
-    /// redeemer or a keeper calling `proposeSlash` / `executeSlash` / `expireSlash`, not the slash
-    /// beneficiary or the treasury, not the admin or the arbiter, and **not the verifier**.
-    /// Blocking a verifier address does not stop its signatures: a forging verifier is stopped
-    /// only by `revokeVerifier`, which is admin-only. The arbiter's own tool against a forged
-    /// slash is `AssayStake.cancelSlash`.
+    /// @dev Blocklist of door subjects (buyer, payer, payee, provider, delegate, funder), never
+    /// operators or verifiers; a verifier is stopped only by `revokeVerifier`.
     mapping(address => bool) internal _blocked;
 
+    /// @notice Emitted when the admin appoints or replaces the arbiter.
     event ArbiterSet(address indexed previousArbiter, address indexed newArbiter);
+    /// @notice Emitted when the admin changes the slash delay.
     event SlashDelaySet(uint64 previousDelay, uint64 newDelay);
+    /// @notice Emitted when an address is blocked or unblocked.
     event BlockedSet(address indexed account, bool blocked, address indexed by);
 
-    /// **`address(0)` is refused**: with no arbiter a dispute is a free 30-day veto (audit A
-    /// M-2). A lost or compromised arbiter is REPLACED, never removed. (Before the first
-    /// appointment the slot reads `address(0)`; the runbook appoints it after the deploy.)
-    ///
-    /// The arbiter is a separate person: never the admin, the redeemer or a live verifier
-    /// ([`_assertRolesDistinct`], `InvalidArbiter`).
+    /// @notice Appoints or replaces the arbiter. Admin only.
+    /// @param newArbiter Non-zero; not the admin, the redeemer or a live verifier.
     function setArbiter(address newArbiter) external onlyAdmin {
         if (newArbiter == address(0)) revert InvalidArbiter();
         emit ArbiterSet(arbiter, newArbiter);
@@ -528,12 +281,7 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         _assertRolesDistinct();
     }
 
-    /// The delay a NEW proposal waits before `executeSlash`, and so the provider's dispute
-    /// window. A record already proposed keeps the `executableAt` frozen into it.
-    ///
-    /// Reads back as `Constants.SLASH_DELAY_SECONDS` until set, so an upgraded proxy keeps 72
-    /// hours with no initializer call. Never below [`minSlashDelaySeconds`], so a value stored
-    /// before the floor existed (or on another chain id) cannot outlive it.
+    /// @inheritdoc IAssayConfig
     function slashDelaySeconds() public view override returns (uint64) {
         uint64 d = _slashDelaySeconds;
         if (d == 0) return Constants.SLASH_DELAY_SECONDS;
@@ -541,7 +289,7 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         return d < floor ? floor : d;
     }
 
-    /// D-23: 48 hours on every chain but the test chains, where it is ten minutes.
+    /// @inheritdoc IAssayConfig
     function minSlashDelaySeconds() public view override returns (uint64) {
         return block.chainid == Constants.ROBINHOOD_TESTNET_CHAIN_ID
             || block.chainid == Constants.LOCAL_CHAIN_ID
@@ -549,11 +297,8 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
             : Constants.MIN_SLASH_DELAY_SECONDS;
     }
 
-    /// Fixed bounds, `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (48 h, or 10 min on a
-    /// test chain, to 22 days),
-    /// independent of the unbonding period (audit F R3): once proposed, a penalty is held by
-    /// `pendingSlash` and no unbonding exit can take it, however long the delay
-    /// (`test_longDelayShortUnbondingCannotBeOutrun`).
+    /// @notice Sets the slash delay for new proposals. Admin only.
+    /// @param newDelay Seconds, within `[minSlashDelaySeconds, MAX_SLASH_DELAY_SECONDS]`.
     function setSlashDelay(uint64 newDelay) external onlyAdmin {
         if (newDelay < minSlashDelaySeconds() || newDelay > Constants.MAX_SLASH_DELAY_SECONDS) {
             revert InvalidSlashDelay();
@@ -562,12 +307,14 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         _slashDelaySeconds = newDelay;
     }
 
+    /// @inheritdoc IAssayConfig
     function blocked(address account) external view override returns (bool) {
         return _blocked[account];
     }
 
-    /// The admin blocks and unblocks; the arbiter may only block. Blocking stops the address at
-    /// every door [`assertActive`] guards and moves none of its money.
+    /// @notice Blocks or unblocks an address. Admin may do both; the arbiter may only block.
+    /// @param account The address; non-zero.
+    /// @param value True to block, false to unblock.
     function setBlocked(address account, bool value) external {
         if (msg.sender != admin) {
             if (msg.sender != arbiter) revert NotAdmin();
@@ -578,38 +325,28 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         emit BlockedSet(account, value, msg.sender);
     }
 
-    /// The one check the money contracts make at every door the pause or the blocklist closes:
-    /// not paused, and none of up to three parties blocked. Unused slots are `address(0)`, which
-    /// can never be blocked.
+    /// @inheritdoc IAssayConfig
     function assertActive(address a, address b, address c) external view override {
         if (paused) revert ProgramPaused();
         if (_blocked[a] || _blocked[b] || _blocked[c]) revert AddressBlocked();
     }
 
-    // -------------------------------------------------------------------------------------
-    // redeem into hold — the collect hold (EVM only)
-    // -------------------------------------------------------------------------------------
+    // --- collect hold ------------------------------------------------------------------------
 
-    /// The admin-set collect hold; `0` means never set, which reads back as the default.
-    /// Appended storage, paid for out of `__gap`.
+    /// @dev Admin-set collect hold in seconds; 0 means unset (use the default).
     uint64 internal _collectHoldSeconds;
 
+    /// @notice Emitted when the admin changes the collect hold.
     event CollectHoldSet(uint64 previous, uint64 next);
 
-    /// How long `AssayEscrow` keeps a NEW redemption in `held` before the redeemer may collect it
-    /// to the provider, and so how long a buyer dispute can still be refunded for certain. A
-    /// record already held keeps the `collectableAt` frozen into it.
-    ///
-    /// Reads back as `Constants.DEFAULT_COLLECT_HOLD_SECONDS` until set, so an upgraded proxy
-    /// holds for an hour with no initializer call (the [`slashDelaySeconds`] pattern).
+    /// @inheritdoc IAssayConfig
     function collectHoldSeconds() public view override returns (uint64) {
         uint64 h = _collectHoldSeconds;
         return h == 0 ? Constants.DEFAULT_COLLECT_HOLD_SECONDS : h;
     }
 
-    /// Fixed bounds, `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]` (1 min to 1 day). A
-    /// stolen admin key can shorten the hold to a minute, never to zero, and it moves no money:
-    /// the refund stays open until `collectableAt + HELD_TIMEOUT_SECONDS` whatever the hold.
+    /// @notice Sets the collect hold for new redemptions. Admin only.
+    /// @param newHold Seconds, within `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]`.
     function setCollectHold(uint64 newHold) external onlyAdmin {
         if (
             newHold < Constants.MIN_COLLECT_HOLD_SECONDS
@@ -619,21 +356,6 @@ contract AssayConfig is Initializable, UUPSUpgradeable, Ownable2StepUpgradeable,
         _collectHoldSeconds = newHold;
     }
 
-    /// The append budget the D-7 upgrade-safety gate spends. Every contract here ends with
-    /// one, and adding a field means shrinking it by exactly the slots the field consumes.
-    ///
-    /// **50 → 49 for the verifier registry**: `verifiers` is one mapping, one slot. The contract's
-    /// total footprint
-    /// is unchanged, which is the property the gate checks — a field appended without paying for
-    /// it out of here moves every slot after it.
-    ///
-    /// **Unchanged by D-17**: the owner role's storage is ERC-7201 namespaced
-    /// (`openzeppelin.storage.Ownable`, `openzeppelin.storage.Ownable2Step`), not a slot here.
-    ///
-    /// **49 → 47 for the dispute upgrade**: `arbiter` + `_slashDelaySeconds` share one slot and
-    /// `_blocked` is one mapping slot.
-    ///
-    /// **47 → 46 for the redeem-into-hold change**: `_collectHoldSeconds` takes one slot (the
-    /// `arbiter` slot has 4 bytes left, too few for a `uint64`).
+    /// @dev Reserved slots for future storage; shrink by the slots any new field takes.
     uint256[46] private __gap;
 }

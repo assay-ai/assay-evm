@@ -1,256 +1,219 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.38;
 
-/// The shared error catalogue — one name per condition, across all three contracts.
-///
-/// File-level rather than per-contract so that a condition cannot acquire two names by being
-/// checked in two places, and so an off-chain decoder has one selector table to build. There are
-/// **no revert strings anywhere in this codebase**: a string costs bytecode proportional to its
-/// length, is truncated by half the tooling that surfaces it, and cannot carry a parameter.
-///
-/// Names match the Anchor program's `programs/x402-payment/src/error.rs` (repository
-/// `assay-solana`) wherever the condition has a
-/// behavioural analogue, so a failure means the same thing on both chains and one incident
-/// runbook covers both.
-///
-/// # The accounting against `error.rs`, in full
-///
-/// `error.rs` declares **55** `ErrorCode` variants. **46** of them appear below under the same
-/// name, and **48** errors below have no Anchor counterpart at all. The remaining **9** are
-/// absent, and named here so that "the port is complete" is a claim a reader can check. (The
-/// counts are the output of a set difference over the two files, as `script/check-errors.sh`
-/// computes it; if you change either file, redo it rather than adjusting these by one.)
-///
-/// - **No EVM condition at all:** `EscrowMismatch` (the EVM voucher has no `pay_to`),
-///   `StakeMintProgramNotSupported` (the asset question here is [`AssetDecimalsNotSix`]),
-///   `EscrowLimitsRequireBuyer` (`setLimits` reads `msg.sender` and `setLimitsBySig` refuses with
-///   [`SignerIsNotBuyer`] first, so "armed limits with no buyer authorisation" cannot arise),
-///   `NotBuyer` (every buyer door is keyed by `msg.sender` or a recovered signer), and
-///   `DestinationIsVault` / `DestinationIsEscrowAta` (`withdraw` and `withdrawStake` take no
-///   destination and pay `msg.sender`, D-15).
-/// - **Absorbed by a truer name:** `MissingBuyerSignature` → [`SignerIsNotPayer`] on the redeem
-///   path and [`SignerIsNotBuyer`] on the escrow-control paths; `MissingVerifierSignature` →
-///   `VerifierNotRegistered` / `VerifierRevoked` / `VerifierKeyExpired`, which `assertCanSign`
-///   raises for the recovered attestation signer. `ecrecover` always yields *some* address, so a
-///   "missing" signature is never the condition — a signature by the wrong key is.
-/// - **Folded into the wait (D-20):** `VerifierDailyCapExceeded` → [`SlashWindowNotDrained`].
-///   Execution is all or wait, so a full key window is the same condition as a full provider
-///   window: retry later.
-///
-/// The 48 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
-/// malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
-/// fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
-/// voucher delegation, the three of the owner/admin split and the seq jump cap, the eleven of
-/// the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), and the four of the
-/// redeem-into-hold change (held status, collect and refund timing, settable collect hold).
-///
-/// The six PDA seed constants in `constants.rs` have no counterpart in `Constants.sol` for
-/// the same kind of reason; that omission is recorded there, not here.
+/// @notice Shared custom errors for AssayConfig, AssayStake and AssayEscrow.
+/// @dev Declared at file level so each condition has exactly one name and one selector across all
+/// three contracts. No revert strings are used anywhere.
 
 // --- generic -----------------------------------------------------------------
+/// @notice An amount argument is zero.
 error ZeroAmount();
+/// @notice A required address argument is `address(0)`.
 error ZeroAddress();
-/// **This entry was previously listed as having no EVM condition, and that was
-/// wrong.** The reasoning was that Solidity 0.8's checked arithmetic reverts with `Panic(0x11)`
-/// before any hand-written check could run, which is true of `+`, `-`, `*` and `/` — and false of
-/// the one operation the money path actually needs it for. An **explicit narrowing cast**,
-/// `uint64(someUint256)`, is not checked: it truncates silently, and a wrapped amount on the money
-/// path is exactly what `MathOverflow` exists to refuse. Its Anchor twin is
-/// `execute_slash.rs`'s `u64::try_from(scaled).map_err(|_| error!(ErrorCode::MathOverflow))`.
-///
-/// Raised by [`Fee.bpsOf`] and [`Fee.splitFee`] when the widened `uint256` share does not fit back
-/// into the `uint64` every amount argument is. Reach for it at any other checked narrowing of a
-/// value that came out of `uint256` bps arithmetic; `Panic(0x11)` still covers ordinary overflow,
-/// and this error should not be hand-rolled where the arithmetic already reverts on its own.
+/// @notice A `uint256` or `uint128` value does not fit in `uint64` on an explicit narrowing.
 error MathOverflow();
+/// @notice The protocol is paused.
 error ProgramPaused();
 
 // --- authority ---------------------------------------------------------------
+/// @notice The caller is not the admin (or, where permitted, the arbiter).
 error NotAdmin();
-/// Raised by `initialize` and `setAdmin` for `address(0)`, and by any role writer that would make
-/// the admin a live verifier (`AssayConfig._assertRolesDistinct`, D-19). `ParamSet` carries no
-/// admin: only the owner's `setAdmin` moves it (D-17).
+/// @notice The admin would be `address(0)` or a live verifier.
 error InvalidAdmin();
+/// @notice The caller is not the redeemer.
 error NotRedeemer();
-/// EVM only. The caller of an upgrade on `AssayStake` or `AssayEscrow` is not `CONFIG.owner()`.
-/// (`AssayConfig`'s own owner-gated doors use OpenZeppelin's `onlyOwner`, which raises
-/// `OwnableUnauthorizedAccount(account)` for the same condition.)
+/// @notice The caller of an upgrade on AssayStake or AssayEscrow is not the config owner.
 error NotOwner();
-/// EVM only. `renounceOwnership` is disabled: an owner of `address(0)` would leave all three
-/// contracts unupgradeable and the admin unreplaceable, for ever.
+/// @notice `renounceOwnership` is disabled.
 error OwnershipCannotBeRenounced();
 
 // --- parameters --------------------------------------------------------------
+/// @notice `takeRateBps` is above `MAX_TAKE_RATE_BPS`.
 error InvalidTakeRateBps();
+/// @notice `slashAgentBps` is zero, or the agent and platform shares sum above 10,000 bps.
 error InvalidSplitBps();
+/// @notice `slashCapBps` is zero or above `MAX_SLASH_CAP_BPS`.
 error InvalidSlashCapBps();
+/// @notice `verifierDailyCap` is zero.
 error InvalidVerifierDailyCap();
+/// @notice `minimumStake` is zero or too small to cover two maximal penalties under the slash cap.
 error InvalidMinimumStake();
+/// @notice The treasury or slash beneficiary is `address(0)`.
 error MissingBeneficiary();
+/// @notice The redeemer is `address(0)`.
 error MissingRedeemer();
+/// @notice `unbondingPeriodSeconds` is below `MIN_UNBONDING_PERIOD_SECONDS`.
 error UnbondingPeriodTooShort();
+/// @notice `unbondingPeriodSeconds` is above `MAX_UNBONDING_PERIOD_SECONDS`.
 error UnbondingPeriodTooLong();
 
 // --- verifier registry -------------------------------------------------------
+/// @notice The verifier key has been revoked.
 error VerifierRevoked();
+/// @notice The verifier key is already revoked.
 error VerifierAlreadyRevoked();
+/// @notice The verifier key is past its expiry.
 error VerifierKeyExpired();
+/// @notice The address is not a registered verifier.
 error VerifierNotRegistered();
+/// @notice The verifier key is already registered.
 error VerifierAlreadyRegistered();
+/// @notice The expiry is not in the future or exceeds `MAX_VERIFIER_KEY_LIFETIME_SECONDS`.
 error InvalidVerifierExpiry();
 
 // --- signatures --------------------------------------------------------------
+/// @notice The signature is not 65 bytes or does not recover to a non-zero signer.
 error InvalidSignature();
-/// EIP-2: `s > secp256k1n/2`. Without this every signature has a second valid encoding.
+/// @notice The signature's `s` is above half the curve order (EIP-2).
 error MalleableSignature();
+/// @notice The signature's `v` is not 27 or 28.
 error BadSignatureV();
-/// `error.rs`'s `MissingBuyerSignature` on the redeem path — the recovered signer over a
-/// [`Voucher`] is not its `payer`. The EVM design's ordered check list names this error at this
-/// position.
+/// @notice The recovered voucher signer is neither the payer nor an active delegate.
 error SignerIsNotPayer();
-/// `error.rs`'s `MissingBuyerSignature` on the escrow-control paths — the recovered signer
-/// over a [`SetLimits`] or [`RequestWithdraw`] message is not the `buyer` it names.
+/// @notice The recovered signer of a buyer authorisation is not the buyer it names.
 error SignerIsNotBuyer();
+/// @notice The authorisation's `deadline` has passed.
 error SignatureExpired();
-/// EVM only (D-18). A relayed authorisation whose `deadline` is more than
-/// `MAX_SIGNATURE_LIFETIME_SECONDS` past the block that lands it.
+/// @notice The authorisation's `deadline` is more than `MAX_SIGNATURE_LIFETIME_SECONDS` ahead.
 error SignatureDeadlineTooFar();
+/// @notice The authorisation's nonce is not the escrow's current `authNonce`.
 error BadNonce();
 
 // --- voucher -----------------------------------------------------------------
+/// @notice The voucher's `seq` is zero.
 error VoucherSeqZero();
-/// EVM only (D-23), replacing `VoucherSeqNotIncreasing`: this `(payer, seq)` was already redeemed
-/// (its `heldPayments` record is not `None`). Also what a voucher that already landed gets.
+/// @notice This `(payer, seq)` has already been redeemed.
 error VoucherSeqUsed();
-/// EVM only. `seq > seqHigh + Constants.MAX_SEQ_GAP`: one voucher may not move the high-water mark
-/// so far past the payer's other seqs that the backend's allocator, which issues above
-/// `seqHigh`, runs out of room.
+/// @notice The voucher's `seq` exceeds `seqHigh + MAX_SEQ_GAP`.
 error VoucherSeqGapTooLarge();
+/// @notice The voucher is past `expiresAt + REDEEM_GRACE_SECONDS`.
 error VoucherExpired();
+/// @notice The voucher's `issuedAt` is beyond the clock-skew tolerance.
 error VoucherNotYetValid();
+/// @notice The voucher's `expiresAt` is not after its `issuedAt`.
 error InvalidVoucherWindow();
-/// **A SPLIT, not a rename.** `attestation.rs` raises `InvalidVoucherWindow` for BOTH of
-/// its first two checks — `expires_at > issued_at` and `expires_at - issued_at <=
-/// VOUCHER_MAX_LIFETIME_SECONDS` — so one Anchor name covers two conditions. This port gives the
-/// width bound its own name, under this file's rule that one condition gets one name: a voucher
-/// refused for being 400 seconds wide and a voucher refused for expiring before it was issued are
-/// different mistakes by whoever wrote the 402, and an operator reading a log should be able to
-/// tell them apart without the amount.
-///
-/// The consequence for parity is worth stating exactly: **no voucher is accepted here that Anchor
-/// refuses, or the reverse.** The two implementations partition the same refusal set; only the
-/// label differs, and only for the second half of it. Recorded in `docs/divergences.md`; the
-/// argument
-/// at the check itself is at `AssayEscrow.sol`'s
-/// `require_valid_voucher_window` port.
+/// @notice The voucher's `expiresAt - issuedAt` exceeds `VOUCHER_MAX_LIFETIME_SECONDS`.
 error VoucherLifetimeTooLong();
+/// @notice The voucher amount exceeds the escrow's per-voucher limit.
 error VoucherExceedsPerCallLimit();
+/// @notice The voucher would take the escrow's rolling window past its limit.
 error EscrowWindowLimitExceeded();
+/// @notice The escrow balance is below the amount requested.
 error EscrowInsufficient();
+/// @notice The new limits equal the current ones.
 error EscrowLimitsUnchanged();
+/// @notice The provider's free bonded stake is below `minimumStake`.
 error ProviderBelowMinimumStake();
+/// @notice The batch exceeds its maximum length.
 error BatchTooLarge();
+/// @notice The batch arrays differ in length.
 error BatchLengthMismatch();
+/// @notice The batch is empty.
 error EmptyBatch();
 
 // --- voucher delegation (EVM only) -----------------------------------------------
-/// The delegate named in an authorisation is the payer itself — the payer's own key already
-/// signs, so the record would grant nothing and would read as a second authority.
+/// @notice The delegate is the payer itself.
 error DelegateIsPayer();
-/// A delegate cap of `0`, or a per-call cap above the per-window cap.
+/// @notice A delegate cap is zero, or the per-call cap exceeds the per-window cap.
 error DelegateCapsInvalid();
-/// A delegate cap above the escrow's own ceiling at the moment of authorisation. The escrow
-/// ceilings keep applying at redemption too; this refuses a record that promises more.
+/// @notice A delegate cap exceeds the escrow's own limit at the time of authorisation.
 error DelegateCapsExceedEscrowLimits();
-/// `validUntil` not in the future, or further out than `MAX_DELEGATION_LIFETIME_SECONDS`.
+/// @notice `validUntil` is not in the future or exceeds `MAX_DELEGATION_LIFETIME_SECONDS`.
 error DelegateValidUntilInvalid();
-/// An authorisation identical to the standing one — refused like [`EscrowLimitsUnchanged`].
+/// @notice The authorisation is identical to the current one.
 error DelegationUnchanged();
-/// A revocation of a delegate that is not authorised (never was, or already revoked).
+/// @notice The delegate being revoked is not active.
 error DelegateNotActive();
-/// The payer already holds `MAX_DELEGATES_PER_PAYER` delegates; revoke one first.
+/// @notice The payer already holds `MAX_DELEGATES_PER_PAYER` delegates.
 error TooManyDelegates();
-/// A voucher signed by a delegate the payer revoked.
+/// @notice The voucher was signed by a revoked delegate.
 error DelegateIsRevoked();
-/// A voucher redeemed after its delegate's `validUntil`.
+/// @notice The voucher was signed by a delegate past its `validUntil`.
 error DelegateIsExpired();
-/// A delegate-signed voucher above the delegate's own per-call cap.
+/// @notice The delegate-signed voucher exceeds the delegate's per-call cap.
 error DelegateVoucherExceedsPerCallLimit();
-/// A delegate-signed voucher that would take the delegate's own rolling window past its cap.
+/// @notice The delegate-signed voucher would take the delegate's window past its cap.
 error DelegateWindowLimitExceeded();
 
 // --- escrow withdrawal -------------------------------------------------------
+/// @notice The withdrawal delay has not elapsed.
 error WithdrawNotYetAvailable();
+/// @notice No withdrawal has been requested.
 error NoWithdrawRequested();
-/// `constants.rs`'s build-time assertion, moved to `AssayEscrow.initialize`. Rust states
-/// `WITHDRAW_DELAY_SECONDS > CLOCK_SKEW + VOUCHER_MAX_LIFETIME + REDEEM_GRACE` as a `const _: ()
-/// = assert!(…)`, so lowering the delay fails the build. Solidity has no constant assertion —
-/// `assert` is a runtime opcode and a constant expression cannot invoke one — so the inequality
-/// becomes a check `initialize` makes and this is what it raises. Every term is a compile-time
-/// constant, so today the optimiser folds it away; it exists so that a future edit to
-/// `Constants` produces a deployment that cannot be initialised rather than one that silently
-/// lets a withdrawal mature under a live voucher.
+/// @notice `WITHDRAW_DELAY_SECONDS` does not outlive the longest redeemable voucher.
 error WithdrawDelayTooShort();
 
 // --- transfers ---------------------------------------------------------------
-/// A fee-on-transfer or rebasing token: the balance delta is not the amount asked for. The
-/// program's whole accounting rests on `vault balance == sum of the ledger`.
+/// @notice The received balance delta differs from the transfer amount (fee-on-transfer token).
 error TransferAmountMismatch();
+/// @notice The settlement asset does not have 6 decimals.
 error AssetDecimalsNotSix();
 
 // --- stake -------------------------------------------------------------------
+/// @notice The amount exceeds the provider's bonded stake.
 error InsufficientBondedStake();
+/// @notice The amount exceeds the provider's withdrawable unbonding stake.
 error InsufficientUnbondingStake();
+/// @notice The unbonding period has not elapsed.
 error UnbondingPeriodNotElapsed();
 
 // --- slash -------------------------------------------------------------------
+/// @notice The attestation is past its `expiresAt`.
 error AttestationExpired();
+/// @notice The attestation's `issuedAt` is in the future.
 error AttestationNotYetValid();
+/// @notice The attestation window is empty or exceeds `MAX_ATTESTATION_LIFETIME_SECONDS`.
 error InvalidAttestationWindow();
+/// @notice The attestation's status is not `ResponseClass.DataFail`.
 error StatusDoesNotSlash();
+/// @notice The provider has no stake at risk, or too little free stake for the reservation.
 error NothingToSlash();
+/// @notice The slash cap allows nothing for this provider.
 error SlashCapExceeded();
+/// @notice The penalty is too small to give each share a non-zero amount.
 error PenaltyTooSmallToSplit();
+/// @notice The penalty exceeds `penaltyAmount`.
 error PenaltyExceedsMaximum();
+/// @notice The slash record is not `Pending`.
 error SlashNotPending();
+/// @notice A slash record already exists for this request id.
 error SlashAlreadyExists();
+/// @notice The slash record's `executableAt` has not been reached.
 error SlashNotYetExecutable();
+/// @notice The slash record's execution grace period has ended.
 error SlashExecutionWindowClosed();
+/// @notice The slash record cannot be expired yet.
 error SlashNotExpired();
 // --- dispute, arbiter, blocklist, slash delay (EVM only) -------------------------
-/// `disputeSlash` from anybody but the record's `provider`.
+/// @notice `disputeSlash` was called by someone other than the record's provider.
 error NotSlashedProvider();
-/// `disputeSlash` at or after the record's `executableAt`: the dispute window is the delay.
+/// @notice `disputeSlash` was called at or after the record's `executableAt`.
 error DisputeWindowClosed();
-/// `upholdSlash` on a record that is not `Disputed`.
+/// @notice `upholdSlash` was called on a record that is not `Disputed`.
 error SlashNotDisputed();
-/// `upholdSlash` from anybody but `AssayConfig.arbiter()`.
+/// @notice The caller is not the arbiter.
 error NotArbiter();
-/// A party `AssayConfig.blocked()` names, at a door the blocklist closes.
+/// @notice A party to the call is on the blocklist.
 error AddressBlocked();
-/// `setSlashDelay` outside `[minSlashDelaySeconds(), MAX_SLASH_DELAY_SECONDS]` (D-23).
+/// @notice The slash delay is outside `[minSlashDelaySeconds, MAX_SLASH_DELAY_SECONDS]`.
 error InvalidSlashDelay();
-/// `upholdSlash` at or after `disputedAt + DISPUTE_TIMEOUT_SECONDS`: only `expireSlash` remains.
+/// @notice `upholdSlash` was called after `disputedAt + DISPUTE_TIMEOUT_SECONDS`.
 error DisputeTimedOut();
-/// `disputeSlash` on a record that was already disputed once (`disputedAt != 0`).
+/// @notice The slash record has already been disputed once.
 error SlashAlreadyDisputed();
-/// `executeSlash` whose WHOLE reservation does not fit under the provider's rolling window or
-/// the verifier key's (all or wait, D-20). The record stays Pending: retry as the windows drain.
+/// @notice The full reservation does not fit under the provider's rolling window yet.
 error SlashWindowNotDrained();
-/// `setBlocked(account, false)` from the arbiter: only the admin unblocks.
+/// @notice The arbiter tried to unblock an address; only the admin may unblock.
 error ArbiterCannotUnblock();
-/// `setArbiter(address(0))`, or any role writer that would make the arbiter the admin, the
-/// redeemer or a live verifier (`AssayConfig._assertRolesDistinct`).
+/// @notice The arbiter would be `address(0)`, the admin, the redeemer or a live verifier.
 error InvalidArbiter();
 
 // --- redeem into hold (EVM only) -------------------------------------------------
-/// `collectHeld` or `refundHeld` on a record that is not `Held`: never redeemed, or already
-/// collected or refunded. A record leaves `Held` exactly once.
+/// @notice The held payment is not in the `Held` state.
 error HeldPaymentNotHeld();
-/// `collectHeld` too early for its caller: before `collectableAt` for the redeemer, before
-/// `collectableAt + HELD_TIMEOUT_SECONDS` for anybody else.
+/// @notice The held payment is not yet collectable by this caller.
 error HeldNotYetCollectable();
-/// `refundHeld` at or after `collectableAt + HELD_TIMEOUT_SECONDS`: only a collect remains.
+/// @notice The refund window for the held payment has closed.
 error HeldRefundWindowClosed();
-/// `setCollectHold` outside `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]`.
+/// @notice The collect hold is outside `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]`.
 error InvalidCollectHold();

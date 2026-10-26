@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # The error-catalogue gate.
 #
-# `src/Errors.sol`'s header carries an accounting against the Anchor program's `error.rs` — how
-# many variants it declares, how many are ported under the same name, how many are EVM-only, and
-# which are deliberately absent. **Nothing imported it and no test counted it**, so those four
-# numbers were prose: correct on the day they were written and silently wrong on the next error
-# added. This recomputes them from both files and fails when they disagree with what the header
-# claims, so the header is an assertion rather than a memory.
+# `docs/divergences.md`, section "Error catalogue vs the Anchor program", carries an accounting of
+# `src/Errors.sol` against the Anchor program's `error.rs` — how many variants it declares, how
+# many are ported under the same name, how many are EVM-only, and which are deliberately absent.
+# **Nothing imported it and no test counted it**, so those four numbers were prose: correct on the
+# day they were written and silently wrong on the next error added. This recomputes them from
+# `error.rs` and the `error X();` declarations in `src/Errors.sol` and fails when they disagree
+# with what that docs section claims, so the section is an assertion rather than a memory.
 #
 # It also reports **errors with no producer** — declared in `Errors.sol` but never reverted
 # anywhere in `src/`. That list is not automatically a failure, but a NEW name on it is a name
@@ -28,9 +29,16 @@ import re, sys, pathlib
 rust_path = sys.argv[1]
 rust = open(rust_path).read()
 sol_src = open("src/Errors.sol").read()
-# The header is natspec wrapped at 100 columns, so a claim can straddle a line break. Flatten the
-# comment prefixes and the whitespace before matching, or every regex here is a line-width test.
-flat = re.sub(r'\s+', ' ', re.sub(r'(?m)^\s*///?', ' ', sol_src))
+docs = open("docs/divergences.md").read()
+HEADING = "## Error catalogue vs the Anchor program"
+m = re.search(r'(?ms)^' + re.escape(HEADING) + r'\s*$(.*?)(?=^## |\Z)', docs)
+if not m:
+    print(f"docs/divergences.md no longer has a section '{HEADING}'")
+    sys.exit(1)
+section = m.group(1)
+# The section is prose wrapped at 100 columns, so a claim can straddle a line break. Flatten the
+# whitespace before matching, or every regex here is a line-width test.
+flat = re.sub(r'\s+', ' ', section)
 
 anchor = set(re.findall(r'^\s+([A-Z][A-Za-z0-9]+),\s*$', rust, re.M))
 sol = set(re.findall(r'^error ([A-Za-z0-9]+)\(\);', sol_src, re.M))
@@ -39,12 +47,12 @@ shared = anchor & sol
 anchor_only = anchor - sol
 evm_only = sol - anchor
 
-# The four numbers the header claims, read back OUT of the header.
+# The four numbers the docs section claims, read back OUT of that section.
 words = {"five": 5, "four": 4, "three": 3, "two": 2, "one": 1}
 def claim(pattern):
     m = re.search(pattern, flat)
     if not m:
-        print(f"the header no longer states: {pattern}")
+        print(f"the docs section no longer states: {pattern}")
         sys.exit(1)
     v = m.group(1)
     return words.get(v.lower(), None) or int(v)
@@ -58,7 +66,7 @@ rc = 0
 def check(label, got, want):
     global rc
     mark = "ok " if got == want else "DRIFT"
-    print(f"  {mark} {label}: measured {got}, header says {want}")
+    print(f"  {mark} {label}: measured {got}, docs say {want}")
     if got != want:
         rc = 1
 
@@ -69,10 +77,10 @@ check("ported under the same name", len(shared), c_shared)
 check("EVM-only", len(evm_only), c_evmonly)
 check("absent from the port", len(anchor_only), c_absent)
 
-# Every absent Anchor name must be NAMED in the header, not merely counted.
+# Every absent Anchor name must be NAMED in the docs section, not merely counted.
 for name in sorted(anchor_only):
-    if name not in sol_src:
-        print(f"  DRIFT {name} is absent from the port and is not named in the header")
+    if name not in section:
+        print(f"  DRIFT {name} is absent from the port and is not named in the docs section")
         rc = 1
 
 # Producers: an `Errors.sol` name that nothing in src/ reverts.
