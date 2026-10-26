@@ -124,10 +124,19 @@ contract BlocklistAccountingForkTest is Fixture {
     }
 
     // --- the assertions ----------------------------------------------------------------------
+    //
+    // A redeem only moves the voucher into a hold; the token leaves the escrow at collection.
+    // A blocked provider therefore surfaces at `collectHeld`, and the held record can still be
+    // refunded to the payer.
 
-    /// The whole point. Six fields, read before and after, and every one unchanged.
-    function test_aBlockedProviderRevertsTheRedeemAndLeavesTheAccountingUntouched() public {
-        (uint64 balBefore, uint64 seqBefore, uint64 nonceBefore) = _snapshot(buyer);
+    function _warpToCollectable() internal {
+        vm.warp(block.timestamp + config.collectHoldSeconds());
+    }
+
+    /// A blocked provider: the redeem lands in the hold, the collection reverts with every
+    /// balance unchanged, and the redeemer can return the hold to the payer.
+    function test_aBlockedProviderRevertsTheCollectAndLeavesTheAccountingUntouched() public {
+        (uint64 balBefore,,) = _snapshot(buyer);
         uint256 escrowTokensBefore = token.balanceOf(address(blocking));
         uint256 treasuryBefore = token.balanceOf(treasury);
         uint128 totalBefore = blocking.totalEscrowed();
@@ -135,25 +144,30 @@ contract BlocklistAccountingForkTest is Fixture {
         Voucher memory v = _voucherFor(buyer, provider, AMOUNT, 1);
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, ds, v);
         vm.prank(redeemer);
-        vm.expectRevert(abi.encodeWithSelector(BlockingUSDG.TransferBlocked.selector, provider));
         blocking.redeemVoucher(v, sig);
+        assertEq(blocking.totalHeld(), AMOUNT, "the redeem did not hold the amount");
 
-        (uint64 balAfter, uint64 seqAfter, uint64 nonceAfter) = _snapshot(buyer);
-        assertEq(balAfter, balBefore, "escrow balance moved");
-        assertEq(seqAfter, seqBefore, "seqHigh advanced on a reverted redeem");
-        assertEq(nonceAfter, nonceBefore, "authNonce consumed on a reverted redeem");
+        _warpToCollectable();
+        vm.prank(redeemer);
+        vm.expectRevert(abi.encodeWithSelector(BlockingUSDG.TransferBlocked.selector, provider));
+        blocking.collectHeld(buyer, 1);
+
         assertEq(token.balanceOf(address(blocking)), escrowTokensBefore, "token left the escrow");
-        assertEq(token.balanceOf(treasury), treasuryBefore, "the FEE was taken anyway");
-        assertEq(blocking.totalEscrowed(), totalBefore, "totalEscrowed moved");
+        assertEq(token.balanceOf(treasury), treasuryBefore, "the fee was taken anyway");
+        assertEq(blocking.totalHeld(), AMOUNT, "the hold moved on a reverted collect");
+
+        vm.prank(redeemer);
+        blocking.refundHeld(buyer, 1);
+        (uint64 balAfter,,) = _snapshot(buyer);
+        assertEq(balAfter, balBefore, "the refund did not restore the balance");
+        assertEq(blocking.totalEscrowed(), totalBefore, "totalEscrowed not restored");
+        assertEq(blocking.totalHeld(), 0, "the hold was not released");
     }
 
-    /// The positive control, and without it the test above proves nothing: an escrow that
-    /// reverted every redeem for any reason would pass it.
-    ///
-    /// It asserts the same six fields DID move, so the pair is a difference rather than a claim
-    /// about the EVM's revert semantics.
-    function test_theSameVoucherToANonBlockedProviderMovesAllSixFields() public {
-        (uint64 balBefore, uint64 seqBefore,) = _snapshot(buyer);
+    /// Positive control: the same voucher to a provider that is not blocked is collected and
+    /// pays the provider and the treasury.
+    function test_theSameVoucherToANonBlockedProviderIsCollected() public {
+        (uint64 balBefore,,) = _snapshot(buyer);
         uint256 escrowTokensBefore = token.balanceOf(address(blocking));
         uint256 treasuryBefore = token.balanceOf(treasury);
         uint128 totalBefore = blocking.totalEscrowed();
@@ -163,59 +177,74 @@ contract BlocklistAccountingForkTest is Fixture {
         vm.prank(redeemer);
         blocking.redeemVoucher(v, sig);
 
-        uint64 fee = (AMOUNT * TAKE_RATE_BPS) / 10_000;
         (uint64 balAfter, uint64 seqAfter,) = _snapshot(buyer);
         assertEq(balAfter, balBefore - AMOUNT, "escrow balance did not move");
         assertEq(seqAfter, 1, "seqHigh did not advance");
-        assertTrue(seqAfter != seqBefore, "seqHigh unchanged");
+        assertEq(blocking.totalEscrowed(), totalBefore - AMOUNT, "totalEscrowed did not move");
+
+        _warpToCollectable();
+        vm.prank(redeemer);
+        blocking.collectHeld(buyer, 1);
+
+        uint64 fee = (AMOUNT * TAKE_RATE_BPS) / 10_000;
         assertEq(token.balanceOf(okProvider), AMOUNT - fee, "the provider was not paid");
         assertEq(token.balanceOf(treasury), treasuryBefore + fee, "the fee was not taken");
         assertEq(
             token.balanceOf(address(blocking)), escrowTokensBefore - AMOUNT, "escrow still holds it"
         );
-        assertEq(blocking.totalEscrowed(), totalBefore - AMOUNT, "totalEscrowed did not move");
+        assertEq(blocking.totalHeld(), 0, "the hold was not released");
     }
 
-    /// The consequence an operator actually meets, and the reason the backend pre-validates a
-    /// batch. `redeemVoucherBatch` is atomic and all-or-nothing: ONE blocked provider in position
-    /// 17 takes the other 63 with it, and none of the 64 payers is debited.
-    ///
-    /// This is asserted nowhere else in the suite.
-    function test_oneBlockedProviderRevertsTheWholeBatchOfSixtyFour() public {
+    /// `collectHeldBatch` is all-or-nothing: one blocked provider at position 17 reverts the
+    /// collection of all 64, and nobody is paid.
+    function test_oneBlockedProviderRevertsTheWholeCollectBatchOfSixtyFour() public {
         (Voucher[] memory vs, bytes[] memory sigs) = _batchOfSixtyFour();
         vs[17].provider = provider; // the blocked address
         sigs[17] = VoucherSigner.signVoucher(payerKeys[17], ds, vs[17]);
 
+        vm.prank(redeemer);
+        blocking.redeemVoucherBatch(vs, sigs);
         uint256 escrowTokensBefore = token.balanceOf(address(blocking));
-        uint128 totalBefore = blocking.totalEscrowed();
+        uint256 heldBefore = blocking.totalHeld();
 
+        _warpToCollectable();
+        (address[] memory ps, uint64[] memory seqs) = _collectArgs();
         vm.prank(redeemer);
         vm.expectRevert(abi.encodeWithSelector(BlockingUSDG.TransferBlocked.selector, provider));
-        blocking.redeemVoucherBatch(vs, sigs);
+        blocking.collectHeldBatch(ps, seqs);
 
         assertEq(token.balanceOf(address(blocking)), escrowTokensBefore, "token left the escrow");
-        assertEq(blocking.totalEscrowed(), totalBefore, "totalEscrowed moved");
+        assertEq(blocking.totalHeld(), heldBefore, "the hold moved on a reverted batch");
         assertEq(token.balanceOf(okProvider), 0, "a provider was paid out of a reverted batch");
-        for (uint256 i = 0; i < vs.length; i++) {
-            assertEq(_seqOf(vs[i].payer), 0, "a payer's seqHigh advanced");
-        }
     }
 
-    /// The positive control for the batch, same reason as above: the SAME 64 vouchers with
-    /// nobody blocked must all land, or the test above is about an escrow that refuses batches.
-    function test_theSameBatchWithNobodyBlockedPaysAllSixtyFour() public {
+    /// Positive control for the batch: the same 64 vouchers with nobody blocked are all collected.
+    function test_theSameBatchWithNobodyBlockedCollectsAllSixtyFour() public {
         (Voucher[] memory vs, bytes[] memory sigs) = _batchOfSixtyFour();
 
         vm.prank(redeemer);
         blocking.redeemVoucherBatch(vs, sigs);
-
-        // `uint64(...)` is load-bearing: `1_000 * TAKE_RATE_BPS` with a bare literal is UINT16
-        // arithmetic (TAKE_RATE_BPS is a uint16), and 1,000,000 overflows it — `Panic(0x11)`, in
-        // the ASSERTION, which reads exactly like a failure in the batch it is checking.
-        uint64 fee = (uint64(1_000) * TAKE_RATE_BPS) / 10_000;
-        assertEq(token.balanceOf(okProvider), uint256(1_000 - fee) * POOL, "not all 64 paid");
         for (uint256 i = 0; i < vs.length; i++) {
             assertEq(_seqOf(vs[i].payer), 1, "a payer's seqHigh did not advance");
+        }
+
+        _warpToCollectable();
+        (address[] memory ps, uint64[] memory seqs) = _collectArgs();
+        vm.prank(redeemer);
+        blocking.collectHeldBatch(ps, seqs);
+
+        // The uint64 cast matters: TAKE_RATE_BPS is a uint16 and 1,000 * bps overflows it.
+        uint64 fee = (uint64(1_000) * TAKE_RATE_BPS) / 10_000;
+        assertEq(token.balanceOf(okProvider), uint256(1_000 - fee) * POOL, "not all 64 paid");
+        assertEq(blocking.totalHeld(), 0, "the hold was not released");
+    }
+
+    function _collectArgs() internal view returns (address[] memory ps, uint64[] memory seqs) {
+        ps = new address[](POOL);
+        seqs = new uint64[](POOL);
+        for (uint256 i = 0; i < POOL; i++) {
+            ps[i] = payers[i];
+            seqs[i] = 1;
         }
     }
 }
