@@ -105,3 +105,66 @@ in the redemption itself, so a buyer dispute upheld after settlement cannot be r
 there. **Rail B (buyer escrow, voucher redemption) stays OFF on Solana until the program has the
 same hold** — the same record, the same three exits, the same frozen fields and the same timeout.
 Track it as a parity item; until it lands, the two chains' redemption tests diverge at the payout.
+
+---
+
+## Error catalogue vs the Anchor program
+
+Moved from the header of `src/Errors.sol`. In the text below, "below" means the `error X();`
+declarations in `src/Errors.sol`. `script/check-errors.sh` reads the four counts and the absent
+names from this section, so keep their wording when you update them.
+
+Names match the Anchor program's `programs/x402-payment/src/error.rs` (repository
+`assay-solana`) wherever the condition has a
+behavioural analogue, so a failure means the same thing on both chains and one incident
+runbook covers both.
+
+### The accounting against `error.rs`, in full
+
+`error.rs` declares **55** `ErrorCode` variants. **46** of them appear below under the same
+name, and **48** errors below have no Anchor counterpart at all. The remaining **9** are
+absent, and named here so that "the port is complete" is a claim a reader can check. (The
+counts are the output of a set difference over the two files, as `script/check-errors.sh`
+computes it; if you change either file, redo it rather than adjusting these by one.)
+
+- **No EVM condition at all:** `EscrowMismatch` (the EVM voucher has no `pay_to`),
+  `StakeMintProgramNotSupported` (the asset question here is [`AssetDecimalsNotSix`]),
+  `EscrowLimitsRequireBuyer` (`setLimits` reads `msg.sender` and `setLimitsBySig` refuses with
+  [`SignerIsNotBuyer`] first, so "armed limits with no buyer authorisation" cannot arise),
+  `NotBuyer` (every buyer door is keyed by `msg.sender` or a recovered signer), and
+  `DestinationIsVault` / `DestinationIsEscrowAta` (`withdraw` and `withdrawStake` take no
+  destination and pay `msg.sender`, D-15).
+- **Absorbed by a truer name:** `MissingBuyerSignature` → [`SignerIsNotPayer`] on the redeem
+  path and [`SignerIsNotBuyer`] on the escrow-control paths; `MissingVerifierSignature` →
+  `VerifierNotRegistered` / `VerifierRevoked` / `VerifierKeyExpired`, which `assertCanSign`
+  raises for the recovered attestation signer. `ecrecover` always yields *some* address, so a
+  "missing" signature is never the condition — a signature by the wrong key is.
+- **Folded into the wait (D-20):** `VerifierDailyCapExceeded` → [`SlashWindowNotDrained`].
+  Execution is all or wait, so a full key window is the same condition as a full provider
+  window: retry later.
+
+The 48 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
+fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
+voucher delegation, the three of the owner/admin split and the seq jump cap, the eleven of
+the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), and the four of the
+redeem-into-hold change (held status, collect and refund timing, settable collect hold).
+
+The six PDA seed constants in `constants.rs` have no counterpart in `Constants.sol` for
+the same kind of reason; that omission is recorded in the next subsection.
+
+### Constants left out of `Constants.sol`
+
+Moved from the header of `src/Constants.sol`. Every value there is copied from the Anchor
+program's `programs/x402-payment/src/constants.rs`, never re-derived, so one behavioural test
+matrix covers both chains; the Anchor originals are `i64`, the EVM ones `uint64`.
+
+`constants.rs` also declares six PDA seeds — `CONFIG_SEED`, `STAKE_SEED`, `STAKE_VAULT_SEED`,
+`VERIFIER_SEED`, `SLASH_RECORD_SEED`, `ESCROW_SEED`. They are Solana address-derivation
+artefacts and have no EVM meaning: there are no program-derived addresses here, so the state
+they seed is a `mapping` keyed by the same value, and the seed string would be a label for
+nothing. Two of them carry a security property that does *not* travel with the name and has to
+be rebuilt: `SLASH_RECORD_SEED`'s replay lock is `init`-succeeds-once on `["slash", request_id]`,
+which on EVM becomes an explicit `SlashStatus.None` check in `AssayStake`, and `ESCROW_SEED`'s
+"the authority is derived from the buyer and nothing else" becomes `msg.sender` plus an EIP-712
+signature.

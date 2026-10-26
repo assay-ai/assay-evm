@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.38;
 
-/// The EIP-712 voucher. Eight fields, binding strictly more than the Solana 239-byte layout:
-/// the domain tag becomes `name`+`version`, the program id becomes `verifyingContract`, and
-/// `chainId` is new. `pay_to` is deliberately absent — on EVM one contract holds every buyer,
-/// so "which escrow" is fully determined by `verifyingContract` + `payer`, and a `payTo` field
-/// would be a second source for one identity.
-///
-/// Field order is `attestation.rs`'s `Voucher`, minus that one field. It is load-bearing: the
-/// EIP-712 type string below lists the fields in this order, so reordering the struct without
-/// reordering the string changes what every existing signature means. `test/Types.t.sol` rebuilds
-/// the string from this struct's compiled ABI so that cannot happen quietly.
+/// @notice EIP-712 payment voucher signed by the payer (or one of its delegates).
+/// @dev Field order must match `VOUCHER_TYPEHASH`; reordering changes every signature's meaning.
 struct Voucher {
     address payer;
     address provider;
@@ -22,15 +14,9 @@ struct Voucher {
     uint64 expiresAt;
 }
 
-/// The verifier's judgement. Signed against AssayStake's domain, never AssayEscrow's — two
-/// verifying contracts means a captured attestation cannot be replayed at the escrow door even
-/// if the two structs ever came to share a shape.
-///
-/// `status` is a raw `uint8` rather than `ResponseClass` on purpose: it arrives from off chain
-/// and EIP-712 encodes an enum as `uint8` anyway, but a Solidity enum parameter reverts with a
-/// bare `Panic(0x21)` on an out-of-range byte, before any of this program's own checks run. As a
-/// `uint8` the value is checked against [`ResponseClass`] explicitly and refused with
-/// `StatusDoesNotSlash`, which is the diagnosis a dispute needs.
+/// @notice EIP-712 slash judgement signed by a verifier, under AssayStake's domain.
+/// @dev `status` is a raw `uint8` so an out-of-range value reverts `StatusDoesNotSlash` rather
+/// than an enum-conversion panic.
 struct SlashAttestation {
     bytes32 requestId;
     address provider;
@@ -42,10 +28,7 @@ struct SlashAttestation {
     uint64 expiresAt;
 }
 
-/// The buyer's own ceilings on their escrow, signed by the buyer. No Anchor struct corresponds:
-/// on Solana the buyer signs the instruction itself, so there is nothing to type. Here the
-/// limits travel as a signed message the redeemer submits, so they need a type of their own —
-/// with `nonce` and `deadline`, which an instruction signature did not need.
+/// @notice EIP-712 authorisation by which a buyer sets its escrow spending limits.
 struct SetLimits {
     address buyer;
     uint64 maxVoucherAmount;
@@ -54,7 +37,7 @@ struct SetLimits {
     uint64 deadline;
 }
 
-/// Opening the withdrawal delay, signed by the buyer. Same reasoning as [`SetLimits`].
+/// @notice EIP-712 authorisation by which a buyer requests a withdrawal.
 struct RequestWithdraw {
     address buyer;
     uint64 amount;
@@ -62,14 +45,9 @@ struct RequestWithdraw {
     uint64 deadline;
 }
 
-/// A payer authorising a DELEGATE key to sign vouchers on their escrow, signed by the payer.
-/// EVM only, like [`SetLimits`]: it exists so an account whose own key cannot leave its wallet
-/// (an embedded wallet, for one) can hand a headless agent a key of its own, bounded by caps
-/// and a horizon, without paying gas. The delegate can sign VOUCHERS and nothing else; every
-/// other door of the escrow still recovers to the payer or reads `msg.sender`.
-///
-/// `nonce` is the escrow's `authNonce`, shared with [`SetLimits`] and [`RequestWithdraw`] —
-/// the argument is at `AssayEscrow.authorizeDelegate`.
+/// @notice EIP-712 authorisation by which a payer lets a delegate key sign vouchers, within caps
+/// and until `validUntil`.
+/// @dev A delegate can sign vouchers only. `nonce` is the escrow's shared `authNonce`.
 struct AuthorizeDelegate {
     address payer;
     address delegate;
@@ -80,7 +58,7 @@ struct AuthorizeDelegate {
     uint64 deadline;
 }
 
-/// Withdrawing a delegate's authority, signed by the payer. Same nonce, same reasoning.
+/// @notice EIP-712 authorisation by which a payer revokes a delegate.
 struct RevokeDelegate {
     address payer;
     address delegate;
@@ -88,8 +66,7 @@ struct RevokeDelegate {
     uint64 deadline;
 }
 
-/// Everything AssayConfig's admin can change, in one struct so `updateConfig` validates it as
-/// a set — the two split shares are only meaningful together (update_config.rs).
+/// @notice The admin-settable economic parameters, validated together as one set.
 struct ParamSet {
     address treasury;
     address redeemer;
@@ -103,20 +80,10 @@ struct ParamSet {
     uint16 slashCapBps;
 }
 
-/// state.rs's `SlashStatus`, plus a zero value it does not have.
-///
-/// On Solana "no record" is the absence of the `["slash", request_id]` PDA. A Solidity mapping
-/// has no absence — every unread slot is zero — so the zero value must *be* "no record", or an
-/// unproposed request id would read back as `Pending` and `SlashAlreadyExists` would never fire.
-/// Anchor's three states keep their order after it. A record leaves `Pending` exactly once and
-/// neither terminal state has an edge back out; that is what keeps the reservation accounting
-/// single-entry.
-///
-/// `Disputed` (EVM only) is appended LAST so every stored discriminant keeps its meaning across
-/// the upgrade. It is not terminal: the provider's `disputeSlash` moves `Pending → Disputed`, and
-/// the record leaves it for `Pending` (`upholdSlash`, the arbiter) or for `Cancelled`
-/// (`cancelSlash`, `expireSlash`). The reservation stays in place throughout, so the accounting
-/// is still single-entry: it is released or paid exactly once, from `Pending` or `Disputed`.
+/// @notice Lifecycle of a slash record.
+/// @dev `None` (zero) means no record exists. A record leaves `Pending` or `Disputed` exactly once
+/// into a terminal state. `Disputed` returns to `Pending` on `upholdSlash` or ends `Cancelled`.
+/// New members are appended only, so stored values keep their meaning across upgrades.
 enum SlashStatus {
     None,
     Pending,
@@ -125,14 +92,8 @@ enum SlashStatus {
     Disputed
 }
 
-/// attestation.rs's `ResponseClass`, discriminants included.
-///
-/// The program does not classify anything — that is off-chain business logic. It carries the
-/// class because the class is *signed*: the protocol design makes `DataFail` the only class that
-/// may ever touch stake, so putting the byte in the message makes that a chain-enforced
-/// rule rather than a backend convention, and a `SystemError` attestation cannot be resubmitted
-/// as a slash because changing the byte breaks the signature. Reordering this enum silently
-/// changes what an already-signed attestation means; `test/Types.t.sol` pins the discriminants.
+/// @notice Verifier classification of a response. Only `DataFail` may slash stake.
+/// @dev Discriminants are signed into attestations; never reorder.
 enum ResponseClass {
     Pass,
     SystemError,
@@ -140,12 +101,10 @@ enum ResponseClass {
     DataFail
 }
 
-/// events.rs's `CancelReason`. `Withdrawn` is the admin's decision on an arbitration outcome,
-/// `Expired` is the platform failing to execute its own judgement inside the grace period, and
-/// `VerifierUnavailable` is a revocation reaching through to kill work in flight — which is the
-/// property the whole two-phase design exists to deliver. `DisputeUnresolved` (EVM only,
-/// appended last) is a `Disputed` record nobody ruled on within `DISPUTE_TIMEOUT_SECONDS`.
-/// `Withdrawn` now covers the arbiter's cancel as well as the admin's.
+/// @notice Why a slash record was cancelled.
+/// @dev `Withdrawn`: cancelled by the admin or arbiter. `Expired`: not executed within the grace
+/// period. `VerifierUnavailable`: the signing key was revoked or expired. `DisputeUnresolved`: a
+/// dispute was not ruled on within `DISPUTE_TIMEOUT_SECONDS`.
 enum CancelReason {
     Withdrawn,
     Expired,
@@ -153,14 +112,8 @@ enum CancelReason {
     DisputeUnresolved
 }
 
-// The six EIP-712 type strings.
-//
-// Each is the canonical encoding of the struct above it: `Name(type field,type field,…)`, no
-// spaces except the one between each type and its name, fields in declaration order. There is
-// nothing in the language tying these literals to those structs — that tie is
-// `test/Types.t.sol`, which rebuilds each string from the compiled struct and compares. Editing
-// a struct without editing its string here (or the reverse) is a red test, not a silent change
-// of meaning for every signature already issued.
+// EIP-712 type hashes. Each string is the canonical encoding of the struct above, with fields in
+// declaration order.
 bytes32 constant VOUCHER_TYPEHASH = keccak256(
     "Voucher(address payer,address provider,uint64 amount,bytes32 resourceHash,"
     "bytes32 requestHash,uint64 seq,uint64 issuedAt,uint64 expiresAt)"

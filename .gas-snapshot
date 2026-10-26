@@ -293,7 +293,7 @@ AssayEscrowRedeemTest:test_wrongState_anUnderStakedProviderIsNotPaid() (gas: 386
 AssayEscrowRedeemTest:test_wrongState_redeemIsClosedWhilePaused() (gas: 78494)
 AssayEscrowRedeemTest:test_wrongState_setLimitsRefusesAWriteThatChangesNothing() (gas: 46650)
 AssayEscrowRedeemTest:test_wrongState_zeroAmountIsRefused() (gas: 54062)
-AssayEscrowSeqCapTest:testFuzz_admittedIffWithinTheGap(uint64,uint64) (runs: 512, μ: 263554, ~: 289010)
+AssayEscrowSeqCapTest:testFuzz_admittedIffWithinTheGap(uint64,uint64) (runs: 512, μ: 264150, ~: 289023)
 AssayEscrowSeqCapTest:test_boundary_aFreshEscrowAdmitsExactlyTheGap() (gas: 252694)
 AssayEscrowSeqCapTest:test_boundary_theCapIsRelativeToTheCurrentHighWaterMark() (gas: 391140)
 AssayEscrowSeqCapTest:test_theBatchPathRefusesAnOverGapItem() (gas: 503386)
