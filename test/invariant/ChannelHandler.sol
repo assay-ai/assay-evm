@@ -61,6 +61,9 @@ contract ChannelHandler is Test {
     uint256 public settles;
     uint256 public settleAttempts;
     uint256 public collects;
+    /// Refunds that moved money out of the bucket they did not name. Must stay zero.
+    uint256 public wrongBucketRefunds;
+    uint256 public rateChanges;
 
     constructor() {
         usdg = new MockUSDG();
@@ -254,6 +257,23 @@ contract ChannelHandler is Test {
         escrow.refundChannels(refs, ms, a);
         ChannelDoor.Slot memory after_ = slotOf(c);
         ghost[c].refunded += uint64(before.h1 + before.h2 - after_.h1 - after_.h2);
+        // Only the named bucket may move: the other one keeps its amount, hour and rate.
+        if (
+            second
+                ? (after_.h1 != before.h1 || after_.m1 != before.m1 || after_.r1 != before.r1)
+                : (after_.h2 != before.h2 || after_.m2 != before.m2 || after_.r2 != before.r2)
+        ) ++wrongBucketRefunds;
+    }
+
+    /// The admin moves the take rate between 10% and 20%, so one hour can hold two buckets
+    /// that differ only by rate (I11) and refunds must tell them apart by rate.
+    function setTakeRate(bool high) external {
+        ParamSet memory p = config.params();
+        p.takeRateBps = high ? 2_000 : 1_000;
+        vm.prank(ADMIN);
+        try config.updateConfig(p) {
+            ++rateChanges;
+        } catch {}
     }
 
     function freezeProvider(uint256 pSeed, bool frozen) external {

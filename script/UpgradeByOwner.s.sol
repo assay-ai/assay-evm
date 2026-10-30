@@ -41,6 +41,10 @@ error LibraryCodehashMismatch(address lib, bytes32 got, bytes32 want);
 ///                 that `check-bytecode.sh` / `verify-deployment.sh` matched against the local
 ///                 build (`cast keccak $(cast code $IMPL_<NAME>)`), so the owner signs for exactly
 ///                 the code that was verified and not for whatever address ended up in the env.
+///                 Every flagged implementation, and the escrow's library, is ALSO compared with
+///                 this checkout's build (`_assertBuilt`, immutables masked, links filled): a hash
+///                 read from the chain only proves the code did not change since it was read.
+///                 Run from a fresh `forge build` of the commit being deployed.
 ///   CHANNEL_DOOR, EXPECTED_CODEHASH_CHANNELDOOR   (run, safeCalldata; REQUIRED with
 ///                 UPGRADE_ESCROW) the `ChannelDoor` library the escrow implementation is linked
 ///                 against, and that library's `extcodehash`. The escrow DELEGATECALLs every
@@ -87,6 +91,7 @@ contract UpgradeByOwner is ChannelDoorLink {
         for (uint256 i = 0; i < 3; i++) {
             if (!on[i]) continue;
             _assertImplementation(impls[i], hashes[i]);
+            _assertBuiltPlain(i, impls[i]);
             if (i == 2) _assertChannelDoor(impls[i]);
             console2.log("to  ", proxies[i]);
             console2.logBytes(
@@ -112,7 +117,9 @@ contract UpgradeByOwner is ChannelDoorLink {
             bytes32[3] memory hashes
         ) = _plan();
         for (uint256 i = 0; i < 3; i++) {
-            if (on[i]) _assertImplementation(impls[i], hashes[i]);
+            if (!on[i]) continue;
+            _assertImplementation(impls[i], hashes[i]);
+            _assertBuiltPlain(i, impls[i]);
         }
         if (on[2]) _assertChannelDoor(impls[2]);
 
@@ -194,6 +201,13 @@ contract UpgradeByOwner is ChannelDoorLink {
         _assertUups(impl);
     }
 
+    /// Config's and Stake's implementations against this tree's build (the escrow's is compared
+    /// in `_assertChannelDoor`, with its library address filled in).
+    function _assertBuiltPlain(uint256 i, address impl) internal view {
+        if (i == 0) _assertBuilt(impl, "out/AssayConfig.sol/AssayConfig.json", address(0));
+        if (i == 1) _assertBuilt(impl, "out/AssayStake.sol/AssayStake.json", address(0));
+    }
+
     /// The implementation has code and answers `proxiableUUID()` with the ERC-1967 slot, which
     /// is exactly what `upgradeToAndCall` will check — refused here, before the owner signs.
     function _assertUups(address impl) internal view {
@@ -216,6 +230,9 @@ contract UpgradeByOwner is ChannelDoorLink {
         address got = _linkedChannelDoor(impl);
         if (got != door) revert LinkedLibraryMismatch(impl, got, door);
         if (door.codehash != want) revert LibraryCodehashMismatch(door, door.codehash, want);
+        // The pinned hash is read from the chain; these compare both codes with the build.
+        _assertBuilt(door, "out/ChannelDoor.sol/ChannelDoor.json", address(0));
+        _assertBuilt(impl, "out/AssayEscrow.sol/AssayEscrow.json", door);
         // A deployed library holds its own address (the call guard that refuses a direct CALL
         // into a state-changing function) at the compiler's `library_deploy_address` spans;
         // code that names another address there was not deployed as this library here.

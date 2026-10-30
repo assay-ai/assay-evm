@@ -622,7 +622,9 @@ half is the last paragraph.
       classify against the **merge base**, not `HEAD`; `docs/ci-gates.md` §3 has the recipe and the
       reason (a branch can otherwise append twice and land a net reorder nobody refused).
 - [ ] `forge test` green, including `test/Upgrade.t.sol`. `./script/check-sizes.sh` green — the new
-      implementation is still under 22,000 bytes. `./script/check-vendor.sh` green.
+      implementation is still under the 23,000-byte gate (the escrow is 22,963 with D-28: 37
+      bytes of room, so an audit fix to the escrow likely moves code into `ChannelDoor`).
+      `./script/check-vendor.sh` green.
 - [ ] **The storage-layout snapshot diff is read by a human, out loud, field by field.** This is
       the review the Solana side did not have when a layout change left 41 devnet accounts
       unreadable.
@@ -673,7 +675,10 @@ exactly the verified code and not for whatever address ended up in the env.
 **An escrow upgrade also names its library (D-28).** `UPGRADE_ESCROW` requires `CHANNEL_DOOR`
 (the `ChannelDoor` address `deploy()` prints, read back from the implementation's link spans)
 and `EXPECTED_CODEHASH_CHANNELDOOR` (`cast keccak $(cast code $CHANNEL_DOOR --rpc-url <rpc>)`,
-from the library `verify-deployment.sh` matched). The script refuses an implementation whose
+from the library the operator deployed). Both are also compared with the local build, so run
+`run()` from a fresh `forge build` of the reviewed commit. After the fork rehearsal, run
+`verify-deployment.sh` against the upgraded fork with the updated record (checks 2 and 3b only
+reach a new implementation once a proxy points at it). The script refuses an implementation whose
 link spans name any other address (`LinkedLibraryMismatch`) and a library whose code is not
 that hash (`LibraryCodehashMismatch`). The record carries the pair under
 `.contracts.AssayEscrow.libraries.ChannelDoor` (`address`, `runtimeKeccak`); the escrow's own

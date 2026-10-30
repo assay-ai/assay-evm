@@ -12,7 +12,7 @@ contract ChannelInvariantsTest is Test {
 
     function setUp() public {
         h = new ChannelHandler();
-        bytes4[] memory s = new bytes4[](14);
+        bytes4[] memory s = new bytes4[](15);
         s[0] = ChannelHandler.settle.selector;
         s[1] = ChannelHandler.settle.selector; // settle weighted up
         s[2] = ChannelHandler.collect.selector;
@@ -27,6 +27,7 @@ contract ChannelInvariantsTest is Test {
         s[11] = ChannelHandler.withdraw.selector;
         s[12] = ChannelHandler.warp.selector;
         s[13] = ChannelHandler.collect.selector;
+        s[14] = ChannelHandler.setTakeRate.selector;
         targetSelector(FuzzSelector({addr: address(h), selectors: s}));
         targetContract(address(h));
     }
@@ -70,6 +71,11 @@ contract ChannelInvariantsTest is Test {
             assertEq(uint256(charged), uint256(collected) + refunded + s.h1 + s.h2, "charged split");
             assertLe(s.settled, signed, "never settled beyond the signed total");
         }
+    }
+
+    /// A refund reaches the bucket it names by hour and rate, and no other.
+    function invariant_refundReachesOnlyTheNamedBucket() public view {
+        assertEq(h.wrongBucketRefunds(), 0);
     }
 
     /// I10/I11: an empty bucket carries no maturity or rate; a non-empty one has both buckets'

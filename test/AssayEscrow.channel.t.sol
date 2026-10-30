@@ -109,6 +109,38 @@ contract ReenterCollectToken {
     }
 }
 
+/// A token whose `transfer` does about 250k gas of work before it moves the balance: honest,
+/// but close to the payout stipend, which is where a caller could try to starve it.
+contract HeavyTransferToken {
+    uint8 public constant decimals = 6;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 a) external {
+        balanceOf[to] += a;
+    }
+
+    function approve(address s, uint256 a) external returns (bool) {
+        allowance[msg.sender][s] = a;
+        return true;
+    }
+
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        allowance[f][msg.sender] -= a;
+        balanceOf[f] -= a;
+        balanceOf[t] += a;
+        return true;
+    }
+
+    function transfer(address to, uint256 a) external returns (bool) {
+        uint256 start = gasleft();
+        while (start - gasleft() < 250_000) {}
+        balanceOf[msg.sender] -= a;
+        balanceOf[to] += a;
+        return true;
+    }
+}
+
 /// The channel door of `AssayEscrow` (spec P2 v3.1 §3): settle, collect, refund, unpaid.
 contract AssayEscrowChannelTest is Fixture {
     // The EIP-712 type string written out a second time, independently of `src/Types.sol`.
@@ -1526,5 +1558,33 @@ contract AssayEscrowChannelTest is Fixture {
         vm.warp(((uint256(_now()) + config.collectHoldSeconds() + 3599) / 3600) * 3600);
         refs = new ChannelRef[](1);
         refs[0] = ChannelRef(buyer, buyer, provider, CH);
+    }
+
+    /// No gas limit a caller picks turns an honest payout into a deferral: a stranger's
+    /// collect after the timeout, swept across the whole range around the floor, either
+    /// reverts or pays in full, never sets money aside.
+    function test_edge_noGasLimitForcesADeferral_ofAnHonestHeavyPayout() public {
+        HeavyTransferToken t = new HeavyTransferToken();
+        AssayEscrow e2 = _deployEscrow(address(t));
+        t.mint(buyer, 10e6);
+        vm.startPrank(buyer);
+        t.approve(address(e2), type(uint256).max);
+        e2.deposit(5e6);
+        e2.setLimits(V, W);
+        vm.stopPrank();
+        ChannelRef[] memory refs = _settleOn(e2, 100_000);
+        vm.warp(_now() + Constants.HELD_TIMEOUT_SECONDS);
+        uint256 paid;
+        for (uint256 g = 300_000; g <= 1_300_000; g += 2_000) {
+            uint256 snap = vm.snapshotState();
+            try e2.collectChannels{gas: g}(refs, _u(0)) {
+                (,, uint128 tot, uint128 held) = e2.channelBooks(bytes32(0), address(0));
+                assertEq(tot, 0, "a payout was set aside under a chosen gas limit");
+                assertEq(held, 0);
+                ++paid;
+            } catch {}
+            vm.revertToState(snap);
+        }
+        assertGt(paid, 0, "enough gas pays");
     }
 }
