@@ -679,6 +679,12 @@ that hash (`LibraryCodehashMismatch`). The record carries the pair under
 `.contracts.AssayEscrow.libraries.ChannelDoor` (`address`, `runtimeKeccak`); the escrow's own
 `implementationRuntimeKeccak` is taken with the link spans zeroed (`script/linked-code.sh`).
 
+`check-bytecode.sh` will also report AssayConfig and AssayStake as drifted after D-28. That is the
+CBOR metadata trailer only (the shared `Types.sol` and `Errors.sol` changed, so the source hashes in
+the metadata changed): their runtime code without the trailer is byte-identical to `8620693`,
+measured 2026-10-31. The D-28 upgrade is `UPGRADE_ESCROW` alone; keep the Config and Stake
+record rows, and do not redeploy those two for a metadata change.
+
 The `bytes` payload is `0x` unless a reinitialiser is genuinely needed; if it is, it is a
 `reinitializer(n)` function — **a fresh deployment leaves all three contracts at version 1, so the
 first one is `reinitializer(2)`** — it is written and reviewed as part of the same change, and its
