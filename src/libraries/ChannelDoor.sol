@@ -34,6 +34,13 @@ library ChannelDoor {
     uint256 internal constant CALLS_LIMIT = 1 << 24; // `calls` must be below this
     uint256 internal constant MAX_BUCKET = (1 << 48) - 1;
     uint256 internal constant GRID = 3600;
+    /// @dev Gas handed to every payout transfer. Far above a USDG transfer (about 26k on 4663,
+    ///      measured), so a payout is set aside only when the token refused it or burned all of
+    ///      this; never because the caller starved the call (see `_payOrDefer`).
+    uint256 internal constant TRANSFER_GAS = 300_000;
+    /// @dev What must be left before a payout: the stipend un-trimmed by the 63/64 rule, plus
+    ///      room for the set-aside writes if it fails.
+    uint256 internal constant TRANSFER_GAS_FLOOR = TRANSFER_GAS * 64 / 63 + 50_000;
 
     /// @dev The escrow's channel storage. One state variable of this type, appended to the
     ///      escrow's layout.
@@ -84,6 +91,11 @@ library ChannelDoor {
         NoBucket
     }
 
+    /// @notice Why a collect item was skipped. Append-only.
+    enum CollectSkip {
+        Blocked
+    }
+
     /// @notice Why a refund item was skipped. Append-only.
     enum RefundSkip {
         NoSuchBucket,
@@ -114,20 +126,16 @@ library ChannelDoor {
     event ChannelCollected(
         bytes32 indexed key, address indexed provider, uint24 maturityHour, uint64 gross, uint64 fee
     );
-    /// @notice Emitted for a collect item left untouched because a party is blocked.
-    event ChannelCollectSkipped(bytes32 indexed key);
+    /// @notice Emitted for a collect item left untouched (a party is blocked).
+    event ChannelCollectSkipped(bytes32 indexed key, uint8 reason);
     /// @notice Emitted per bucket refunded to the payer's balance.
-    event ChannelRefunded(
-        bytes32 indexed key, address indexed payer, uint24 maturityHour, uint64 amount
-    );
+    event ChannelRefunded(bytes32 indexed key, address indexed payer, uint40 bucket, uint64 amount);
     /// @notice Emitted when a payout transfer failed and the amount was set aside for `to`.
     event TransferDeferred(address indexed to, uint128 amount);
     /// @notice Emitted when an amount set aside for `to` was paid to it.
     event UnpaidClaimed(address indexed to, uint128 amount);
     /// @notice Emitted for a refund item that changed nothing.
-    event ChannelRefundSkipped(
-        bytes32 indexed key, uint24 maturityHour, uint64 amount, uint8 reason
-    );
+    event ChannelRefundSkipped(bytes32 indexed key, uint40 bucket, uint64 amount, uint8 reason);
 
     /// @dev One read of every external parameter a door needs. Reverts while paused, so every
     ///      door that builds a context is pause-gated.
@@ -407,10 +415,9 @@ library ChannelDoor {
         it.charge = chargeIn;
 
         if (it.charge > 0) {
-            SettleSkip why =
+            (bool pass, SettleSkip why) =
                 _gate(escrows, delegations, priorEscrowCaps, priorDelegateCaps, x, c, v, it, nowTs);
-            if (why != SettleSkip.Expired) {
-                // `Expired` doubles as "passed" here: it can no longer occur at this point.
+            if (!pass) {
                 _skip(i, v, it.key, why);
                 return 0;
             }
@@ -462,7 +469,8 @@ library ChannelDoor {
         return 0;
     }
 
-    /// @dev Every gate on a positive charge, in the spec's order. Returns `Expired` as "passed".
+    /// @dev Every gate on a positive charge, in the spec's order: `(true, _)` passes, else the
+    ///      first refusal.
     function _gate(
         mapping(address => AssayEscrow.Escrow) storage escrows,
         mapping(address => mapping(address => AssayEscrow.Delegation)) storage delegations,
@@ -473,11 +481,11 @@ library ChannelDoor {
         ChannelVoucher calldata v,
         Item memory it,
         uint256 nowTs
-    ) private view returns (SettleSkip) {
+    ) private view returns (bool, SettleSkip) {
         if (
             _isBlocked(c, x.config, v.payer) || _isBlocked(c, x.config, v.provider)
                 || (it.delegate != address(0) && _isBlocked(c, x.config, it.delegate))
-        ) return SettleSkip.Blocked;
+        ) return (false, SettleSkip.Blocked);
 
         AssayEscrow.Escrow storage e = escrows[v.payer];
         it.spent =
@@ -491,8 +499,8 @@ library ChannelDoor {
             it.spent,
             nowTs
         );
-        if (why == 1) return SettleSkip.PerCallCap;
-        if (why == 2) return SettleSkip.EscrowWindow;
+        if (why == 1) return (false, SettleSkip.PerCallCap);
+        if (why == 2) return (false, SettleSkip.EscrowWindow);
 
         if (it.delegate != address(0)) {
             AssayEscrow.Delegation storage d = delegations[v.payer][it.delegate];
@@ -507,13 +515,13 @@ library ChannelDoor {
                 it.dSpent,
                 nowTs
             );
-            if (why == 1) return SettleSkip.PerCallCap;
-            if (why == 2) return SettleSkip.DelegateWindow;
+            if (why == 1) return (false, SettleSkip.PerCallCap);
+            if (why == 2) return (false, SettleSkip.DelegateWindow);
         }
 
-        if (!_isStaked(c, x, v.provider)) return SettleSkip.Stake;
-        if (e.balance < it.charge) return SettleSkip.Balance;
-        return SettleSkip.Expired;
+        if (!_isStaked(c, x, v.provider)) return (false, SettleSkip.Stake);
+        if (e.balance < it.charge) return (false, SettleSkip.Balance);
+        return (true, SettleSkip.Expired);
     }
 
     /// @dev The escrow side of a positive charge, as `_redeem` does it.
@@ -589,28 +597,32 @@ library ChannelDoor {
         if (amount == 0) return;
         s.unpaid[to] = 0;
         s.totalUnpaid -= amount;
-        if (!_transfer(asset, to, amount)) revert TransferFailed();
+        if (!_transfer(asset, to, amount, gasleft())) revert TransferFailed();
         emit UnpaidClaimed(to, amount);
     }
 
-    /// @dev Transfers, or sets the amount aside for `to` if the transfer fails. A caller cannot
-    ///      force the failure by starving the call: when the callee ran out of the gas it was
-    ///      given, the 1/64 kept here is below 1/63 of what was available, and that reverts.
+    /// @dev Transfers, or sets the amount aside for `to` if the transfer fails. The transfer
+    ///      always gets exactly `TRANSFER_GAS`: a caller that leaves less than
+    ///      `TRANSFER_GAS_FLOOR` reverts here, so a set-aside means the token refused the
+    ///      transfer (a frozen address) or burned the whole stipend, never a starved call.
     function _payOrDefer(Store storage s, IERC20 asset, address to, uint256 amount) private {
         if (amount == 0) return;
-        uint256 gasBefore = gasleft();
-        if (_transfer(asset, to, amount)) return;
-        if (gasleft() < gasBefore / 63) revert TransferGasTooLow();
+        if (gasleft() < TRANSFER_GAS_FLOOR) revert TransferGasTooLow();
+        if (_transfer(asset, to, amount, TRANSFER_GAS)) return;
         s.unpaid[to] += uint128(amount);
         s.totalUnpaid += uint128(amount);
         emit TransferDeferred(to, uint128(amount));
     }
 
-    /// @dev `transfer`; true on success: no return data, or a 32-byte word equal to 1.
-    function _transfer(IERC20 asset, address to, uint256 amount) private returns (bool ok) {
+    /// @dev `transfer` with `gasLimit`; true on success: no return data, or a 32-byte word equal
+    ///      to 1 (more return data is accepted if its first word is 1).
+    function _transfer(IERC20 asset, address to, uint256 amount, uint256 gasLimit)
+        private
+        returns (bool ok)
+    {
         bytes memory data = abi.encodeCall(IERC20.transfer, (to, amount));
         assembly ("memory-safe") {
-            ok := call(gas(), asset, 0, add(data, 0x20), mload(data), 0, 0x20)
+            ok := call(gasLimit, asset, 0, add(data, 0x20), mload(data), 0, 0x20)
             if ok {
                 switch returndatasize()
                 case 0 { ok := 1 }
@@ -636,12 +648,14 @@ library ChannelDoor {
         uint256 payable_ = (p1 ? sl.h1 : 0) + (p2 ? sl.h2 : 0);
         if (payable_ <= keepHeld) return; // nothing to pay: a no-op
         if (_isBlocked(c, x.config, ref.payer) || _isBlocked(c, x.config, ref.provider)) {
-            emit ChannelCollectSkipped(key);
+            emit ChannelCollectSkipped(key, uint8(CollectSkip.Blocked));
             return;
         }
         uint256 pay = payable_ - keepHeld;
         uint256 paidToProvider;
-        // Oldest payable bucket first; the remainder of `keepHeld` stays in the newest one.
+        // Pays the oldest payable bucket first, then the next. What `keepHeld` keeps is whatever
+        // the payment did not reach: it may sit in one bucket or, when it exceeds the newest
+        // bucket, partly in the older one too.
         bool firstIsOne = p1 && (!p2 || sl.m1 <= sl.m2);
         for (uint256 k = 0; k < 2 && pay > 0; ++k) {
             bool one = (k == 0) == firstIsOne;
@@ -677,22 +691,23 @@ library ChannelDoor {
 
     // --- refund -------------------------------------------------------------------------
 
-    /// @notice Returns held channel money to the payer's balance, from the bucket of the named
-    ///         maturity, while that bucket is inside its refund window. Returns the total.
+    /// @notice Returns held channel money to the payer's balance, from the named bucket, while
+    ///         it is inside its refund window. A bucket is named by `maturityHour << 16 | rate`:
+    ///         two buckets of one channel never share both (I11). Returns the total.
     function refund(
         Store storage s,
         mapping(address => AssayEscrow.Escrow) storage escrows,
         IAssayConfig config,
         ChannelRef[] calldata refs,
-        uint24[] calldata maturityHours,
+        uint40[] calldata buckets,
         uint64[] calldata amounts
     ) external returns (uint256 total) {
         // Not pause-gated: it moves no token.
         if (msg.sender != config.params().redeemer) revert NotRedeemer();
-        _shape(refs.length, maturityHours.length, amounts.length);
+        _shape(refs.length, buckets.length, amounts.length);
         uint256 nowTs = block.timestamp;
         for (uint256 i = 0; i < refs.length; ++i) {
-            total += _refundOne(s, escrows, refs[i], maturityHours[i], amounts[i], nowTs);
+            total += _refundOne(s, escrows, refs[i], buckets[i], amounts[i], nowTs);
         }
         s.held -= uint128(total);
     }
@@ -701,30 +716,32 @@ library ChannelDoor {
         Store storage s,
         mapping(address => AssayEscrow.Escrow) storage escrows,
         ChannelRef calldata ref,
-        uint256 m,
+        uint256 bucket,
         uint256 amount,
         uint256 nowTs
     ) private returns (uint256) {
         if (amount == 0) return 0;
         bytes32 key = keyOf(ref.payer, ref.signer, ref.provider, ref.channelId);
         Slot memory sl = unpack(s.state[key]);
-        bool one = sl.h1 != 0 && sl.m1 == m;
-        if (!one && !(sl.h2 != 0 && sl.m2 == m)) {
+        uint256 m = bucket >> 16;
+        uint256 r = bucket & 0xFFFF;
+        bool one = sl.h1 != 0 && sl.m1 == m && sl.r1 == r;
+        if (!one && !(sl.h2 != 0 && sl.m2 == m && sl.r2 == r)) {
             emit ChannelRefundSkipped(
-                key, uint24(m), uint64(amount), uint8(RefundSkip.NoSuchBucket)
+                key, uint40(bucket), uint64(amount), uint8(RefundSkip.NoSuchBucket)
             );
             return 0;
         }
         if (nowTs >= m * GRID + Constants.HELD_TIMEOUT_SECONDS) {
             emit ChannelRefundSkipped(
-                key, uint24(m), uint64(amount), uint8(RefundSkip.WindowClosed)
+                key, uint40(bucket), uint64(amount), uint8(RefundSkip.WindowClosed)
             );
             return 0;
         }
         uint256 h = one ? sl.h1 : sl.h2;
         if (amount > h) {
             emit ChannelRefundSkipped(
-                key, uint24(m), uint64(amount), uint8(RefundSkip.Insufficient)
+                key, uint40(bucket), uint64(amount), uint8(RefundSkip.Insufficient)
             );
             return 0;
         }
@@ -739,7 +756,7 @@ library ChannelDoor {
         AssayEscrow.Escrow storage e = escrows[ref.payer];
         e.balance += uint128(amount);
         e.totalRedeemed -= uint128(amount);
-        emit ChannelRefunded(key, ref.payer, uint24(m), uint64(amount));
+        emit ChannelRefunded(key, ref.payer, uint40(bucket), uint64(amount));
         return amount;
     }
 }

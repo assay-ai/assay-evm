@@ -118,7 +118,7 @@
       "label": "channels",
       "offset": 0,
       "slot": "14",
-      "type": "t_struct(Store)10789_storage"
+      "type": "t_struct(Store)10803_storage"
     },
     {
       "astId": 9928,
@@ -496,13 +496,13 @@
         }
       ]
     },
-    "t_struct(Store)10789_storage": {
+    "t_struct(Store)10803_storage": {
       "encoding": "inplace",
       "label": "struct ChannelDoor.Store",
       "numberOfBytes": "96",
       "members": [
         {
-          "astId": 10780,
+          "astId": 10794,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "state",
           "offset": 0,
@@ -510,7 +510,7 @@
           "type": "t_mapping(t_bytes32,t_uint256)"
         },
         {
-          "astId": 10784,
+          "astId": 10798,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "unpaid",
           "offset": 0,
@@ -518,7 +518,7 @@
           "type": "t_mapping(t_address,t_uint128)"
         },
         {
-          "astId": 10786,
+          "astId": 10800,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "totalUnpaid",
           "offset": 0,
@@ -526,7 +526,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 10788,
+          "astId": 10802,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "held",
           "offset": 16,

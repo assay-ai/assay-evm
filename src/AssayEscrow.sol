@@ -29,7 +29,8 @@ import "./Errors.sol";
 ///      call. The proxy is the EIP-712 `verifyingContract`: an upgrade keeps vouchers valid, a
 ///      redeploy voids them. No role can move a token to an address of its choosing: a held
 ///      payment pays the voucher's provider and Config's treasury, or returns to the buyer.
-///      Solvency is `totalEscrowed + totalHeld`, never `balanceOf`. The plain OZ EIP712 and
+///      Solvency is `totalEscrowed + totalHeld` plus the channel door's held and set-aside
+///      totals (`channelBooks`), never `balanceOf`. The plain OZ EIP712 and
 ///      ReentrancyGuard are proxy-safe (separator rebuilt per address, zero slot = not entered).
 contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -1110,15 +1111,15 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
 
     /// @notice Returns held channel money to payers' balances. Redeemer only; not pause-gated.
     /// @param refs The channels.
-    /// @param maturityHours Per item, the maturity hour of the bucket to refund from.
+    /// @param buckets Per item, the bucket to refund from: `maturityHour << 16 | takeRateBps`.
     /// @param amounts Per item, the amount to refund.
     function refundChannels(
         ChannelRef[] calldata refs,
-        uint24[] calldata maturityHours,
+        uint40[] calldata buckets,
         uint64[] calldata amounts
     ) external nonReentrant {
         totalEscrowed +=
-            uint128(ChannelDoor.refund(channels, escrows, CONFIG, refs, maturityHours, amounts));
+            uint128(ChannelDoor.refund(channels, escrows, CONFIG, refs, buckets, amounts));
     }
 
     /// @notice Pays `to` what a failed payout set aside for it, to `to` only. Anyone may call.

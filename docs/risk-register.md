@@ -630,8 +630,10 @@ hand a buyer or a delegate fresh capacity inside the window it was spent in. It 
 `totalRedeemed`, so the per-escrow identity `totalFunded == balance + totalRedeemed +
 totalWithdrawn` keeps holding.
 
-**Solvency** is `balanceOf(escrow) >= totalEscrowed + totalHeld` (asserted by the invariant
-suites, never by the contract). `withdraw` reads `balance` only, so it cannot reach held money.
+**Solvency** is `balanceOf(escrow) >= totalEscrowed + totalHeld + channels.held +
+channels.totalUnpaid` (asserted by the invariant suites, never by the contract): the last two
+are the channel door's buckets and its set-aside payouts (§20, D-28), read with
+`channelBooks(0, 0)`. `withdraw` reads `balance` only, so it cannot reach held money.
 
 ## 20. The channel door (D-28) — draft, audit pending
 
@@ -647,17 +649,35 @@ suites, never by the contract). `withdraw` reads `balance` only, so it cannot re
   the channel's provider and the treasury. With `fromSettled` it cannot charge a range twice or
   charge a base it did not name.
 - **Liveness depends on the backend collecting first.** Two buckets per channel with no spare.
-  A matured bucket left uncollected makes the next settlement in a new hour skip `NoBucket`.
-  So does `collectHoldSeconds` above one hour. The backend must collect every matured bucket
+  While both buckets hold money, a settlement for a third (maturity, rate) skips `NoBucket`:
+  an uncollected matured bucket next to an occupied one does that, and so does a take-rate
+  change while both are in use. So does `collectHoldSeconds` above one hour. The backend must collect every matured bucket
   before settling in a new hour, and must offer channels only while the hold is ≤ 1 h. A stall
   costs providers unsettled earnings once the newest voucher expires; buyers are not affected.
 - **Issuer freeze.** A frozen provider or treasury no longer blocks anyone else: its share goes
   to `unpaid` and `claimUnpaid` pays it once the freeze lifts. While frozen, that money is out
   of reach of refunds. Mainnet USDG can also `decreaseSupplyFromAddress`, which would make the
   escrow's own balance short; that is outside every guard here.
-- **Library linkage.** The escrow implementation is linked to one `ChannelDoor` deployment. An
-  upgrade must deploy the library deterministically and the post-check must pin its code hash,
-  or the escrow could be linked to unreviewed code.
+- **A blocked party past maturity + 7 days strands its bucket.** The refund window has
+  closed and collect skips the item, so the money stays held until the party is unblocked,
+  and the channel cannot open a bucket for a new hour while both are occupied. The per-call
+  door's held vouchers behave the same way. Funds are not lost; they wait for the unblock.
+- **The fee rounds down per collect, not per bucket.** Splitting one bucket across collects
+  with `keepHeld` can lower the total fee by at most one unit per piece. Only the redeemer
+  can split, and the loss falls on the treasury.
+- **Pure waives.** A settlement with charge 0 moves no money and is not blocklist-, stake- or
+  cap-gated (it still checks time, authority and `calls`). Its `ChannelSettled` carries
+  `maturityHour = 0` and `takeRateBps = 0`; consumers must read those as "no bucket".
+- **Refunds name a bucket by hour and rate** (`maturityHour << 16 | rate`). Two buckets of one
+  channel never share both (I11), so a refund always reaches the bucket that holds the call,
+  including two buckets of the same hour after a take-rate change.
+- **Library linkage.** The escrow implementation is linked to one `ChannelDoor` deployment, and
+  the escrow's money moves through that code. The escrow codehash pins the library address
+  (it is written into the bytecode); `UpgradeByOwner.s.sol` also requires `CHANNEL_DOOR` and
+  `EXPECTED_CODEHASH_CHANNELDOOR` and refuses an implementation whose link spans name another
+  address, a library whose code differs, or code that does not hold its own address in the
+  call-guard span. `verify-deployment.sh` checks each link span of the live implementation and
+  the library's code against `.contracts.AssayEscrow.libraries.ChannelDoor` in the record.
 - **Rollback.** Going back to an implementation without the channel door freezes every channel
   bucket and every `unpaid` record. The response to a defect is pause and forward-fix, never a
   rollback.

@@ -38,6 +38,77 @@ contract GasBurnToken {
     }
 }
 
+/// A token whose `transfer` moves nothing and returns `false`: the refusal a payout must read.
+contract FalseTransferToken {
+    uint8 public constant decimals = 6;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address to, uint256 a) external {
+        balanceOf[to] += a;
+    }
+
+    function approve(address s, uint256 a) external returns (bool) {
+        allowance[msg.sender][s] = a;
+        return true;
+    }
+
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        allowance[f][msg.sender] -= a;
+        balanceOf[f] -= a;
+        balanceOf[t] += a;
+        return true;
+    }
+
+    function transfer(address, uint256) external pure returns (bool) {
+        return false;
+    }
+}
+
+/// A token whose `transfer` calls back into the escrow's collect door once, and records
+/// whether that re-entry was refused.
+contract ReenterCollectToken {
+    uint8 public constant decimals = 6;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    AssayEscrow public target;
+    bytes public refsAndKeep;
+    bool public reentered;
+    bool public reentryRefused;
+
+    function arm(AssayEscrow t, bytes calldata call) external {
+        target = t;
+        refsAndKeep = call;
+    }
+
+    function mint(address to, uint256 a) external {
+        balanceOf[to] += a;
+    }
+
+    function approve(address s, uint256 a) external returns (bool) {
+        allowance[msg.sender][s] = a;
+        return true;
+    }
+
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        allowance[f][msg.sender] -= a;
+        balanceOf[f] -= a;
+        balanceOf[t] += a;
+        return true;
+    }
+
+    function transfer(address to, uint256 a) external returns (bool) {
+        if (address(target) != address(0) && !reentered) {
+            reentered = true;
+            (bool ok,) = address(target).call(refsAndKeep);
+            reentryRefused = !ok;
+        }
+        balanceOf[msg.sender] -= a;
+        balanceOf[to] += a;
+        return true;
+    }
+}
+
 /// The channel door of `AssayEscrow` (spec P2 v3.1 §3): settle, collect, refund, unpaid.
 contract AssayEscrowChannelTest is Fixture {
     // The EIP-712 type string written out a second time, independently of `src/Types.sol`.
@@ -168,6 +239,12 @@ contract AssayEscrowChannelTest is Fixture {
     function _ref(address signer) internal view returns (ChannelRef[] memory r) {
         r = new ChannelRef[](1);
         r[0] = ChannelRef(buyer, signer, provider, CH);
+    }
+
+    /// A bucket's name for a refund: `maturityHour << 16 | rate`.
+    function _bid(uint256 m, uint256 r) internal pure returns (uint40[] memory b) {
+        b = new uint40[](1);
+        b[0] = uint40((m << 16) | r);
     }
 
     function _maturity() internal view returns (uint64) {
@@ -683,7 +760,7 @@ contract AssayEscrowChannelTest is Fixture {
         assertEq(_held(), 0);
     }
 
-    function test_collect_keepHeld_paysOldestFirst_remainderStaysInTheNewest() public {
+    function test_collect_keepHeld_paysOldestFirst_aSmallKeepStaysInTheNewest() public {
         _settleD(0, 100_000, 1);
         uint256 m1 = _slot(delegate).m1;
         vm.warp(_now() + 3600);
@@ -701,6 +778,22 @@ contract AssayEscrowChannelTest is Fixture {
         assertEq(_held(), 50_000);
     }
 
+    /// A keep larger than the newest bucket leaves part of it in the older one too.
+    function test_collect_keepHeld_largerThanTheNewestBucket_spansBoth() public {
+        _settleD(0, 100_000, 1);
+        uint256 m1 = _slot(delegate).m1;
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        vm.warp((m1 + 1) * 3600);
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(250_000));
+        S memory s = _slot(delegate);
+        assertEq(s.h1, 50_000, "the older bucket keeps what the payment did not reach");
+        assertEq(s.m1, m1);
+        assertEq(s.h2, 200_000, "the newer bucket is untouched");
+        assertEq(_held(), 250_000);
+    }
+
     function test_collect_keepHeldCoveringEverything_isANoOp() public {
         _settleD(0, 100_000, 1);
         vm.warp(_slot(delegate).m1 * 3600);
@@ -714,8 +807,10 @@ contract AssayEscrowChannelTest is Fixture {
         vm.warp(_slot(delegate).m1 * 3600);
         vm.prank(admin);
         config.setBlocked(provider, true);
-        vm.expectEmit(true, false, false, false, address(escrow));
-        emit ChannelDoor.ChannelCollectSkipped(_key(delegate));
+        vm.expectEmit(true, false, false, true, address(escrow));
+        emit ChannelDoor.ChannelCollectSkipped(
+            _key(delegate), uint8(ChannelDoor.CollectSkip.Blocked)
+        );
         vm.prank(redeemer);
         escrow.collectChannels(_ref(delegate), _u(0));
         assertEq(_held(), 100_000);
@@ -792,7 +887,10 @@ contract AssayEscrowChannelTest is Fixture {
         escrow.claimUnpaid(provider);
     }
 
-    function test_unpaid_aCallerCannotForceADeferralByStarvingGas() public {
+    /// The same matured payout to a token whose transfer burns all the gas it is given: a
+    /// caller that leaves too little gas is refused (no deferral), while a call with ample gas
+    /// sets the payout aside, because the token itself failed the full stipend.
+    function test_unpaid_starvingTheCallReverts_aTokenThatBurnsTheStipendIsDeferred() public {
         GasBurnToken t = new GasBurnToken();
         AssayEscrow e2 = _deployEscrow(address(t));
         t.mint(buyer, 10e6);
@@ -821,22 +919,29 @@ contract AssayEscrowChannelTest is Fixture {
         vm.warp(((uint256(_now()) + 3600 + 3599) / 3600) * 3600);
         ChannelRef[] memory refs = new ChannelRef[](1);
         refs[0] = ChannelRef(buyer, buyer, provider, CH);
-        // every transfer of this token runs out of gas: the collect must revert, not defer
+        // starved: refused outright, nothing set aside
         vm.prank(redeemer);
         vm.expectRevert(TransferGasTooLow.selector);
-        e2.collectChannels{gas: 2_000_000}(refs, _u(0));
+        e2.collectChannels{gas: 300_000}(refs, _u(0));
+        (, uint128 un,, uint128 held) = e2.channelBooks(bytes32(0), provider);
+        assertEq(un, 0);
+        assertEq(held, 100_000);
+        // ample gas: the token burned the full stipend, so the payouts are set aside
+        vm.prank(redeemer);
+        e2.collectChannels{gas: 5_000_000}(refs, _u(0));
+        (, un,, held) = e2.channelBooks(bytes32(0), provider);
+        assertEq(un, 90_000);
+        assertEq(held, 0);
     }
 
     // ---------------------------------------------------------------------- refund
 
     function test_refund_returnsToTheBalance_insideTheWindow_evenWhilePaused() public {
         _settleD(0, 300_000, 3);
-        uint24 m = uint24(_slot(delegate).m1);
+        uint40[] memory ms = _bid(_slot(delegate).m1, TAKE_RATE_BPS);
         vm.prank(admin);
         config.setPaused(true);
         uint128 escrowedBefore = escrow.totalEscrowed();
-        uint24[] memory ms = new uint24[](1);
-        ms[0] = m;
         vm.prank(redeemer);
         escrow.refundChannels(_ref(delegate), ms, _u(100_000));
         AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
@@ -851,47 +956,71 @@ contract AssayEscrowChannelTest is Fixture {
 
     function test_refund_skips_noSuchBucket_insufficient_windowClosed() public {
         _settleD(0, 300_000, 3);
-        uint24 m = uint24(_slot(delegate).m1);
-        uint24[] memory ms = new uint24[](1);
+        uint256 m = _slot(delegate).m1;
+        uint40 right = uint40((m << 16) | TAKE_RATE_BPS);
         vm.startPrank(redeemer);
-        ms[0] = m + 1;
+        uint40[2] memory wrong =
+            [uint40(((m + 1) << 16) | TAKE_RATE_BPS), uint40((m << 16) | 2_000)];
+        for (uint256 k = 0; k < 2; ++k) {
+            uint40[] memory w = new uint40[](1);
+            w[0] = wrong[k];
+            vm.expectEmit(true, false, false, true, address(escrow));
+            emit ChannelDoor.ChannelRefundSkipped(
+                _key(delegate), wrong[k], 1, uint8(ChannelDoor.RefundSkip.NoSuchBucket)
+            );
+            escrow.refundChannels(_ref(delegate), w, _u(1));
+        }
+        uint40[] memory ms = _bid(m, TAKE_RATE_BPS);
         vm.expectEmit(true, false, false, true, address(escrow));
         emit ChannelDoor.ChannelRefundSkipped(
-            _key(delegate), m + 1, 1, uint8(ChannelDoor.RefundSkip.NoSuchBucket)
-        );
-        escrow.refundChannels(_ref(delegate), ms, _u(1));
-        ms[0] = m;
-        vm.expectEmit(true, false, false, true, address(escrow));
-        emit ChannelDoor.ChannelRefundSkipped(
-            _key(delegate), m, 300_001, uint8(ChannelDoor.RefundSkip.Insufficient)
+            _key(delegate), right, 300_001, uint8(ChannelDoor.RefundSkip.Insufficient)
         );
         escrow.refundChannels(_ref(delegate), ms, _u(300_001));
         escrow.refundChannels(_ref(delegate), ms, _u(0)); // zero: a no-op
-        vm.warp(uint256(m) * 3600 + Constants.HELD_TIMEOUT_SECONDS);
+        // the last instant of the window still refunds
+        vm.warp(m * 3600 + Constants.HELD_TIMEOUT_SECONDS - 1);
+        escrow.refundChannels(_ref(delegate), ms, _u(1));
+        vm.warp(m * 3600 + Constants.HELD_TIMEOUT_SECONDS);
         vm.expectEmit(true, false, false, true, address(escrow));
         emit ChannelDoor.ChannelRefundSkipped(
-            _key(delegate), m, 1, uint8(ChannelDoor.RefundSkip.WindowClosed)
+            _key(delegate), right, 1, uint8(ChannelDoor.RefundSkip.WindowClosed)
         );
         escrow.refundChannels(_ref(delegate), ms, _u(1));
         vm.stopPrank();
-        assertEq(_held(), 300_000);
+        assertEq(_held(), 300_000 - 1);
+    }
+
+    /// Two buckets of the same hour with different rates: the refund reaches the one it names.
+    function test_refund_namesTheBucketByHourAndRate() public {
+        _settleD(0, 100_000, 1);
+        ParamSet memory p = config.params();
+        p.takeRateBps = 2_000;
+        vm.prank(admin);
+        config.updateConfig(p);
+        _settleD(100_000, 400_000, 4);
+        S memory s = _slot(delegate);
+        assertEq(s.m1, s.m2);
+        vm.prank(redeemer);
+        escrow.refundChannels(_ref(delegate), _bid(s.m2, 2_000), _u(150_000));
+        s = _slot(delegate);
+        assertEq(s.h1, 100_000, "the 10% bucket is untouched");
+        assertEq(s.h2, 150_000, "the 20% bucket gave the refund");
+        _assertBooks();
     }
 
     function test_refund_redeemerOnly() public {
         _settleD(0, 300_000, 3);
-        uint24[] memory ms = new uint24[](1);
-        ms[0] = uint24(_slot(delegate).m1);
+        uint40[] memory ms = _bid(_slot(delegate).m1, TAKE_RATE_BPS);
         vm.expectRevert(NotRedeemer.selector);
         escrow.refundChannels(_ref(delegate), ms, _u(1));
     }
 
     function test_refund_thenCollect_paysOnlyTheRest() public {
         _settleD(0, 300_000, 3);
-        uint24[] memory ms = new uint24[](1);
-        ms[0] = uint24(_slot(delegate).m1);
+        uint256 m = _slot(delegate).m1;
         vm.prank(redeemer);
-        escrow.refundChannels(_ref(delegate), ms, _u(100_000));
-        vm.warp(uint256(ms[0]) * 3600);
+        escrow.refundChannels(_ref(delegate), _bid(m, TAKE_RATE_BPS), _u(100_000));
+        vm.warp(m * 3600);
         uint256 pb = usdg.balanceOf(provider);
         vm.prank(redeemer);
         escrow.collectChannels(_ref(delegate), _u(0));
@@ -969,5 +1098,433 @@ contract AssayEscrowChannelTest is Fixture {
             held,
             "held is the high half of slot 16"
         );
+    }
+
+    // ---------------------------------------------------------------------- the library itself
+
+    /// A state-changing library function called directly (CALL, not DELEGATECALL) reverts:
+    /// solc's call protection. Only the escrow's DELEGATECALL reaches its logic.
+    function test_theLibraryCannotBeCalledDirectly() public {
+        address lib = _libraryAddress();
+        assertGt(lib.code.length, 0, "the library is deployed");
+        // it is the library: its pure view answers like the in-test derivation
+        (bool vok, bytes memory ret) = lib.staticcall(
+            abi.encodeWithSelector(ChannelDoor.keyOf.selector, buyer, delegate, provider, CH)
+        );
+        assertTrue(vok);
+        assertEq(abi.decode(ret, (bytes32)), _key(delegate));
+        ChannelRef[] memory refs = _ref(delegate);
+        bytes memory data = abi.encodeWithSelector(
+            ChannelDoor.collect.selector, uint256(14), address(config), address(usdg), refs, _u(0)
+        );
+        (bool ok,) = lib.call(data);
+        assertFalse(ok, "a direct call must revert");
+    }
+
+    /// The library address the escrow implementation was linked to, read from its bytecode
+    /// (the only DELEGATECALL target in the escrow).
+    function _libraryAddress() internal view returns (address lib) {
+        bytes memory code = address(escrowImpl).code;
+        // PUSH20 <addr> ... DELEGATECALL: find the first PUSH20 (0x73) whose target has code
+        // and is not a known contract.
+        for (uint256 i = 0; i + 21 < code.length; ++i) {
+            if (uint8(code[i]) != 0x73) continue;
+            address a;
+            assembly {
+                a := shr(96, mload(add(add(code, 0x21), i)))
+            }
+            if (
+                a.code.length > 0 && a != address(config) && a != address(usdg)
+                    && a != address(stake)
+            ) {
+                return a;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------- boundaries
+    // Each test below pins a boundary or a branch that a mutation of `ChannelDoor` survived
+    // before it was written (mutation log, P2 rows).
+
+    function _settleP(uint64 from, uint64 cum, uint32 calls) internal {
+        ChannelVoucher memory v = _cv(CH, cum, calls);
+        _settle(v, _sign(buyerKey, v), from, cum - from);
+    }
+
+    function _keyP() internal view returns (bytes32) {
+        return _key(buyer);
+    }
+
+    function test_edge_lifetimeExactlyTheMaximum_settles() public {
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        v.expiresAt = v.issuedAt + Constants.VOUCHER_MAX_LIFETIME_SECONDS;
+        _settle(v, _sign(delegateKey, v), 0, 100_000);
+        assertEq(_slot(delegate).settled, 100_000);
+    }
+
+    function test_edge_issuedAtExactlyTheSkewAhead_settles() public {
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        v.issuedAt = _now() + Constants.CLOCK_SKEW_TOLERANCE_SECONDS;
+        v.expiresAt = v.issuedAt + 60;
+        _settle(v, _sign(delegateKey, v), 0, 100_000);
+        assertEq(_slot(delegate).settled, 100_000);
+    }
+
+    function test_edge_lastInstantOfTheGrace_settles() public {
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        bytes memory sig = _sign(delegateKey, v);
+        vm.warp(uint256(v.expiresAt) + Constants.REDEEM_GRACE_SECONDS);
+        _settle(v, sig, 0, 100_000);
+        assertEq(_slot(delegate).settled, 100_000);
+    }
+
+    function test_edge_baseAheadOfTheSettled_isABaseMismatch() public {
+        ChannelVoucher memory v = _cv(CH, 300_000, 3);
+        _expectSkip(0, _key(delegate), 300_000, ChannelDoor.SettleSkip.BaseMismatch);
+        _settle(v, _sign(delegateKey, v), 100_000, 200_000);
+        assertEq(_slot(delegate).settled, 0);
+    }
+
+    /// The base is checked before the authority: a stranger's voucher on a wrong base reports
+    /// the base, which is what the redeemer can act on.
+    function test_edge_baseIsCheckedBeforeAuthority() public {
+        uint256 strangerKey = 0x5172A;
+        ChannelVoucher memory v = _cv(CH, 300_000, 3);
+        bytes32 k = keccak256(abi.encode(buyer, vm.addr(strangerKey), provider, CH));
+        _expectSkip(0, k, 300_000, ChannelDoor.SettleSkip.BaseMismatch);
+        _settle(v, _sign(strangerKey, v), 100_000, 200_000);
+    }
+
+    /// At time zero an address with no delegation still has no authority (`validUntil == 0`
+    /// is "never granted", not "valid until the epoch").
+    function test_edge_noDelegationAtTimeZero_hasNoAuthority() public {
+        vm.warp(0);
+        uint256 strangerKey = 0x5172A;
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        bytes32 k = keccak256(abi.encode(buyer, vm.addr(strangerKey), provider, CH));
+        _expectSkip(0, k, 100_000, ChannelDoor.SettleSkip.Authority);
+        _settle(v, _sign(strangerKey, v), 0, 100_000);
+    }
+
+    function test_edge_delegationOnItsLastSecond_signs() public {
+        vm.warp(escrow.delegationOf(buyer, delegate).validUntil);
+        _settleD(0, 100_000, 1);
+        assertEq(_slot(delegate).settled, 100_000);
+    }
+
+    function test_edge_revokedDelegateOnTheLastSecondOfTheGrace_signs() public {
+        uint64 t = _now();
+        vm.prank(buyer);
+        escrow.revokeDelegate(delegate);
+        vm.warp(t + Constants.TIGHTEN_DELAY_SECONDS);
+        _settleD(0, 100_000, 1);
+        assertEq(_slot(delegate).settled, 100_000);
+    }
+
+    function test_edge_heldPairOnItsLastSecond_isHonoured() public {
+        uint64 t = _now();
+        vm.prank(buyer);
+        escrow.setLimits(V / 2, W / 10);
+        vm.warp(t + Constants.TIGHTEN_DELAY_SECONDS);
+        _settleP(0, 3 * V, 3); // fits the held per-call cap only
+        assertEq(_slot(buyer).settled, 3 * V);
+    }
+
+    /// The held pair is checked with ITS window, not the current one: a charge over the
+    /// lowered window but inside the held one passes during the delay.
+    function test_edge_heldPairUsesItsOwnWindow() public {
+        vm.prank(buyer);
+        escrow.setLimits(V, W / 10);
+        _settleP(0, 20 * V, 20); // 20 > current window 10, <= held window 100
+        assertEq(_slot(buyer).settled, 20 * V);
+    }
+
+    /// ... and that window binds: the held per-call term alone does not pass a charge.
+    function test_edge_heldPairWindowBinds() public {
+        vm.prank(buyer);
+        escrow.setLimits(V / 2, W / 10);
+        ChannelVoucher memory v = _cv(CH, W + V, 101); // 101 calls: held V fits, window 100 not
+        _expectSkip(0, _keyP(), W + V, ChannelDoor.SettleSkip.EscrowWindow);
+        _settle(v, _sign(buyerKey, v), 0, W + V);
+    }
+
+    function test_edge_escrowWindowDecays_andTheCounterRestarts() public {
+        _settleP(0, W, 100); // the whole escrow window
+        vm.warp(_now() + Constants.SLASH_WINDOW_SECONDS);
+        _settleP(W, W + V, 101);
+        assertEq(_slot(buyer).settled, W + V, "a drained window takes a new charge");
+        assertEq(escrow.escrowOf(buyer).spentInWindow, V, "the counter is the decayed sum");
+    }
+
+    function test_edge_delegateWindowDecays_andTheCounterRestarts() public {
+        _settleD(0, DW, 50); // the whole delegate window
+        vm.warp(_now() + Constants.SLASH_WINDOW_SECONDS);
+        _settleD(DW, DW + V, 51);
+        assertEq(_slot(delegate).settled, DW + V);
+        assertEq(escrow.delegationOf(buyer, delegate).spentInWindow, V);
+    }
+
+    function test_edge_balanceExactlyTheCharge_settles() public {
+        vm.prank(buyer);
+        escrow.requestWithdraw(500e6 - 100_000);
+        vm.warp(_now() + Constants.WITHDRAW_DELAY_SECONDS);
+        vm.prank(buyer);
+        escrow.withdraw();
+        _settleD(0, 100_000, 1);
+        assertEq(escrow.escrowOf(buyer).balance, 0);
+        assertEq(_held(), 100_000);
+    }
+
+    function test_edge_stakeIsReportedBeforeBalance() public {
+        vm.prank(buyer);
+        escrow.requestWithdraw(500e6);
+        vm.warp(_now() + Constants.WITHDRAW_DELAY_SECONDS);
+        vm.prank(buyer);
+        escrow.withdraw();
+        _setBonded(provider, MINIMUM_STAKE - 1);
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        _expectSkip(0, _key(delegate), 100_000, ChannelDoor.SettleSkip.Stake);
+        _settle(v, _sign(delegateKey, v), 0, 100_000);
+    }
+
+    /// The per-transaction caches answer a second item exactly as the first lookup did.
+    function test_edge_cachedBlocklistAndStake_answerTheSecondItemToo() public {
+        ChannelVoucher[] memory vs = new ChannelVoucher[](2);
+        vs[0] = _cv(CH, 100_000, 1);
+        vs[1] = _cv(keccak256("lane-2"), 100_000, 1);
+        bytes memory sigs = abi.encodePacked(_sign(delegateKey, vs[0]), _sign(delegateKey, vs[1]));
+        uint64[] memory ch = new uint64[](2);
+        ch[0] = ch[1] = 100_000;
+        bytes32 k2 = keccak256(abi.encode(buyer, delegate, provider, keccak256("lane-2")));
+
+        vm.prank(admin);
+        config.setBlocked(buyer, true);
+        _expectSkip(0, _key(delegate), 100_000, ChannelDoor.SettleSkip.Blocked);
+        _expectSkip(1, k2, 100_000, ChannelDoor.SettleSkip.Blocked);
+        vm.prank(redeemer);
+        escrow.settleChannels(vs, sigs, new uint64[](2), ch);
+        vm.prank(admin);
+        config.setBlocked(buyer, false);
+
+        _setBonded(provider, MINIMUM_STAKE - 1);
+        _expectSkip(0, _key(delegate), 100_000, ChannelDoor.SettleSkip.Stake);
+        _expectSkip(1, k2, 100_000, ChannelDoor.SettleSkip.Stake);
+        vm.prank(redeemer);
+        escrow.settleChannels(vs, sigs, new uint64[](2), ch);
+        assertEq(_held(), 0);
+    }
+
+    /// A bucket holds at most `MAX_BUCKET`: exactly that fits, one more is `NoBucket`, for a
+    /// fresh bucket and for a top-up.
+    function test_edge_bucketCapacity() public {
+        uint256 maxB = (1 << 48) - 1;
+        _fund(buyer, maxB + 1);
+        vm.startPrank(buyer);
+        escrow.deposit(uint64(maxB + 1));
+        escrow.setLimits(type(uint64).max, type(uint64).max);
+        vm.stopPrank();
+        // fresh bucket, one over
+        ChannelVoucher memory v = _cv(CH, uint64(maxB + 1), 1);
+        _expectSkip(0, _keyP(), uint64(maxB + 1), ChannelDoor.SettleSkip.NoBucket);
+        _settle(v, _sign(buyerKey, v), 0, uint64(maxB + 1));
+        // fill to one under, then top up to exactly the cap
+        _settleP(0, uint64(maxB - 1), 1);
+        _settleP(uint64(maxB - 1), uint64(maxB), 2);
+        assertEq(_slot(buyer).h1, maxB, "a top-up to exactly the cap fits");
+        assertEq(_slot(buyer).m1, _maturity(), "and leaves the maturity intact");
+        // one more in the same hour and rate: the full bucket is the only match
+        v = _cv(CH, uint64(maxB + 1), 3);
+        _expectSkip(0, _keyP(), uint64(maxB + 1), ChannelDoor.SettleSkip.NoBucket);
+        _settle(v, _sign(buyerKey, v), uint64(maxB), 1);
+        assertEq(_slot(buyer).h1, maxB);
+    }
+
+    function test_edge_pureWaive_carriesNoRateNorMaturity() public {
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        bytes memory sig = _sign(delegateKey, v);
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit ChannelDoor.ChannelSettled(
+            _key(delegate), buyer, delegate, provider, CH, 100_000, 1, 0, 100_000, 0, 0
+        );
+        _settle(v, sig, 0, 0);
+    }
+
+    /// The library's decoder against the independent one, at an odd and an even maturity, so
+    /// a mask that bleeds a maturity bit into a bucket amount shows.
+    function test_edge_unpack_matchesAtBothMaturityParities() public {
+        for (uint256 k = 0; k < 2; ++k) {
+            bytes32 ch = keccak256(abi.encode("parity", k));
+            ChannelVoucher memory v = _cv(ch, 100_000, 1);
+            _settle(v, _sign(delegateKey, v), 0, 100_000);
+            bytes32 key = keccak256(abi.encode(buyer, delegate, provider, ch));
+            (uint256 w,,,) = escrow.channelBooks(key, address(0));
+            ChannelDoor.Slot memory a = ChannelDoor.unpack(w);
+            assertEq(a.h1, 100_000);
+            assertEq(a.m1, _maturity());
+            assertEq(a.r1, TAKE_RATE_BPS);
+            vm.warp(_now() + 3600);
+        }
+    }
+
+    /// Oldest first even when the older money sits in the SECOND bucket (the first was emptied
+    /// and refilled later), and an emptied second bucket zeroes its maturity and rate.
+    function test_edge_collect_oldestFirstWhenTheSecondBucketIsOlder() public {
+        _settleD(0, 100_000, 1);
+        uint256 a = _slot(delegate).m1;
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3); // second bucket, hour a + 1
+        vm.warp(a * 3600);
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(0)); // empties the first bucket only
+        vm.warp(a * 3600 + 3601);
+        _settleD(300_000, 600_000, 6); // refills the FIRST bucket, a later hour
+        S memory s = _slot(delegate);
+        assertGt(s.m1, s.m2, "the first bucket is now the newer one");
+        vm.warp(s.m1 * 3600);
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(100_000));
+        s = _slot(delegate);
+        assertEq(s.h2 + s.m2 + s.r2, 0, "the older second bucket was paid first and zeroed");
+        assertEq(s.h1, 100_000, "the keep stays in the newer first bucket");
+        _assertBooks();
+    }
+
+    function test_edge_collect_aggregatesOneProviderAcrossChannels() public {
+        _settleD(0, 300_000, 3);
+        ChannelVoucher memory v = _cv(keccak256("lane-2"), 200_000, 2);
+        _settle(v, _sign(delegateKey, v), 0, 200_000);
+        vm.warp(_slot(delegate).m1 * 3600);
+        ChannelRef[] memory refs = new ChannelRef[](2);
+        refs[0] = ChannelRef(buyer, delegate, provider, CH);
+        refs[1] = ChannelRef(buyer, delegate, provider, keccak256("lane-2"));
+        uint64[] memory keep = new uint64[](2);
+        uint256 pb = usdg.balanceOf(provider);
+        vm.prank(redeemer);
+        escrow.collectChannels(refs, keep);
+        assertEq(usdg.balanceOf(provider) - pb, 450_000, "both channels, one payout");
+        assertEq(_held(), 0);
+        _assertBooks();
+    }
+
+    function test_edge_collect_blockedPayer_isSkipped() public {
+        _settleD(0, 100_000, 1);
+        vm.warp(_slot(delegate).m1 * 3600);
+        vm.prank(admin);
+        config.setBlocked(buyer, true);
+        vm.expectEmit(true, false, false, true, address(escrow));
+        emit ChannelDoor.ChannelCollectSkipped(
+            _key(delegate), uint8(ChannelDoor.CollectSkip.Blocked)
+        );
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(0));
+        assertEq(_held(), 100_000);
+    }
+
+    function test_edge_collect_batchShape() public {
+        vm.startPrank(redeemer);
+        vm.expectRevert(EmptyBatch.selector);
+        escrow.collectChannels(new ChannelRef[](0), new uint64[](0));
+        vm.expectRevert(BatchLengthMismatch.selector);
+        escrow.collectChannels(_ref(delegate), new uint64[](2));
+        vm.expectRevert(BatchLengthMismatch.selector);
+        escrow.collectChannels(new ChannelRef[](2), _u(0));
+        vm.stopPrank();
+    }
+
+    /// A token that answers `false` has refused: the payout is set aside, never counted paid.
+    function test_edge_payoutReadsAFalseReturn() public {
+        FalseTransferToken t = new FalseTransferToken();
+        AssayEscrow e2 = _deployEscrow(address(t));
+        t.mint(buyer, 10e6);
+        vm.startPrank(buyer);
+        t.approve(address(e2), type(uint256).max);
+        e2.deposit(5e6);
+        e2.setLimits(V, W);
+        vm.stopPrank();
+        ChannelRef[] memory refs = _settleOn(e2, 100_000);
+        vm.prank(redeemer);
+        e2.collectChannels(refs, _u(0));
+        (, uint128 un, uint128 tot, uint128 held) = e2.channelBooks(bytes32(0), provider);
+        assertEq(un, 90_000);
+        assertEq(tot, 100_000, "provider and treasury both set aside");
+        assertEq(held, 0);
+        vm.expectRevert(TransferFailed.selector);
+        e2.claimUnpaid(provider);
+    }
+
+    /// The collect door refuses a re-entry from the token it pays with.
+    function test_edge_collect_refusesReentry() public {
+        ReenterCollectToken t = new ReenterCollectToken();
+        AssayEscrow e2 = _deployEscrow(address(t));
+        t.mint(buyer, 10e6);
+        vm.startPrank(buyer);
+        t.approve(address(e2), type(uint256).max);
+        e2.deposit(5e6);
+        e2.setLimits(V, W);
+        vm.stopPrank();
+        ChannelRef[] memory refs = _settleOn(e2, 100_000);
+        t.arm(e2, abi.encodeCall(AssayEscrow.collectChannels, (refs, _u(0))));
+        vm.prank(redeemer);
+        e2.collectChannels(refs, _u(0));
+        assertTrue(t.reentered());
+        assertTrue(t.reentryRefused(), "nonReentrant on collectChannels");
+        (,,, uint128 held) = e2.channelBooks(bytes32(0), provider);
+        assertEq(held, 0);
+    }
+
+    function test_edge_claimWithNothingSetAside_emitsNothing() public {
+        vm.recordLogs();
+        escrow.claimUnpaid(provider);
+        assertEq(vm.getRecordedLogs().length, 0);
+    }
+
+    /// Refunding a whole bucket empties it and zeroes its maturity and rate, in either bucket;
+    /// an emptied bucket is then no longer nameable.
+    function test_edge_refund_wholeBuckets() public {
+        _settleD(0, 100_000, 1);
+        uint256 a = _slot(delegate).m1;
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        uint256 b = _slot(delegate).m2;
+        vm.startPrank(redeemer);
+        escrow.refundChannels(_ref(delegate), _bid(b, TAKE_RATE_BPS), _u(200_000));
+        S memory s = _slot(delegate);
+        assertEq(s.h2 + s.m2 + s.r2, 0, "second bucket refunded whole");
+        escrow.refundChannels(_ref(delegate), _bid(a, TAKE_RATE_BPS), _u(100_000));
+        s = _slot(delegate);
+        assertEq(s.h1 + s.m1 + s.r1, 0, "first bucket refunded whole");
+        vm.expectEmit(true, false, false, true, address(escrow));
+        emit ChannelDoor.ChannelRefundSkipped(
+            _key(delegate), 0, 1, uint8(ChannelDoor.RefundSkip.NoSuchBucket)
+        );
+        escrow.refundChannels(_ref(delegate), _bid(0, 0), _u(1));
+        vm.stopPrank();
+        assertEq(_held(), 0);
+        assertEq(escrow.escrowOf(buyer).balance, 500e6);
+        _assertBooks();
+    }
+
+    /// Settles `amount` payer-signed on `e2` and warps to its maturity.
+    function _settleOn(AssayEscrow e2, uint64 amount) internal returns (ChannelRef[] memory refs) {
+        ChannelVoucher memory v = _cv(CH, amount, 1);
+        bytes32 sh = keccak256(
+            abi.encode(
+                CHANNEL_TYPEHASH,
+                v.payer,
+                v.provider,
+                v.channelId,
+                v.cumulative,
+                v.calls,
+                v.issuedAt,
+                v.expiresAt
+            )
+        );
+        (uint8 vv, bytes32 r, bytes32 s) =
+            vm.sign(buyerKey, keccak256(abi.encodePacked("\x19\x01", e2.DOMAIN_SEPARATOR(), sh)));
+        vm.prank(redeemer);
+        e2.settleChannels(_one(v), abi.encodePacked(r, s, vv), _u(0), _u(amount));
+        vm.warp(((uint256(_now()) + config.collectHoldSeconds() + 3599) / 3600) * 3600);
+        refs = new ChannelRef[](1);
+        refs[0] = ChannelRef(buyer, buyer, provider, CH);
     }
 }

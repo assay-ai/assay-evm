@@ -205,6 +205,12 @@ operator as part of every upgrade — so it confirms the deployed code matches t
 never that the new source's shape matches the old. `script/abi-surface.sh` carries the argument and
 the limits; `docs/deploy-runbook.md` §7 carries the checklist item.
 
+**Linked libraries (D-28).** `AssayEscrow` links `ChannelDoor`, so its build carries link
+placeholders. The escrow is hashed with its link spans zeroed, and each library it links is
+compared on its own against `.contracts.<C>.libraries.<L>.runtimeKeccak`: a change to the
+library is drift of the contract that DELEGATECALLs into it. `script/linked-code.sh` holds the
+helpers; `verify-deployment.sh` check 3b compares each live link span with the recorded address.
+
 **A defect this gate had until 2026-09-09, worth recording because of its shape.** The bytecode
 comparison was written `got=$($FORGE inspect "$c" deployedBytecode | cast keccak)`. That pipe form
 fails — `Error: odd number of digits`, from the trailing newline — and under `set -euo pipefail` it

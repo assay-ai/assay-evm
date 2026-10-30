@@ -33,6 +33,8 @@ REC="$HERE/deployments/$CHAIN_ID.json"
 FORGE="${FORGE:-forge}"
 # shellcheck source=script/abi-surface.sh
 . "$HERE/script/abi-surface.sh"
+# shellcheck source=script/linked-code.sh
+. "$HERE/script/linked-code.sh"
 [ -f "$REC" ] || { echo "no deployment record at $REC"; exit 2; }
 fail() { echo "MISMATCH: $*"; exit 1; }
 TMP=$(mktemp -d)
@@ -86,11 +88,14 @@ artifact_for() { # <contract> -> path to the artifact built at the contract's re
   echo "$dir/out/$c.sol/$c.json"
 }
 
-masked_code() { # <contract> <address>
+masked_code() { # <contract> <address> [artifact]
+  # Immutable spans AND link spans zeroed — the same bytes `runtime_keccak` zeroes in the build.
+  # The link spans are checked against the record separately (check 3b); zeroed here only.
   local code art starts
   code=$(cast code "$2" --rpc-url "$RPC"); code=${code#0x}
-  art=$(artifact_for "$1")
-  starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art")
+  art=${3:-$(artifact_for "$1")}
+  starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art"
+           link_spans "$art")
   while read -r start len; do
     [ -n "$start" ] || continue
     local zeros; zeros=$(printf '%0*d' $((len * 2)) 0)
@@ -201,6 +206,36 @@ for c in AssayConfig AssayStake AssayEscrow; do
   # 3. That implementation's runtime bytecode is the one CI built, immutables masked (above).
   got=$(cast keccak "$(masked_code "$c" "$impl")")
   [ "$(lc "$got")" = "$(lc "$want")" ] || fail "$c implementation bytecode ($got != $want)"
+
+  # 3b. Every library the implementation links (D-28: the escrow DELEGATECALLs its channel doors
+  #     into ChannelDoor, so that code moves the escrow's money too). Each link span of the LIVE
+  #     implementation names the recorded library, and the code there is the one CI built, its
+  #     own address (the call guard, an immutable) masked and then compared to the address.
+  art=$(artifact_for "$c")
+  for lib in $(linked_libraries "$art"); do
+    laddr=$(jq -er ".contracts.\"$c\".libraries.\"$lib\".address" "$REC") \
+      || fail "$c links $lib but the record names no .contracts.$c.libraries.$lib.address"
+    lwant=$(jq -er ".contracts.\"$c\".libraries.\"$lib\".runtimeKeccak" "$REC") \
+      || fail "$c links $lib but the record has no runtimeKeccak for it"
+    [ "$(lc "$laddr")" != "0x0000000000000000000000000000000000000000" ] \
+      || fail "$c library $lib address is still the placeholder"
+    icode=$(cast code "$impl" --rpc-url "$RPC"); icode=$(lc "${icode#0x}")
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      span="0x${icode:$((start * 2)):$((len * 2))}"
+      [ "$span" = "$(lc "$laddr")" ] || fail "$c link span at $start names $span, record says $laddr ($lib)"
+    done <<< "$(link_spans "$art" "$lib")"
+    lart="$(dirname "$(dirname "$art")")/$lib.sol/$lib.json"
+    lcode=$(cast code "$laddr" --rpc-url "$RPC"); lcode=$(lc "${lcode#0x}")
+    [ -n "$lcode" ] || fail "$lib has no code at $laddr"
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      [ "${lcode:$((start * 2)):$((len * 2))}" = "$(printf '%0*s' $((len * 2 - 40)) '' | tr ' ' 0)$(lc "${laddr#0x}")" ] \
+        || fail "$lib at $laddr does not hold its own address at $start — not this library deployed there"
+    done <<< "$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$lart")"
+    lgot=$(cast keccak "$(masked_code "$lib" "$laddr" "$lart")")
+    [ "$(lc "$lgot")" = "$(lc "$lwant")" ] || fail "$lib library bytecode ($lgot != $lwant)"
+  done
 
   # 4. The proxy has code at all.
   [ "$(cast code "$proxy" --rpc-url "$RPC")" != "0x" ] || fail "$c proxy has no code"

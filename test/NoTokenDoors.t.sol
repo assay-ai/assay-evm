@@ -88,7 +88,7 @@ contract NoTokenDoorsTest is Test {
         s[8] = Site(
             "libraries/ChannelDoor",
             "_transfer",
-            "ok := call(gas(), asset, 0, add(data, 0x20), mload(data), 0, 0x20)"
+            "ok := call(gasLimit, asset, 0, add(data, 0x20), mload(data), 0, 0x20)"
         );
     }
 

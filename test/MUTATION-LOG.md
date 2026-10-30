@@ -1982,3 +1982,47 @@ mutates the clamp that this replaced; its named test is now
 | FS1 | `freeBondedOf`: `free = b > pending ? b - pending : 0` | → `free = b` (back to `bondedOf`) | `test_F_M1_aProviderWhoseStakeIsReservedBelowTheMinimumIsNotPaid`, `test_freeBondedOfIsBondedMinusPendingSlash` | **DIES**: `602 passed; 2 failed` — `[FAIL: assertion failed: 200000000 != 100000000]` and `[FAIL: assertion failed: 100000000 != 99000000]` |
 | FS2 | `proposeSlash`: `if (reserved > free) revert NothingToSlash();` | → `if (reserved > free) reserved = Cast.toUint64(free);` (the old clamp) | `test_F_L1_aShortFreeBalanceRefusesTheJudgementAndBurnsNothing`, `test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut`, `test_L1_aReservationTooSmallToSplitIsRefusedAndBurnsNothing`, `test_F_M1_…` | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected` / `PenaltyTooSmallToSplit() != NothingToSlash()` |
 | FS3 | same | line deleted | the same four | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected`. Without it `pendingSlash` can exceed `atRisk` |
+
+### Channel door (D-28, spec P2 v3.1), 2026-10-31
+
+97 mutations of `src/libraries/ChannelDoor.sol` and the channel wrappers of `AssayEscrow.sol`,
+one at a time, each run against `test/AssayEscrow.channel*` and `NoTokenDoors.t.sol`, and a
+survivor also against `ChannelInvariantsTest`. **First round: 60 killed, 37 survived (62%).**
+The survivors were all boundaries (`>` against `>=`), the cached blocklist and stake answers,
+the bucket capacity, the window decay, the held pair's own window, the second bucket's
+zeroing and ordering, provider aggregation, the payer blocklist on collect, a `false` token
+return, the collect re-entry guard, the claim's zero no-op, whole-bucket refunds, the
+`unpack` mask at an odd maturity, the pure-waive event and the collect batch shape. The
+`test_edge_*` tests in `AssayEscrow.channel.t.sol` were written for them. **Second round, on
+the same 37: 37 killed.**
+
+| # | Mutation | Killed by |
+|---|---|---|
+| M02 | lifetime `>` → `>=` | `test_edge_lifetimeExactlyTheMaximum_settles` |
+| M09 | not-yet-valid `>` → `>=` | `test_edge_issuedAtExactlyTheSkewAhead_settles` |
+| M10 | expired `>` → `>=` | `test_edge_lastInstantOfTheGrace_settles` |
+| M12 | base check moved after authority | `test_edge_baseIsCheckedBeforeAuthority` |
+| M14 | base `!=` → `>` | `test_edge_baseAheadOfTheSettled_isABaseMismatch` |
+| M15 | `validUntil` `>` → `>=` | `test_edge_delegationOnItsLastSecond_signs` |
+| M16 | revocation grace `<=` → `<` | `test_edge_revokedDelegateOnTheLastSecondOfTheGrace_signs` |
+| M18 | `validUntil == 0` term dropped | `test_edge_noDelegationAtTimeZero_hasNoAuthority` |
+| M24 | held `until` `<=` → `<` | `test_edge_heldPairOnItsLastSecond_isHonoured` |
+| M26 | held pair checked against the current window | `test_edge_heldPairUsesItsOwnWindow` |
+| M28 | held window not checked | `test_edge_heldPairWindowBinds` |
+| M30, M53 | escrow window without decay (gate; debit) | `test_edge_escrowWindowDecays_andTheCounterRestarts` |
+| M31 | delegate window without decay | `test_edge_delegateWindowDecays_andTheCounterRestarts` |
+| M32 | balance `<` → `<=` | `test_edge_balanceExactlyTheCharge_settles` |
+| M34 | stake and balance order swapped | `test_edge_stakeIsReportedBeforeBalance` |
+| M35, M36, M37 | cache hit answers wrong / stores wrong | `test_edge_cachedBlocklistAndStake_answerTheSecondItemToo` |
+| M42, M43, M44 | bucket capacity checks dropped / `>` → `>=` | `test_edge_bucketCapacity` |
+| M60, M67 | emptied 2nd bucket keeps m/r; always bucket 1 first | `test_edge_collect_oldestFirstWhenTheSecondBucketIsOlder` |
+| M62 | provider aggregation overwrites | `test_edge_collect_aggregatesOneProviderAcrossChannels` |
+| M65 | payer blocklist dropped on collect | `test_edge_collect_blockedPayer_isSkipped` |
+| M70 | transfer return data ignored | `test_edge_payoutReadsAFalseReturn` |
+| M73 | claim zero no-op dropped | `test_edge_claimWithNothingSetAside_emitsNothing` |
+| M77, M78, M81, M82 | refund `>` → `>=`; empty bucket matched; emptied buckets keep m/r | `test_edge_refund_wholeBuckets` |
+| M87 | `collectChannels` without `nonReentrant` | `test_edge_collect_refusesReentry` |
+| M93 | `unpack` h1 mask one bit wide | `test_edge_unpack_matchesAtBothMaturityParities` |
+| M94 | rate emitted on a pure waive | `test_edge_pureWaive_carriesNoRateNorMaturity` |
+| M97 | collect shape check loosened | `test_edge_collect_batchShape` |
+| M72 | claim: state written after the transfer | only `NoTokenDoors.t.sol` (the pinned transfer line moved). **Behaviourally equivalent**: `claimUnpaid` is `nonReentrant` at the escrow, so no re-entry can observe the order; the order is kept as defence in depth. |

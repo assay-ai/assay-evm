@@ -670,6 +670,15 @@ also needs `EXPECTED_CODEHASH_<NAME>` — the `extcodehash` of `IMPL_<NAME>`
 (`ImplementationCodehashMismatch`) an `IMPL_*` whose code is not that hash, so the owner signs for
 exactly the verified code and not for whatever address ended up in the env.
 
+**An escrow upgrade also names its library (D-28).** `UPGRADE_ESCROW` requires `CHANNEL_DOOR`
+(the `ChannelDoor` address `deploy()` prints, read back from the implementation's link spans)
+and `EXPECTED_CODEHASH_CHANNELDOOR` (`cast keccak $(cast code $CHANNEL_DOOR --rpc-url <rpc>)`,
+from the library `verify-deployment.sh` matched). The script refuses an implementation whose
+link spans name any other address (`LinkedLibraryMismatch`) and a library whose code is not
+that hash (`LibraryCodehashMismatch`). The record carries the pair under
+`.contracts.AssayEscrow.libraries.ChannelDoor` (`address`, `runtimeKeccak`); the escrow's own
+`implementationRuntimeKeccak` is taken with the link spans zeroed (`script/linked-code.sh`).
+
 The `bytes` payload is `0x` unless a reinitialiser is genuinely needed; if it is, it is a
 `reinitializer(n)` function — **a fresh deployment leaves all three contracts at version 1, so the
 first one is `reinitializer(2)`** — it is written and reviewed as part of the same change, and its

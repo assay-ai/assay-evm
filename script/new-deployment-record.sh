@@ -61,7 +61,9 @@ $FORGE build >/dev/null
 # The compiler settings come from foundry.toml as forge resolves it, never from a literal here: a
 # hardcoded block said `bytecodeHash: "none"` on 46630 while the build used "ipfs".
 CFG=$($FORGE config --json)
-kc() { cast keccak "$($FORGE inspect "$1" deployedBytecode | tr -d '\n')"; }
+# shellcheck source=script/linked-code.sh
+. "$HERE/script/linked-code.sh"
+kc() { runtime_keccak "$1"; }
 
 # The function surface, recorded per contract so that an upgrade cannot change it silently.
 # `script/abi-surface.sh` carries the argument for why this is here and what it cannot see.
@@ -152,6 +154,12 @@ $(abi_json_entries AssayStake)
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayEscrow)",
+      "libraries": {
+        "ChannelDoor": {
+          "address": "0x0000000000000000000000000000000000000000",
+          "runtimeKeccak": "$(kc ChannelDoor)"
+        }
+      },
       "abiKeccak": "$(abi_hash AssayEscrow)",
       "abiFunctions": [
 $(abi_json_entries AssayEscrow)
@@ -168,6 +176,6 @@ $(abi_json_entries AssayEscrow)
 }
 JSON
 echo "wrote $OUT (status: pending-deploy)"
-echo "Fill the six addresses, the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
+echo "Fill the six addresses, the ChannelDoor library address (Deploy.s.sol prints it), the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
 echo "two domain separators from Deploy.s.sol's output,"
 echo "flip .status to \"deployed\", then: ./script/verify-deployment.sh $CHAIN_ID $RPC"

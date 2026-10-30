@@ -623,7 +623,7 @@ contract AssayEscrowWithdrawTest is Fixture {
             "redeemVoucher((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64),bytes)",
             "redeemVoucherBatch((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64)[],bytes[])",
             "refundHeld(address,uint64)",
-            "refundChannels((address,address,address,bytes32)[],uint24[],uint64[])",
+            "refundChannels((address,address,address,bytes32)[],uint40[],uint64[])",
             "refundHeldBatch(address[],uint64[])",
             "requestWithdraw(uint64)",
             "requestWithdrawBySig(address,uint64,uint64,uint64,bytes)",

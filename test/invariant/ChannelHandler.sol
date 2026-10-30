@@ -59,6 +59,7 @@ contract ChannelHandler is Test {
     uint64[] internal heldSeq;
 
     uint256 public settles;
+    uint256 public settleAttempts;
     uint256 public collects;
 
     constructor() {
@@ -168,7 +169,8 @@ contract ChannelHandler is Test {
         uint32 calls = g.calls + n;
         ChannelDoor.Slot memory sl = slotOf(c);
         uint64 from = uint64(sl.settled);
-        if (stale && from > 0) from = from - 1; // a stale base: must skip, never charge
+        // a stale base, one settle in four: must skip, never charge
+        if (stale && chargeCut % 4 == 0 && from > 0) from = from - 1;
         uint64 delta = cum - uint64(sl.settled);
         uint64 charge = delta - uint64(bound(chargeCut, 0, delta));
         ChannelVoucher memory v = ChannelVoucher(
@@ -205,6 +207,7 @@ contract ChannelHandler is Test {
         // the client signed it either way
         g.signed = cum;
         g.calls = calls;
+        ++settleAttempts;
         vm.prank(REDEEMER);
         escrow.settleChannels(vs, abi.encodePacked(r, s, vv), f, ch);
         ChannelDoor.Slot memory after_ = slotOf(c);
@@ -243,8 +246,8 @@ contract ChannelHandler is Test {
         if (h == 0) return;
         ChannelRef[] memory refs = new ChannelRef[](1);
         refs[0] = _ref(c);
-        uint24[] memory ms = new uint24[](1);
-        ms[0] = uint24(m);
+        uint40[] memory ms = new uint40[](1);
+        ms[0] = uint40((m << 16) | (second ? before.r2 : before.r1));
         uint64[] memory a = new uint64[](1);
         a[0] = uint64(bound(amount, 0, h + 1));
         vm.prank(REDEEMER);

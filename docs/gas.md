@@ -356,17 +356,24 @@ calls of $0.10 per settlement.
 
 | Channels in the tx | Settle, recurring (per channel) | Settle, new channel (per channel) | Collect (per channel) |
 |---|---|---|---|
-| 1 | 152,643 | 171,660 | 133,781 |
-| 3 | 93,295 | 110,966 | 57,427 |
-| 7 | 79,650 | 96,549 | 39,080 |
-| 14 | 57,471 | 74,629 | 27,392 |
-| 28 | 46,621 | 63,711 | 21,719 |
-| 64 | 40,571 | 57,617 | 18,541 |
+| 1 | 152,603 | 171,620 | 133,763 |
+| 3 | 93,250 | 110,938 | 57,421 |
+| 7 | 79,611 | 96,531 | 39,077 |
+| 14 | 57,445 | 74,608 | 27,391 |
+| 28 | 46,589 | 63,683 | 21,718 |
+| 64 | 40,544 | 57,590 | 18,541 |
 
-**Refund of one item:** 79,416.
+**Refund of one item:** 79,472.
 
 **Cost model** (per settle tx): ≈ 85k + 67.5k per payer's first channel + 35.8k per further
-channel of that payer + 17k per channel opened. Collect tx ≈ 118k + 16k per channel.
+channel of that payer + 17k per channel opened. Collect tx ≈ 160k + 16k per channel from about
+7 channels up (it fits the table within 2% from 7 to 64; one channel alone is 134k).
+
+**Against the spec's targets.** The per-call target (≤ 20k gas per paid call) is met. The
+per-channel targets at 7 channels per transaction are **missed**: settle is 79.6k against
+≤ 45k, and settle plus its share of collect is 118.7k against ≤ 70k. They are met only from
+about 64 channels per transaction (40.6k and 59.1k). The per-call figure is what the
+production traffic sees, because settlement batches every pending channel at once.
 
 **The per-call door after the upgrade** is within +0.2% of before: redeem batch 64 at 85,615
 against 85,444 per item, collect batch 64 at 30,599 against 30,599.
@@ -386,10 +393,11 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
 | `AssayConfig` | 7,405 | 30.1% | 7,636 |
-| `AssayEscrow` | 20,312 | 82.6% | 21,745 |
+| `AssayEscrow` | 22,963 | 93.4% | 24,396 |
 | `AssayStake` | 13,759 | 56.0% | 15,192 |
+| `ChannelDoor` (library) | 11,915 | 48.5% | 11,947 |
 
-Measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
+Measured 2026-10-31 with the channel door (D-28; AssayEscrow was 20,312 before it). First measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
 (`docs/ci-gates.md` §4 has the history). For D-19 (the dispute upgrade, on the earlier compiler) the figures
 were AssayConfig 7,466, AssayEscrow 17,228 and AssayStake 14,791.
 

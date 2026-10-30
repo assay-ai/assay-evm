@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.38;
 
-import {Script} from "forge-std/Script.sol";
+import {ChannelDoorLink} from "./ChannelDoorLink.sol";
 import {console2} from "forge-std/console2.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -61,7 +61,7 @@ error ImplementationSlotMismatch();
 /// **The salt is a pure function of the chain id**, so mainnet and testnet land on DIFFERENT
 /// addresses. A backend pointed at the wrong RPC then gets "no code at address" instead of a live
 /// contract that answers plausibly — which is the failure that costs a day.
-contract Deploy is Script {
+contract Deploy is ChannelDoorLink {
     /// Robinhood Chain mainnet. Named because the mainnet-only refusal below turns on it.
     uint256 internal constant MAINNET_CHAIN_ID = 4663;
 
@@ -169,6 +169,7 @@ contract Deploy is Script {
         console2.log("AssayStake   impl      ", stakeImpl);
         console2.log("AssayEscrow  proxy     ", address(escrow));
         console2.log("AssayEscrow  impl      ", escrowImpl);
+        console2.log("ChannelDoor  library   ", _linkedChannelDoor(escrowImpl));
         console2.log("owner                 ", owner);
         console2.log("admin                 ", admin);
         console2.log("asset                 ", asset);

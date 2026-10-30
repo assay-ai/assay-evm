@@ -482,8 +482,8 @@ contract GasChannelsTest is MainnetBase {
         (uint256 w,,,) = esc.channelBooks(
             ChannelDoor.keyOf(refs[0].payer, refs[0].signer, prov, lane), address(0)
         );
-        uint24[] memory ms = new uint24[](1);
-        ms[0] = uint24((w >> 128) & 0xFFFFFF);
+        uint40[] memory ms = new uint40[](1);
+        ms[0] = uint40((((w >> 128) & 0xFFFFFF) << 16) | ((w >> 152) & 0xFFFF));
         uint64[] memory a = new uint64[](1);
         a[0] = PRICE;
         uint256 g = _send(REDEEMER, abi.encodeCall(AssayEscrow.refundChannels, (refs, ms, a)));
