@@ -17,7 +17,8 @@ import {Window} from "./libraries/Window.sol";
 import {Fee} from "./libraries/Fee.sol";
 import {Cast} from "./libraries/Cast.sol";
 import {Constants} from "./Constants.sol";
-import {Voucher, ParamSet} from "./Types.sol";
+import {Voucher, ParamSet, ChannelVoucher, ChannelRef} from "./Types.sol";
+import {ChannelDoor} from "./libraries/ChannelDoor.sol";
 import "./Errors.sol";
 
 /// @title AssayEscrow
@@ -1053,6 +1054,90 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         emit DelegateRevoked(payer, delegate);
     }
 
+    // --- channel door (cumulative vouchers; logic in the `ChannelDoor` library) -----------
+
+    /// @dev Channel state, the `unpaid` ledger of deferred transfers, their total and the total
+    ///      held in channel buckets. Three slots. Channel holds are NOT in `totalHeld`, which
+    ///      keeps counting the per-call door only.
+    ChannelDoor.Store internal channels;
+
+    /// @notice Settles channel vouchers into hold. Redeemer only; pause-gated.
+    /// @dev An item charges at most `cumulative - fromSettled[i]`, and only if its channel's
+    ///      settled value is exactly `fromSettled[i]`. An item that state or time refuses is
+    ///      skipped with an event, never reverting the batch. Settlement never pays out. The
+    ///      caller, pause and batch checks run in `ChannelDoor.settle`.
+    /// @param vs The vouchers.
+    /// @param sigs The signatures, 65 bytes each, concatenated in voucher order; each by the
+    ///        payer or an authorised delegate.
+    /// @param fromSettled Per item, the settled value the redeemer expects the channel to have.
+    /// @param charges Per item, what moves into hold; the rest of the delta is waived.
+    function settleChannels(
+        ChannelVoucher[] calldata vs,
+        bytes calldata sigs,
+        uint64[] calldata fromSettled,
+        uint64[] calldata charges
+    ) external nonReentrant {
+        totalEscrowed -= uint128(
+            ChannelDoor.settle(
+                channels,
+                escrows,
+                delegations,
+                priorEscrowCaps,
+                priorDelegateCaps,
+                CONFIG,
+                STAKE,
+                _domainSeparatorV4(),
+                vs,
+                sigs,
+                fromSettled,
+                charges
+            )
+        );
+    }
+
+    /// @notice Pays matured channel buckets to their providers and the fee to the treasury.
+    /// @dev The redeemer may collect from maturity and leave an amount held per channel;
+    ///      anyone else from maturity + `HELD_TIMEOUT_SECONDS`, leaving nothing. Pause-gated.
+    ///      A failed transfer is set aside in `unpaid` for that recipient alone.
+    /// @param refs The channels.
+    /// @param keepHeld Per channel, the matured amount to keep held (redeemer only).
+    function collectChannels(ChannelRef[] calldata refs, uint64[] calldata keepHeld)
+        external
+        nonReentrant
+    {
+        ChannelDoor.collect(channels, CONFIG, ASSET, refs, keepHeld);
+    }
+
+    /// @notice Returns held channel money to payers' balances. Redeemer only; not pause-gated.
+    /// @param refs The channels.
+    /// @param maturityHours Per item, the maturity hour of the bucket to refund from.
+    /// @param amounts Per item, the amount to refund.
+    function refundChannels(
+        ChannelRef[] calldata refs,
+        uint24[] calldata maturityHours,
+        uint64[] calldata amounts
+    ) external nonReentrant {
+        totalEscrowed +=
+            uint128(ChannelDoor.refund(channels, escrows, CONFIG, refs, maturityHours, amounts));
+    }
+
+    /// @notice Pays `to` what a failed payout set aside for it, to `to` only. Anyone may call.
+    /// @dev Pause- and blocklist-gated; a zero balance is a no-op.
+    function claimUnpaid(address to) external nonReentrant {
+        ChannelDoor.claimUnpaid(channels, CONFIG, ASSET, to);
+    }
+
+    /// @notice A channel's packed slot (decode with `ChannelDoor.unpack`; key from
+    ///         `ChannelDoor.keyOf`), what failed payouts set aside for `to`, the total set
+    ///         aside, and the total held in channel buckets.
+    function channelBooks(bytes32 key, address to)
+        external
+        view
+        returns (uint256 state, uint128 unpaid, uint128 totalUnpaid, uint128 held)
+    {
+        return (channels.state[key], channels.unpaid[to], channels.totalUnpaid, channels.held);
+    }
+
     /// @dev Reserved storage: a new field goes above and shrinks this by the slots it uses.
-    uint256[45] private __gap;
+    uint256[42] private __gap;
 }

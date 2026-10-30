@@ -139,3 +139,30 @@ bytes32 constant AUTHORIZE_DELEGATE_TYPEHASH = keccak256(
 
 bytes32 constant REVOKE_DELEGATE_TYPEHASH =
     keccak256("RevokeDelegate(address payer,address delegate,uint64 nonce,uint64 deadline)");
+
+/// @notice EIP-712 channel voucher: the payer (or one of its delegates) authorises a running total
+/// on one channel. The chain charges at most `cumulative` minus what it already settled.
+/// @dev Field order must match `CHANNEL_VOUCHER_TYPEHASH`.
+struct ChannelVoucher {
+    address payer;
+    address provider;
+    bytes32 channelId;
+    uint64 cumulative;
+    uint32 calls;
+    uint64 issuedAt;
+    uint64 expiresAt;
+}
+
+/// @notice The four inputs of a channel key: `keccak256(abi.encode(payer, signer, provider,
+/// channelId))`, where `signer` is the payer itself when the payer signed.
+struct ChannelRef {
+    address payer;
+    address signer;
+    address provider;
+    bytes32 channelId;
+}
+
+bytes32 constant CHANNEL_VOUCHER_TYPEHASH = keccak256(
+    "ChannelVoucher(address payer,address provider,bytes32 channelId,uint64 cumulative,"
+    "uint32 calls,uint64 issuedAt,uint64 expiresAt)"
+);

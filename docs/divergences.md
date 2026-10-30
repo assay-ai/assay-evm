@@ -122,7 +122,7 @@ runbook covers both.
 ### The accounting against `error.rs`, in full
 
 `error.rs` declares **55** `ErrorCode` variants. **46** of them appear below under the same
-name, and **48** errors below have no Anchor counterpart at all. The remaining **9** are
+name, and **53** errors below have no Anchor counterpart at all. The remaining **9** are
 absent, and named here so that "the port is complete" is a claim a reader can check. (The
 counts are the output of a set difference over the two files, as `script/check-errors.sh`
 computes it; if you change either file, redo it rather than adjusting these by one.)
@@ -143,12 +143,14 @@ computes it; if you change either file, redo it rather than adjusting these by o
   Execution is all or wait, so a full key window is the same condition as a full provider
   window: retry later.
 
-The 48 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
+The 53 EVM-only entries are EIP-712 and ERC-20 conditions Solana does not have (signature
 malleability, `v` normalisation, deadline/nonce replay and the signature lifetime cap,
 fee-on-transfer tokens, the explicit batch bound, [`WithdrawDelayTooShort`]), the eleven of
 voucher delegation, the three of the owner/admin split and the seq jump cap, the eleven of
-the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), and the four of the
-redeem-into-hold change (held status, collect and refund timing, settable collect hold).
+the dispute upgrade (dispute, arbiter, blocklist, settable slash delay), the four of the
+redeem-into-hold change (held status, collect and refund timing, settable collect hold),
+and the five of the channel door (nothing to settle, charge above the delta, a value outside
+the packed range, a payout starved of gas, a failed claim of set-aside money).
 
 The six PDA seed constants in `constants.rs` have no counterpart in `Constants.sol` for
 the same kind of reason; that omission is recorded in the next subsection.

@@ -143,7 +143,7 @@ would make the gate compare against the wrong commit.
 
 ## 4. `./script/check-sizes.sh`
 
-EIP-170, per implementation, gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
+EIP-170, per implementation and per external library (`ChannelDoor`, D-28), gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
 0.8.38, `via_ir`, 200 runs): AssayConfig 7,405 · AssayEscrow 20,312 · AssayStake 13,759 (runtime
 bytes, CBOR metadata included). Down from 22,598 and 15,159 by routing each repeated external call
 to Config (the reads `params` and `paused`, the reverting checks `assertActive` and

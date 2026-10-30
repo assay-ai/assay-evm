@@ -632,3 +632,33 @@ totalWithdrawn` keeps holding.
 
 **Solvency** is `balanceOf(escrow) >= totalEscrowed + totalHeld` (asserted by the invariant
 suites, never by the contract). `withdraw` reads `balance` only, so it cannot reach held money.
+
+## 20. The channel door (D-28) — draft, audit pending
+
+- **`maxVoucherAmount` no longer bounds one signature on the channel door.** A channel voucher
+  can charge `Δcalls × maxVoucherAmount` in one settlement, up to the windows. A leaked
+  delegate key signs `calls` too, so the average cap does not bound it either. The bound for a
+  leaked key stays what §14a says: the delegate and escrow windows, `validUntil`, and
+  revocation with its grace. The backend's admission still refuses a call above the current
+  per-call cap.
+- **The redeemer decides how much of a signed total is charged.** A hacked redeemer can charge
+  up to what the buyer signed, as it can redeem any signed per-call voucher today. It can also
+  waive, refund until the window closes, or delay until the timeout. It cannot pay anyone but
+  the channel's provider and the treasury. With `fromSettled` it cannot charge a range twice or
+  charge a base it did not name.
+- **Liveness depends on the backend collecting first.** Two buckets per channel with no spare.
+  A matured bucket left uncollected makes the next settlement in a new hour skip `NoBucket`.
+  So does `collectHoldSeconds` above one hour. The backend must collect every matured bucket
+  before settling in a new hour, and must offer channels only while the hold is ≤ 1 h. A stall
+  costs providers unsettled earnings once the newest voucher expires; buyers are not affected.
+- **Issuer freeze.** A frozen provider or treasury no longer blocks anyone else: its share goes
+  to `unpaid` and `claimUnpaid` pays it once the freeze lifts. While frozen, that money is out
+  of reach of refunds. Mainnet USDG can also `decreaseSupplyFromAddress`, which would make the
+  escrow's own balance short; that is outside every guard here.
+- **Library linkage.** The escrow implementation is linked to one `ChannelDoor` deployment. An
+  upgrade must deploy the library deterministically and the post-check must pin its code hash,
+  or the escrow could be linked to unreviewed code.
+- **Rollback.** Going back to an implementation without the channel door freezes every channel
+  bucket and every `unpaid` record. The response to a defect is pause and forward-fix, never a
+  rollback.
+

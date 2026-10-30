@@ -217,3 +217,13 @@ error HeldNotYetCollectable();
 error HeldRefundWindowClosed();
 /// @notice The collect hold is outside `[MIN_COLLECT_HOLD_SECONDS, MAX_COLLECT_HOLD_SECONDS]`.
 error InvalidCollectHold();
+/// @notice A channel voucher's cumulative is not above the settled base the redeemer named.
+error ChannelNothingToSettle();
+/// @notice A channel charge exceeds the voucher's cumulative minus the named settled base.
+error ChannelChargeTooLarge();
+/// @notice A channel voucher's cumulative or calls is outside the packed range.
+error ChannelValueOutOfRange();
+/// @notice A transfer failed because the caller left too little gas for it.
+error TransferGasTooLow();
+/// @notice A transfer of set-aside money failed.
+error TransferFailed();

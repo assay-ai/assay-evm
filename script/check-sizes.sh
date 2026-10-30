@@ -22,7 +22,8 @@ CEILING=23000
 HARD=24576
 rc=0
 $FORGE build >/dev/null
-for c in AssayConfig AssayEscrow AssayStake; do
+# ChannelDoor is the escrow's external library: deployed on its own, so bounded on its own.
+for c in AssayConfig AssayEscrow AssayStake ChannelDoor; do
   runtime=$($FORGE inspect "$c" deployedBytecode | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
   creation=$($FORGE inspect "$c" bytecode        | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
   printf '%-12s runtime %6d bytes  (%5.1f%% of the %d hard limit)   creation %6d\n' \

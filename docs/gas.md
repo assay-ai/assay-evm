@@ -340,6 +340,43 @@ check); the redemption figures above predate it, and `.gas-snapshot` carries the
 Measured on the snapshot: `test_measure_samePayerBatchOfSixtyFour` 1 947 260 → 2 127 637 (about
 +2 800 gas per voucher), `test_measure_samePayerBatchOfOne` 192 481 → 201 372.
 
+## The channel door (D-28), measured on a fork of mainnet 4663
+
+Measured 2026-10-31 on a fork of Robinhood mainnet: the live Escrow proxy upgraded in the fork
+to this implementation, real USDG, the two real providers (their stake and balances) and the
+real treasury. **One measured transaction per test function, with every preparation in
+`setUp`**, because forge runs a test function as one transaction and a second call inside it
+finds the first one's slots warm. Tx gas = 21,000 + calldata + measured execution. The same
+method reproduced the mainnet receipts of 2026-10-30 within about 1%. Source:
+`test/fork/ChannelMainnet.fork.t.sol` (`MAINNET_RPC` set). This is a fork observation, not a
+snapshot row.
+
+**Shape:** 7 payers in round-robin, provider A for one channel in four, delegate-signed, 10
+calls of $0.10 per settlement.
+
+| Channels in the tx | Settle, recurring (per channel) | Settle, new channel (per channel) | Collect (per channel) |
+|---|---|---|---|
+| 1 | 152,643 | 171,660 | 133,781 |
+| 3 | 93,295 | 110,966 | 57,427 |
+| 7 | 79,650 | 96,549 | 39,080 |
+| 14 | 57,471 | 74,629 | 27,392 |
+| 28 | 46,621 | 63,711 | 21,719 |
+| 64 | 40,571 | 57,617 | 18,541 |
+
+**Refund of one item:** 79,416.
+
+**Cost model** (per settle tx): ≈ 85k + 67.5k per payer's first channel + 35.8k per further
+channel of that payer + 17k per channel opened. Collect tx ≈ 118k + 16k per channel.
+
+**The per-call door after the upgrade** is within +0.2% of before: redeem batch 64 at 85,615
+against 85,444 per item, collect batch 64 at 30,599 against 30,599.
+
+**Per paid call** (replaying the production log of 874 calls on this cost model, with
+settlement when the oldest pending call is 30 minutes old, every pending channel joining, and a
+separate hourly collect): about 16.8k gas, against about 121k for the per-call door with full
+batches and about 196k on 2026-10-30's real receipts. At 15 minutes about 22k, at 60 minutes
+about 13k.
+
 ## Contract sizes (EIP-170)
 
 Measured by `script/check-sizes.sh`, with CBOR metadata enabled (about 54 bytes of each runtime

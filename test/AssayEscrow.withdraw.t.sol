@@ -592,8 +592,12 @@ contract AssayEscrowWithdrawTest is Fixture {
         // added one more view, `effectiveCapsOf`. Redeem into hold added six: two views (`held`,
         // `totalHeld`) and collect/refund in single and batch form — both pay out only a record a
         // signed voucher created, to that voucher's provider and the treasury, or back to the
-        // buyer's own balance.
-        string[34] memory expected = [
+        // buyer's own balance. The channel door added five: settle (moves signed money into hold,
+        // no transfer), collect (pays a bucket only to the channel's provider and the Config
+        // treasury, set aside for that same address if the transfer fails), refund (back to the
+        // payer's own balance), `claimUnpaid` (pays what was set aside, to that address only) and
+        // one view (`channelBooks`).
+        string[39] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
@@ -601,6 +605,9 @@ contract AssayEscrowWithdrawTest is Fixture {
             "UPGRADE_INTERFACE_VERSION()",
             "authorizeDelegate(address,uint64,uint64,uint64)",
             "authorizeDelegateBySig(address,address,uint64,uint64,uint64,uint64,uint64,bytes)",
+            "channelBooks(bytes32,address)",
+            "claimUnpaid(address)",
+            "collectChannels((address,address,address,bytes32)[],uint64[])",
             "collectHeld(address,uint64)",
             "collectHeldBatch(address[],uint64[])",
             "delegatesOf(address)",
@@ -616,6 +623,7 @@ contract AssayEscrowWithdrawTest is Fixture {
             "redeemVoucher((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64),bytes)",
             "redeemVoucherBatch((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64)[],bytes[])",
             "refundHeld(address,uint64)",
+            "refundChannels((address,address,address,bytes32)[],uint24[],uint64[])",
             "refundHeldBatch(address[],uint64[])",
             "requestWithdraw(uint64)",
             "requestWithdrawBySig(address,uint64,uint64,uint64,bytes)",
@@ -623,17 +631,18 @@ contract AssayEscrowWithdrawTest is Fixture {
             "revokeDelegateBySig(address,address,uint64,uint64,bytes)",
             "setLimits(uint64,uint64)",
             "setLimitsBySig(address,uint64,uint64,uint64,uint64,bytes)",
+            "settleChannels((address,address,bytes32,uint64,uint32,uint64,uint64)[],bytes,uint64[],uint64[])",
             "totalEscrowed()",
             "totalHeld()",
             "upgradeToAndCall(address,bytes)",
             "withdraw()",
-            "" // the 34th slot is deliberately empty: a 34th function makes this test red
+            "" // the 39th slot is deliberately empty: a 39th function makes this test red
         ];
 
         string memory artifact =
             vm.readFile(string.concat(vm.projectRoot(), "/out/AssayEscrow.sol/AssayEscrow.json"));
         string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 33, "AssayEscrow's external surface changed size");
+        assertEq(keys.length, 38, "AssayEscrow's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;

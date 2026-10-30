@@ -36,17 +36,22 @@ contract NoTokenDoorsTest is Test {
         string line;
     }
 
-    string[7] internal NEEDLES = [
+    /// `.call(` and `.call{` rather than `.call`: every low-level call is spelled one of the two
+    /// ways, and the bare prefix also matched the channel door's `calls` counter. `call(gas`
+    /// catches a call written in assembly.
+    string[9] internal NEEDLES = [
+        "call(gas",
         "safeTransfer",
         ".transfer(",
         "transferFrom(",
         "approve(",
-        ".call",
+        ".call(",
+        ".call{",
         "delegatecall",
         "selfdestruct"
     ];
 
-    function _sites() internal pure returns (Site[8] memory s) {
+    function _sites() internal pure returns (Site[9] memory s) {
         // buyer money: the measured-delta pull, the buyer's own exit, a held voucher's two payouts
         // (redeem into hold: `_redeem` itself moves no token)
         s[0] = Site(
@@ -77,11 +82,20 @@ contract NoTokenDoorsTest is Test {
             "executeSlash",
             "if (platformAmount > 0) ASSET.safeTransfer(p.treasury, platformAmount);"
         );
+        // channel door: the single transfer primitive. Its callers pay a matured bucket only to
+        // the channel's provider (part of the channel key) and the Config treasury, or pay what a
+        // failed payout set aside only to the address it was set aside for (`claimUnpaid`).
+        s[8] = Site(
+            "libraries/ChannelDoor",
+            "_transfer",
+            "ok := call(gas(), asset, 0, add(data, 0x20), mload(data), 0, 0x20)"
+        );
     }
 
     function test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes() public view {
-        string[3] memory files = ["AssayEscrow", "AssayStake", "AssayConfig"];
-        Site[8] memory pinned = _sites();
+        string[4] memory files =
+            ["AssayEscrow", "AssayStake", "AssayConfig", "libraries/ChannelDoor"];
+        Site[9] memory pinned = _sites();
         uint256 matched;
 
         for (uint256 f = 0; f < files.length; f++) {
