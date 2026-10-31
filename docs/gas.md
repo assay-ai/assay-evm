@@ -405,7 +405,9 @@ same fork, measured in the same run):
 extra DELEGATECALL per transaction (≈3.2k paid once), and since D-30 builds its per-call memo
 (≈2k paid once), which is why batch 1 costs more; from about 4 items up the memo pays for
 itself. `collectHeldBatch` pays each provider once and the treasury once (D-30), so its saving
-grows with the batch. Redeem plus collect at batch 64: 116,045 → 94,263 per paid call (−18.8%).
+grows with the batch. **Provider mix:** these rows use two providers (`ChannelMainnet.fork.t.sol`,
+one item in four to provider A). With many distinct providers only the fee transfers merge, so the
+collect gain is much smaller; plan capacity on the provider count, not on the −49% figure. Redeem plus collect at batch 64: 116,045 → 94,263 per paid call (−18.8%).
 
 **Per paid call** (replaying the production log of 874 calls on this cost model, with
 settlement when the oldest pending call is 30 minutes old, every pending channel joining, and a

@@ -16,7 +16,7 @@ contract AssayEscrowChannelBatchTest is AssayEscrowChannelTest {
     /// E5: `ChannelOpened` exactly once per key, on the first SETTLEMENT (a zero-charge one
     /// included), never on a skipped item, never again.
     function test_E5_openedOncePerKey_evenWhenFirstItemSkipsThenSettles() public {
-        // First attempt is skipped (BaseMismatch: from=0 claimed but... use Expired instead).
+        // The first attempt is past its redeem grace, so it skips `Expired`.
         ChannelVoucher memory v0 = _cv(CH, 100_000, 1);
         bytes memory s0 = _sign(delegateKey, v0);
         vm.warp(block.timestamp + 240 + Constants.REDEEM_GRACE_SECONDS + 1);
@@ -44,8 +44,9 @@ contract AssayEscrowChannelBatchTest is AssayEscrowChannelTest {
     /// The calldata forward and the per-item memory reuse across mixed settle paths in one batch
     /// (a third-hour item that folds or skips NoBucket, new buckets, a colliding provider, a
     /// Stake skip, Calls and BaseMismatch skips), then every channel's books against an
-    /// independent per-item replay. Blocked and the full 64-item replay are in
-    /// `AssayEscrowChannelReplayTest`; the fold itself is pinned in `AssayEscrowChannelTest`.
+    /// independent per-item replay. The full 64-item replay is in `AssayEscrowChannelReplayTest`,
+    /// Blocked skips under full collisions in `AssayEscrowChannelForwardTest`, and the fold itself
+    /// in `AssayEscrowChannelTest`.
     function test_E1E4_mixedPathsBatchMatchesSingleItemReplay() public {
         // shares `provider`'s stake slot in the 64-word table of a 7-item batch
         address p2 = SetHash.grindDoorAddr(provider, 64, 1);

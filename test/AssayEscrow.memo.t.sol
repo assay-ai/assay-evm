@@ -351,7 +351,15 @@ contract AssayEscrowMemoTest is Fixture {
             Vm.AccountAccess memory a = acc[i];
             bool fromEscrow =
                 a.accessor == address(escrow) || a.accessor == impl || a.accessor == ext;
-            if (!fromEscrow || a.account == address(escrow)) continue;
+            if (!fromEscrow) continue;
+            if (a.account == address(escrow)) {
+                // Only the proxy-to-implementation hop may land on the escrow itself; a CALL
+                // from the escrow to itself would be a state-changing call out.
+                assertTrue(
+                    a.kind != VmSafe.AccountAccessKind.Call, "a redemption called the escrow"
+                );
+                continue;
+            }
             assertTrue(a.account != address(usdg), "a redemption touched the token");
             if (a.kind == VmSafe.AccountAccessKind.StaticCall) {
                 statics++;

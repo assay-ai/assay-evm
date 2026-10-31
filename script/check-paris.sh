@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Portability probe, CI only: the same sources compile for an EVM without PUSH0 (`paris`) and stay
+# Portability probe, run locally (not in ci.yml): the same sources compile for an EVM without PUSH0 (`paris`) and stay
 # under the size gates there. It never changes production bytecode — the deployed build is the
 # default profile (`shanghai`), and this one writes to its own `out-paris/` and `cache-paris/`.
 # Its purpose is to keep a pre-Shanghai chain a build-profile change rather than a code change.
