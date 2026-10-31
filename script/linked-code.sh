@@ -29,3 +29,35 @@ link_spans() { # <artifact> [library] -> "start length" for each link span (of t
 linked_libraries() { # <artifact> -> each library name the contract links, one per line
   jq -r '.deployedBytecode.linkReferences // {} | [.[] | keys[]] | unique | .[]' "$1"
 }
+
+masked_code() { # <contract> <address> [artifact]
+  # Immutable spans AND link spans zeroed — the same bytes `runtime_keccak` zeroes in the build.
+  # The link spans are checked against the record separately (check 3b); zeroed here only.
+  local code art starts
+  code=$(cast code "$2" --rpc-url "$RPC"); code=${code#0x}
+  art=${3:-$(artifact_for "$1")}
+  # Every span of one immutable must hold the same value before the spans are masked: the
+  # compiler writes one value to all of them. Without this, a deployer could put one value at an
+  # immutable's getter and another at its other use (the escrow's `fallback` DELEGATECALL target
+  # is the second span of `EXTENSION`) and the masked hash would still match (review H-1).
+  local id first span
+  for id in $(jq -r '.deployedBytecode.immutableReferences // {} | keys[]' "$art"); do
+    first=""
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      span="${code:$((start * 2)):$((len * 2))}"
+      if [ -z "$first" ]; then first="$span"; elif [ "$span" != "$first" ]; then
+        echo "immutable $id of $1 at $2 holds different values at its spans" >&2
+        return 1
+      fi
+    done <<< "$(jq -r --arg id "$id" '.deployedBytecode.immutableReferences[$id][] | "\(.start) \(.length)"' "$art")"
+  done
+  starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art"
+           link_spans "$art")
+  while read -r start len; do
+    [ -n "$start" ] || continue
+    local zeros; zeros=$(printf '%0*d' $((len * 2)) 0)
+    code="${code:0:$((start * 2))}${zeros}${code:$(((start + len) * 2))}"
+  done <<< "$starts"
+  echo "0x$code"
+}

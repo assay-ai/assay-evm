@@ -2060,3 +2060,16 @@ Round 2, after the tests below were written: all 4 non-equivalent survivors kill
 | T2 | skips the codehash pin | killed | |
 | T3 | skips the build comparison | killed | |
 | T4 | skips the guard's by-value check | killed | |
+
+### After the second review (H-1, S1)
+
+| ID | Mutation | Result |
+|---|---|---|
+| S1 | `_fold` may fold into a matured bucket | killed (`test_buckets_foldNeverReachesAMaturedBucket`) |
+| S1b | the matured test at `<` instead of `<=` | killed after the test was pinned to the maturity second |
+| H1 | `_assertBuilt` no longer requires one value per immutable | killed (`test_refusesAFallbackTargetThatDiffersFromTheGetter`) |
+| P1 | `run()` drops the extension-door probe | survived: `run()` has no unit harness; it is exercised by the fork rehearsal, which reaches the probe and passes |
+
+The shell twin of H1 (`masked_code` in `script/linked-code.sh`) was exercised on an anvil fork:
+the genuine implementation passes, the same code with only the `fallback`'s `EXTENSION` span
+replaced is refused ("immutable … holds different values at its spans").

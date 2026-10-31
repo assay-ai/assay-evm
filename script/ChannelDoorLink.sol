@@ -48,6 +48,17 @@ abstract contract ChannelDoorLink is Script {
         }
     }
 
+    function _slice(bytes memory b, uint256 start, uint256 len)
+        internal
+        pure
+        returns (bytes memory out)
+    {
+        out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) {
+            out[i] = b[start + i];
+        }
+    }
+
     function _word20(bytes memory b, uint256 at) internal pure returns (address) {
         return address(uint160(_word(b, at) >> 96));
     }
@@ -83,6 +94,17 @@ abstract contract ChannelDoorLink is Script {
                 if (spans[i].start + spans[i].length > got.length) {
                     revert NotThisBuild(at, artifact);
                 }
+                // Every span of one immutable must hold the same value: the compiler writes one
+                // value to all of them, so a span that differs was written by someone else. This
+                // is what ties a getter's value (checked by callers) to every other use of the
+                // same immutable, e.g. the DELEGATECALL target in the escrow's `fallback`.
+                if (
+                    spans[i].length != spans[0].length
+                        || keccak256(_slice(got, spans[i].start, spans[i].length))
+                            != keccak256(_slice(got, spans[0].start, spans[0].length))
+                ) revert NotThisBuild(at, artifact);
+            }
+            for (uint256 i = 0; i < spans.length; i++) {
                 for (uint256 j = spans[i].start; j < spans[i].start + spans[i].length; j++) {
                     got[j] = 0;
                     want[j] = 0;
@@ -97,8 +119,10 @@ abstract contract ChannelDoorLink is Script {
     /// verified (`want`), and it is this tree's build. The extension's one immutable is its own
     /// address (the direct-call guard) and is checked BY VALUE: it has no EIP-712 immutables, so
     /// nothing in it is masked unchecked and a deployer-built extension cannot carry its own
-    /// domain past this. `EXTENSION()` is read from the implementation, whose own code is
-    /// compared with the build separately, so the getter is the one the fallback uses.
+    /// domain past this. `EXTENSION()` is read from the implementation; the implementation's
+    /// code is compared with the build separately by `_assertBuilt`, which also requires every
+    /// span of an immutable to hold one value, so the getter's value IS the `fallback`'s
+    /// DELEGATECALL target (the two spans of `EXTENSION`; review finding H-1).
     function _assertExtension(address impl, bytes32 want) internal view returns (address ext) {
         (bool ok, bytes memory ret) = impl.staticcall(abi.encodeWithSignature("EXTENSION()"));
         if (!ok || ret.length != 32) revert ExtensionMismatch(impl, address(0), address(0));

@@ -694,8 +694,20 @@ refuses it unless it is the implementation's first CREATE (`ExtensionMismatch`),
 code (`ExtensionCodehashMismatch`), and compares the code with the local build with its one
 immutable (its own address) checked by value (`NotThisBuild`). After the upgrade it requires
 `effectiveCapsOf` and `delegatesOf` of the sample buyer, now answered through the extension, to
-equal what they were before. The record carries `.contracts.AssayEscrow.extension` (`address`,
-`runtimeKeccak`), and `verify-deployment.sh` check 3c verifies it on chain.
+equal what they were before, and an extension DOOR (`redeemVoucherBatch` with empty arrays, from
+the script, simulated) to answer the extension's own `NotRedeemer` through the fallback. Every
+span of every implementation immutable must hold one value; the escrow's `EXTENSION` has two (its
+getter and the `fallback`'s DELEGATECALL target), and code whose spans disagree is refused
+(`NotThisBuild`, and `verify-deployment.sh` "immutables are not consistent"). The record carries
+`.contracts.AssayEscrow.extension` (`address`, `runtimeKeccak`), and `verify-deployment.sh` check
+3c verifies it on chain.
+
+**The extension is part of the implementation.** There is no pointer to swap: a fix to the
+extension is a new escrow implementation (which creates its own new extension), upgraded like
+any other. **Rolling back past D-28** (to an implementation without the channel door) would leave
+channel money in buckets unreachable until a re-upgrade: pause, settle and collect every channel
+empty (and `claimUnpaid` drained), confirm `channelBooks(0, 0)` reads zero held and zero unpaid,
+then roll back.
 
 `check-bytecode.sh` will also report AssayConfig and AssayStake as drifted after D-28. That is the
 CBOR metadata trailer only (the shared `Types.sol` and `Errors.sol` changed, so the source hashes in

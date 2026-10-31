@@ -36,8 +36,23 @@
 # surface is the UNION of the two: a function added to the extension is a new door on the proxy
 # exactly as one added to the core is. The getters both inherit from the storage base appear
 # once.
+# The core and the extension may share only the storage base's five public getters (the core
+# answers them); any other shared selector would leave an extension door unreachable, so the
+# union is refused (review L-3).
+ESCROW_SHARED_GETTERS='["ASSET()","CONFIG()","STAKE()","totalEscrowed()","totalHeld()"]'
+
 methods_json() {
   if [ "$1" = "AssayEscrow" ]; then
+    local overlap
+    overlap=$(jq -rs --argjson ok "$ESCROW_SHARED_GETTERS" \
+      '[(.[0] | to_entries[]) as $e | (.[1] | to_entries[]) | select(.value == $e.value) | .key]
+        | unique - $ok | .[]' \
+      <("${FORGE:-forge}" inspect AssayEscrowExtension methodIdentifiers --json) \
+      <("${FORGE:-forge}" inspect AssayEscrow methodIdentifiers --json))
+    if [ -n "$overlap" ]; then
+      echo "AssayEscrow core and extension share a selector: $overlap" >&2
+      return 1
+    fi
     jq -s '.[0] + .[1]' \
       <("${FORGE:-forge}" inspect AssayEscrowExtension methodIdentifiers --json) \
       <("${FORGE:-forge}" inspect AssayEscrow methodIdentifiers --json)

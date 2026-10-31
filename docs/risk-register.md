@@ -649,16 +649,24 @@ are the channel door's buckets and its set-aside payouts (§20, D-28), read with
   the channel's provider and the treasury. With `fromSettled` it cannot charge a range twice or
   charge a base it did not name.
 - **Collecting late defers payouts instead of losing them.** Two buckets per channel. When
-  both hold money of other hours, a settlement folds into the newest bucket of its rate and moves
-  that bucket's maturity to the new charge's (`ChannelBucketDeferred`). Money is never released
-  earlier than its own hold. An uncollected matured bucket, or a hold above one hour, now delays
-  the older money in the newest bucket by up to the hold, instead of refusing the settlement
-  (before the fix, the provider lost the unsettled value once the newest voucher expired; review
-  finding H1). The deferral lasts only while an older matured bucket sits uncollected, and anyone
-  can collect that bucket after its maturity + 7 days. The backend should still collect before
-  settling. It must read a bucket's name again after `ChannelBucketDeferred`, because a refund by
-  the old name skips `NoSuchBucket`. A settlement still skips `NoBucket` when both buckets hold
-  another take rate (only across a rate change) or a bucket would exceed `MAX_BUCKET`.
+  both hold money of other hours, a settlement folds into the newest bucket of its rate, **only
+  if that bucket has not matured**, and moves its maturity to the new charge's
+  (`ChannelBucketDeferred`). Money is never released earlier than its own hold, and a matured
+  bucket (a dispute's `keepHeld` included) is never moved: its payout and its anyone-can-collect
+  deadline stay where they were. Before the fold, an uncollected matured bucket next to a
+  pending one, or a hold above one hour, refused the settlement, and the provider lost the
+  unsettled value once the newest voucher expired (review finding H1).
+  **Worst case and who controls it.** Only the redeemer settles. The pending bucket keeps moving
+  while the other bucket stays occupied, and the redeemer can keep that one occupied until its
+  maturity + 7 days (by not collecting it, or holding it with `keepHeld`). After that anyone can
+  collect it, and the pending bucket stops moving. So a provider's own way out moves from about
+  hold + 7 days to about 2 × hold + 14 days after a charge (about 16 days at the 24 h maximum
+  hold, about 14 days at the default hour). Nothing is lost and nothing is released early.
+  The backend should collect before settling, and must read a bucket's name again after
+  `ChannelBucketDeferred`, because a refund by the old name skips `NoSuchBucket` (judge refunds by
+  `ChannelRefunded` / `ChannelRefundSkipped`, not by the receipt). A settlement still skips
+  `NoBucket` when both buckets hold another take rate (only across a rate change), when the newest
+  bucket of its rate has matured (collect first), or when a bucket would exceed `MAX_BUCKET`.
 - **Issuer freeze.** A frozen provider or treasury no longer blocks anyone else: its share goes
   to `unpaid` and `claimUnpaid` pays it once the freeze lifts. While frozen, that money is out
   of reach of refunds. Mainnet USDG can also `decreaseSupplyFromAddress`, which would make the

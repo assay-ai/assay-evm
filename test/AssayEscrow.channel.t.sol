@@ -455,6 +455,45 @@ contract AssayEscrowChannelTest is Fixture {
         _assertBooks();
     }
 
+    /// Review S1: a fold never reaches a MATURED bucket (its money, a dispute's `keepHeld`
+    /// included, is payable now and its anyone-can-collect deadline must not move). With both
+    /// buckets matured and uncollected the settlement skips `NoBucket`; collecting frees one.
+    function test_buckets_foldNeverReachesAMaturedBucket() public {
+        _settleD(0, 100_000, 1);
+        uint256 m1 = _slot(delegate).m1;
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        vm.warp((m1 + 1) * 3600); // both buckets matured, the newest at this very second
+        ChannelVoucher memory v = _cv(CH, 600_000, 6);
+        _expectSkip(0, _key(delegate), 600_000, ChannelDoor.SettleSkip.NoBucket);
+        _settle(v, _sign(delegateKey, v), 300_000, 300_000);
+        S memory s = _slot(delegate);
+        assertEq(s.m2, m1 + 1, "the matured bucket's maturity did not move");
+        assertEq(s.settled, 300_000, "a skip writes nothing");
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(0));
+        _settle(v, _sign(delegateKey, v), 300_000, 300_000);
+        assertEq(_slot(delegate).settled, 600_000, "after collecting it lands");
+        _assertBooks();
+    }
+
+    /// A matured bucket held back by `keepHeld` (a dispute) is never folded into either.
+    function test_buckets_aKeptMaturedBucketIsNeverDeferred() public {
+        _settleD(0, 100_000, 1);
+        uint256 m1 = _slot(delegate).m1;
+        vm.warp(m1 * 3600);
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(100_000)); // keep it all held
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3); // second bucket
+        vm.warp(_now() + 3600);
+        ChannelVoucher memory v = _cv(CH, 600_000, 6);
+        _settle(v, _sign(delegateKey, v), 300_000, 300_000);
+        S memory s = _slot(delegate);
+        assertEq(s.m1, m1, "the kept bucket keeps its maturity");
+        assertEq(s.h1, 100_000, "and its amount");
+    }
+
     /// Deferral never makes money mature earlier: a charge settled after `collectHoldSeconds`
     /// was LOWERED folds into a bucket whose maturity is already later, which keeps it.
     function test_buckets_foldNeverMovesAMaturityEarlier() public {

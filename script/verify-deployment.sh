@@ -88,21 +88,7 @@ artifact_for() { # <contract> -> path to the artifact built at the contract's re
   echo "$dir/out/$c.sol/$c.json"
 }
 
-masked_code() { # <contract> <address> [artifact]
-  # Immutable spans AND link spans zeroed — the same bytes `runtime_keccak` zeroes in the build.
-  # The link spans are checked against the record separately (check 3b); zeroed here only.
-  local code art starts
-  code=$(cast code "$2" --rpc-url "$RPC"); code=${code#0x}
-  art=${3:-$(artifact_for "$1")}
-  starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art"
-           link_spans "$art")
-  while read -r start len; do
-    [ -n "$start" ] || continue
-    local zeros; zeros=$(printf '%0*d' $((len * 2)) 0)
-    code="${code:0:$((start * 2))}${zeros}${code:$(((start + len) * 2))}"
-  done <<< "$starts"
-  echo "0x$code"
-}
+# masked_code (immutable consistency, then immutable and link spans zeroed): script/linked-code.sh
 
 # keccak256("eip1967.proxy.implementation") - 1
 SLOT=0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
@@ -204,7 +190,8 @@ for c in AssayConfig AssayStake AssayEscrow; do
   [ "$(lc "$live")" = "$(lc "$impl")" ] || fail "$c implementation slot ($live != $impl)"
 
   # 3. That implementation's runtime bytecode is the one CI built, immutables masked (above).
-  got=$(cast keccak "$(masked_code "$c" "$impl")")
+  masked=$(masked_code "$c" "$impl") || fail "$c implementation immutables are not consistent"
+  got=$(cast keccak "$masked")
   [ "$(lc "$got")" = "$(lc "$want")" ] || fail "$c implementation bytecode ($got != $want)"
 
   # 3b. Every library the implementation links (D-28: the escrow DELEGATECALLs its channel doors
@@ -233,7 +220,8 @@ for c in AssayConfig AssayStake AssayEscrow; do
       [ "${lcode:$((start * 2)):$((len * 2))}" = "$(printf '%0*s' $((len * 2 - 40)) '' | tr ' ' 0)$(lc "${laddr#0x}")" ] \
         || fail "$lib at $laddr does not hold its own address at $start — not this library deployed there"
     done <<< "$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$lart")"
-    lgot=$(cast keccak "$(masked_code "$lib" "$laddr" "$lart")")
+    lmasked=$(masked_code "$lib" "$laddr" "$lart") || fail "$lib immutables are not consistent"
+    lgot=$(cast keccak "$lmasked")
     [ "$(lc "$lgot")" = "$(lc "$lwant")" ] || fail "$lib library bytecode ($lgot != $lwant)"
   done
 
@@ -264,7 +252,8 @@ for c in AssayConfig AssayStake AssayEscrow; do
       [ "${ecode:$((start * 2)):$((len * 2))}" = "000000000000000000000000$(lc "${ext#0x}")" ] \
         || fail "the extension at $ext does not hold its own address at $start"
     done <<< "$(jq -r '.deployedBytecode.immutableReferences | [.[][]] | .[] | "\(.start) \(.length)"' "$eart")"
-    egot=$(cast keccak "$(masked_code AssayEscrowExtension "$ext" "$eart")")
+    emasked=$(masked_code AssayEscrowExtension "$ext" "$eart") || fail "extension immutables are not consistent"
+    egot=$(cast keccak "$emasked")
     [ "$(lc "$egot")" = "$(lc "$ewant")" ] || fail "extension bytecode ($egot != $ewant)"
   fi
 

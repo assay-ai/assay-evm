@@ -8,6 +8,8 @@ import {AssayConfig} from "../src/AssayConfig.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {AssayStake} from "../src/AssayStake.sol";
 import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
+import {Voucher} from "../src/Types.sol";
+import {NotRedeemer} from "../src/Errors.sol";
 import {UnexpectedLinks, LinkedLibraryMismatch} from "./ChannelDoorLink.sol";
 
 error UnexpectedChain(uint256 got, uint256 want);
@@ -184,6 +186,15 @@ contract UpgradeByOwner is ChannelDoorLink {
         if (_channelTotals(escrow) != channelsBefore) revert StateMoved("channel totals");
         if (_extensionReads(escrow, sampleBuyer) != extensionReadsBefore) {
             revert StateMoved("extension reads");
+        }
+        // An extension DOOR through the fallback (not only a view): an empty batch from this
+        // non-redeemer must come back as the extension's own `NotRedeemer`. Simulated, never
+        // broadcast.
+        (bool doorOk, bytes memory doorRet) = address(escrow).call(
+            abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (new Voucher[](0), new bytes[](0)))
+        );
+        if (doorOk || doorRet.length != 4 || bytes4(doorRet) != NotRedeemer.selector) {
+            revert StateMoved("extension door");
         }
         if (on[2] && IAssayEscrow(address(escrow)).EXTENSION() != AssayEscrow(impls[2]).EXTENSION())
         {

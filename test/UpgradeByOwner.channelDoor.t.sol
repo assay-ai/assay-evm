@@ -36,6 +36,11 @@ contract UpgradeByOwnerProbe is UpgradeByOwner {
 /// by address (the implementation's first CREATE) and by code (exactly this build, its one
 /// immutable checked by value).
 contract UpgradeByOwnerExtensionTest is Test {
+    struct Span {
+        uint256 length;
+        uint256 start;
+    }
+
     UpgradeByOwnerProbe internal probe;
     address internal impl;
     address internal ext;
@@ -97,6 +102,53 @@ contract UpgradeByOwnerExtensionTest is Test {
             )
         );
         probe.assertExtension(impl, keccak256(code));
+    }
+
+    /// Review H-1: `EXTENSION` has two spans, the getter's and the `fallback`'s DELEGATECALL
+    /// target. Implementation code with ONLY the fallback's span pointing elsewhere, and its
+    /// hash pinned from that very code, is refused: the getter still reports the genuine
+    /// extension, so only the every-span-holds-one-value rule can see it.
+    function test_refusesAFallbackTargetThatDiffersFromTheGetter() public {
+        string memory art = vm.readFile("out/AssayEscrow.sol/AssayEscrow.json");
+        string[] memory ids = vm.parseJsonKeys(art, ".deployedBytecode.immutableReferences");
+        bytes memory code = impl.code;
+        uint256 patched;
+        for (uint256 k = 0; k < ids.length; k++) {
+            Span[] memory spans = abi.decode(
+                vm.parseJson(
+                    art, string.concat(".deployedBytecode.immutableReferences.['", ids[k], "']")
+                ),
+                (Span[])
+            );
+            uint256[] memory starts = new uint256[](spans.length);
+            for (uint256 i = 0; i < spans.length; i++) {
+                starts[i] = spans[i].start;
+            }
+            if (starts.length < 2) continue;
+            bytes32 w;
+            uint256 at = starts[0];
+            assembly ("memory-safe") {
+                w := mload(add(add(code, 32), at))
+            }
+            if (w != bytes32(uint256(uint160(ext)))) continue;
+            // the lowest offset is the fallback's PUSH32 (it is the first code after dispatch)
+            uint256 lowest = starts[0] < starts[1] ? starts[0] : starts[1];
+            bytes32 evil = bytes32(uint256(uint160(address(0xBAD))));
+            assembly ("memory-safe") {
+                mstore(add(add(code, 32), lowest), evil)
+            }
+            patched++;
+        }
+        assertEq(patched, 1, "EXTENSION has exactly two spans");
+        address lib = probe.linked(impl);
+        vm.etch(impl, code);
+        assertEq(AssayEscrow(impl).EXTENSION(), ext, "the getter still reports the real one");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NotThisBuild.selector, impl, "out/AssayEscrow.sol/AssayEscrow.json"
+            )
+        );
+        probe.assertBuilt(impl, "out/AssayEscrow.sol/AssayEscrow.json", lib);
     }
 
     /// An implementation that reports an extension other than its first CREATE.

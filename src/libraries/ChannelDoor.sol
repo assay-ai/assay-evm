@@ -23,7 +23,8 @@ import "../Errors.sol";
 ///      A channel is `keccak256(abi.encode(payer, signer, provider, channelId))`; `signer` is the
 ///      payer when the payer signed. Its state is one packed slot: what was settled, the calls
 ///      counter at that point, and two hold buckets. A bucket holds money of one maturity hour
-///      and one take rate; its maturity never moves while it holds money.
+///      and one take rate; its maturity only ever moves LATER, when a settlement folds into it
+///      before it matures (`_fold`).
 ///
 ///      Settlement skips (never reverts on) any item whose outcome depends on state or time, so
 ///      one item cannot block a batch; only calldata-only conditions revert.
@@ -486,7 +487,7 @@ library ChannelDoor {
             } else if (sl.h2 == 0) {
                 if (it.charge > MAX_BUCKET) return _noBucket(i, v, it);
                 (sl.h2, sl.m2, sl.r2) = (it.charge, it.m, r);
-            } else if (!_fold(sl, it, r)) {
+            } else if (!_fold(sl, it, r, nowTs)) {
                 return _noBucket(i, v, it);
             }
             _debit(escrows, delegations, v.payer, it, nowTs);
@@ -512,21 +513,28 @@ library ChannelDoor {
     }
 
     /// @dev Both buckets hold money of other (maturity, rate) pairs. Adds the charge to the
-    ///      newest bucket of the same rate and moves that bucket's maturity to the later of its
-    ///      own and the charge's, so no money matures earlier than its own hold and every older
-    ///      amount in it is only held longer (its refund window moves with it). Without this a
-    ///      matured bucket left uncollected, or a hold above one hour, refused every settlement
-    ///      into a new hour until the newest voucher expired unsettled. False (the item skips
-    ///      `NoBucket`) when neither bucket has this rate or the bucket would overflow. The two
+    ///      newest bucket of the same rate, if it has NOT matured, and moves that bucket's
+    ///      maturity to the later of its own and the charge's, so no money matures earlier than
+    ///      its own hold and every older amount in it is only held longer (its refund window
+    ///      moves with it). Without this a matured bucket left uncollected next to a pending one,
+    ///      or a hold above one hour, refused every settlement into a new hour until the newest
+    ///      voucher expired unsettled. False (the item skips `NoBucket`) when neither bucket has
+    ///      this rate, the newest of it has matured (collect first), or it would overflow. The two
     ///      buckets stay distinct (I11): the chosen one is the newest of its rate, so its new
     ///      maturity is above the other's whenever the rates match. On `it.m` it leaves the
     ///      maturity the charge landed in.
-    function _fold(Slot memory sl, Item memory it, uint256 r) private returns (bool) {
+    function _fold(Slot memory sl, Item memory it, uint256 r, uint256 nowTs)
+        private
+        returns (bool)
+    {
         bool one = sl.r1 == r && (sl.r2 != r || sl.m1 >= sl.m2);
         if (!one && sl.r2 != r) return false;
+        uint256 mOld = one ? sl.m1 : sl.m2;
+        // Never a matured bucket: its money (a dispute's `keepHeld` included) is payable now and
+        // its anyone-can-collect deadline must not move. Collect it first.
+        if (mOld * GRID <= nowTs) return false;
         uint256 h = one ? sl.h1 : sl.h2;
         if (h + it.charge > MAX_BUCKET) return false;
-        uint256 mOld = one ? sl.m1 : sl.m2;
         uint256 mNew = mOld > it.m ? mOld : it.m;
         if (one) (sl.h1, sl.m1) = (h + it.charge, mNew);
         else (sl.h2, sl.m2) = (h + it.charge, mNew);

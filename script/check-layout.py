@@ -31,6 +31,7 @@ exit 1 = refused, with the reason on stdout.
 """
 
 import json
+import re
 import sys
 
 GAP = "__gap"
@@ -62,7 +63,8 @@ def entries(doc):
 def tlabel(doc, key):
     label = doc["types"][key]["label"]
     for old, new in RENAMED_TYPES.items():
-        label = label.replace(old, new)
+        # whole names only: `struct AssayEscrow.Escrow` must not rewrite `...EscrowX`
+        label = re.sub(re.escape(old) + r"(?![A-Za-z0-9_])", new, label)
     return label
 
 
