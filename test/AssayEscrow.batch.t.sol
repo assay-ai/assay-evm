@@ -8,6 +8,8 @@ import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {RedeemReentrantUSDG} from "./helpers/MockUSDG.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {AssayConfig} from "../src/AssayConfig.sol";
 import {Voucher, ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
@@ -106,16 +108,16 @@ contract BatchObserverUSDG {
             uint256 t = transferCount;
             seenTo[t] = to;
             seenAmount[t] = amount;
-            seenTotalEscrowed[t] = AssayEscrow(escrow).totalEscrowed();
-            seenTotalHeld[t] = AssayEscrow(escrow).totalHeld();
+            seenTotalEscrowed[t] = IAssayEscrow(escrow).totalEscrowed();
+            seenTotalHeld[t] = IAssayEscrow(escrow).totalHeld();
             for (uint256 i = 0; i < watched.length; i++) {
-                AssayEscrow.Escrow memory e = AssayEscrow(escrow).escrowOf(watched[i]);
+                AssayEscrowStorage.Escrow memory e = IAssayEscrow(escrow).escrowOf(watched[i]);
                 seen[t][i] = Seen({
                     balance: e.balance,
                     seqHigh: e.seqHigh,
                     spentInWindow: e.spentInWindow,
                     totalRedeemed: e.totalRedeemed,
-                    heldStatus: uint8(AssayEscrow(escrow).held(watched[i], 1).status)
+                    heldStatus: uint8(IAssayEscrow(escrow).held(watched[i], 1).status)
                 });
             }
             transferCount = t + 1;
@@ -241,7 +243,7 @@ contract AssayEscrowBatchTest is Fixture {
     /// at 46630, whose 19 selectors do not include `mint(address,uint256)` — the call lands in
     /// the dispatcher's fallback and reverts, taking `setUp` with it. The other three are local
     /// doubles that do have `mint` and must keep using it: they are the point of those tests.
-    function _arm(AssayEscrow e, IMintableToken token, uint256 key, uint64 amount)
+    function _arm(IAssayEscrow e, IMintableToken token, uint256 key, uint64 amount)
         internal
         returns (address b)
     {
@@ -383,7 +385,7 @@ contract AssayEscrowBatchTest is Fixture {
 
     /// Redeem into hold: collect every item of a redeemed batch with ONE `collectHeldBatch`, as the
     /// redeemer, at the latest `collectableAt` among them, then put the clock back.
-    function _collectAll(AssayEscrow e, Voucher[] memory vs) internal {
+    function _collectAll(IAssayEscrow e, Voucher[] memory vs) internal {
         address[] memory ps = new address[](vs.length);
         uint64[] memory ss = new uint64[](vs.length);
         uint256 back = vm.getBlockTimestamp(); // not block.timestamp: see Fixture._collect
@@ -446,7 +448,7 @@ contract AssayEscrowBatchTest is Fixture {
 
         for (uint256 j = 0; j < 4; j++) {
             uint64 spent = vs[j].amount + vs[j + 4].amount;
-            AssayEscrow.Escrow memory e = escrow.escrowOf(payers[j]);
+            AssayEscrowStorage.Escrow memory e = escrow.escrowOf(payers[j]);
             assertEq(e.seqHigh, 2, "each payer advanced by its own two vouchers");
             assertEq(e.balance, FUND - spent, "each payer paid for its own two vouchers");
             assertEq(e.spentInWindow, spent);
@@ -726,7 +728,7 @@ contract AssayEscrowBatchTest is Fixture {
     /// Without this test, moving `CONFIG.params()` inside the loop survives every other test here.
     function test_theParameterSetIsReadOnceForTheWholeBatch() public {
         ConfigShiftingUSDG tok = new ConfigShiftingUSDG();
-        AssayEscrow e2 = _deployEscrow(address(tok));
+        IAssayEscrow e2 = _deployEscrow(address(tok));
         address b = _arm(e2, IMintableToken(address(tok)), payerKeys[0], FUND);
 
         // The token becomes the admin — the compromise this property is defending against.
@@ -813,7 +815,7 @@ contract AssayEscrowBatchTest is Fixture {
     /// as well and the only thing left refusing it is the guard.
     function test_wrongState_aReentrantAssetCannotRecurseIntoTheBatch() public {
         RedeemReentrantUSDG evil = new RedeemReentrantUSDG();
-        AssayEscrow e2 = _deployEscrow(address(evil));
+        IAssayEscrow e2 = _deployEscrow(address(evil));
         address b = _arm(e2, IMintableToken(address(evil)), payerKeys[0], FUND);
 
         ParamSet memory p = config.params();
@@ -859,7 +861,7 @@ contract AssayEscrowBatchTest is Fixture {
         e2.collectHeldBatch(ps, ss);
 
         assertEq(e2.totalHeld(), 500_000, "and nothing moved");
-        assertEq(uint8(e2.held(b, 1).status), uint8(AssayEscrow.HeldStatus.Held));
+        assertEq(uint8(e2.held(b, 1).status), uint8(AssayEscrowStorage.HeldStatus.Held));
         assertEq(evil.balanceOf(providers[0]), 0);
     }
 
@@ -874,7 +876,7 @@ contract AssayEscrowBatchTest is Fixture {
     /// transfer `2n` is item `n`'s first.
     function test_everyItemsEffectsAreWrittenBeforeThatItemsOwnTransfers() public {
         BatchObserverUSDG obs = new BatchObserverUSDG();
-        AssayEscrow e2 = _deployEscrow(address(obs));
+        IAssayEscrow e2 = _deployEscrow(address(obs));
 
         address[] memory bs = new address[](4);
         uint64[4] memory amounts = [uint64(250_000), 310_000, 70_007, 1_234_567];
@@ -923,7 +925,7 @@ contract AssayEscrowBatchTest is Fixture {
             BatchObserverUSDG.Seen memory own = obs.seenAt(t, n);
             assertEq(
                 own.heldStatus,
-                uint8(AssayEscrow.HeldStatus.Collected),
+                uint8(AssayEscrowStorage.HeldStatus.Collected),
                 "item n not yet Collected at item n's payout"
             );
             assertEq(own.seqHigh, 1, "item n's seqHigh not advanced at item n's payout");
@@ -936,7 +938,7 @@ contract AssayEscrowBatchTest is Fixture {
                 BatchObserverUSDG.Seen memory next = obs.seenAt(t, n + 1);
                 assertEq(
                     next.heldStatus,
-                    uint8(AssayEscrow.HeldStatus.Held),
+                    uint8(AssayEscrowStorage.HeldStatus.Held),
                     "item n+1 collected before item n was paid"
                 );
             }
@@ -969,7 +971,12 @@ contract AssayEscrowBatchTest is Fixture {
     /// signature comparison: three occurrences of `_redeem(` in `src/` — one declaration and
     /// exactly two call sites — and the loop body is the one-line delegation.
     function test_theBatchDelegatesToTheOneRedeemPathInTheSource() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
+        // The per-call door lives in the extension (D-29); both halves are read so a copy in the
+        // core counts too.
+        string memory src = string.concat(
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol")),
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowExtension.sol"))
+        );
 
         assertEq(
             _count(
@@ -1125,10 +1132,10 @@ contract AssayEscrowBatchTest is Fixture {
         (Voucher[] memory eight, bytes[] memory eightSigs) = _batch(8);
         (Voucher[] memory many, bytes[] memory manySigs) = _batch(64);
 
-        uint256 c1 = abi.encodeCall(AssayEscrow.redeemVoucherBatch, (one, oneSig)).length;
-        uint256 c8 = abi.encodeCall(AssayEscrow.redeemVoucherBatch, (eight, eightSigs)).length;
-        uint256 c64 = abi.encodeCall(AssayEscrow.redeemVoucherBatch, (many, manySigs)).length;
-        uint256 cSingle = abi.encodeCall(AssayEscrow.redeemVoucher, (one[0], oneSig[0])).length;
+        uint256 c1 = abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (one, oneSig)).length;
+        uint256 c8 = abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (eight, eightSigs)).length;
+        uint256 c64 = abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (many, manySigs)).length;
+        uint256 cSingle = abi.encodeCall(IAssayEscrow.redeemVoucher, (one[0], oneSig[0])).length;
 
         console2.log("calldata bytes, redeemVoucher (1)   ", cSingle);
         console2.log("calldata bytes, batch of 1          ", c1);

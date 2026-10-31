@@ -4,6 +4,7 @@ pragma solidity 0.8.38;
 import {Test} from "forge-std/Test.sol";
 import {ChannelHandler} from "./ChannelHandler.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {ChannelDoor} from "../../src/libraries/ChannelDoor.sol";
 
 /// Invariants of the channel door, driven together with the per-call door (spec §2).
@@ -39,7 +40,7 @@ contract ChannelInvariantsTest is Test {
     /// I7: the escrow's USDG covers balances, per-call holds, channel holds and set-aside payouts.
     function invariant_I7_solvency() public view {
         (uint128 totalUnpaid, uint128 held) = _books();
-        AssayEscrow e = h.escrow();
+        IAssayEscrow e = h.escrow();
         assertGe(
             h.usdg().balanceOf(address(e)),
             uint256(e.totalEscrowed()) + e.totalHeld() + held + totalUnpaid
@@ -92,6 +93,12 @@ contract ChannelInvariantsTest is Test {
     /// A run that tried to settle several times and never landed one proved nothing about the
     /// channel door. (A short run can draw fewer than three settle calls; that is chance, not a
     /// broken handler.)
+    /// H1 fix: a settlement may fold into an occupied bucket and move its maturity later, never
+    /// earlier, so no money is ever released before its own hold.
+    function invariant_aFoldNeverMovesAMaturityEarlier() public view {
+        assertFalse(h.maturityMovedEarlier(), "a holding bucket's maturity moved earlier");
+    }
+
     function afterInvariant() external view {
         if (h.settleAttempts() >= 3) {
             assertGt(h.settles(), 0, "no settlement landed in this run");

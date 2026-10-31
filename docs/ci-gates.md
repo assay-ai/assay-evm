@@ -143,7 +143,7 @@ would make the gate compare against the wrong commit.
 
 ## 4. `./script/check-sizes.sh`
 
-EIP-170, per implementation and per external library (`ChannelDoor`, D-28), gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
+EIP-170, per implementation, per external library (`ChannelDoor`, D-28) and for the escrow's extension (`AssayEscrowExtension`, D-29), gated at 23,000 of the 24,576 hard limit; the escrow's creation code, which carries the extension's, is held under EIP-3860's 49,152. Measured 2026-10-24 (solc
 0.8.38, `via_ir`, 200 runs): AssayConfig 7,405 · AssayEscrow 20,312 · AssayStake 13,759 (runtime
 bytes, CBOR metadata included). Down from 22,598 and 15,159 by routing each repeated external call
 to Config (the reads `params` and `paused`, the reverting checks `assertActive` and
@@ -160,7 +160,7 @@ with `MaxCodeSize = 98,304` (measured with `eth_estimateGas`: 98,305 is refused 
 deploy target has room to spare. The gate stays below 24,576 on purpose: that is still the limit on
 Ethereum, Arbitrum One, Base, Optimism and most EVM chains, and the default in forge and anvil, so
 these contracts stay deployable elsewhere and testable with default tooling. An upgrade that would
-cross 23,000 splits AssayEscrow (first candidate: move the read-only views into a separate lens).
+cross 23,000 splits AssayEscrow (first candidate: move the read-only views into a separate lens). That split is D-29 (2026-10-31): a core and an extension behind its `fallback`, sharing one storage base; the core went from 22,963 to 13,834 bytes.
 
 It measures **`deployedBytecode`**, not `bytecode`. Creation bytecode is the wrong number: EIP-170 bounds runtime only, and the two differ by 1,433 bytes on both
 money contracts here. Creation size is printed **beside** the runtime one as information, which is

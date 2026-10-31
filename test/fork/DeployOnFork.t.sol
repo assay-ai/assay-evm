@@ -8,6 +8,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {AssayConfig} from "../../src/AssayConfig.sol";
 import {AssayStake} from "../../src/AssayStake.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
 import {ParamSet} from "../../src/Types.sol";
@@ -41,7 +42,7 @@ contract DeployOnForkTest is ForkFixture {
 
     AssayConfig internal config;
     AssayStake internal stake;
-    AssayEscrow internal escrow;
+    IAssayEscrow internal escrow;
     address internal configImpl;
     address internal stakeImpl;
     address internal escrowImpl;
@@ -83,7 +84,7 @@ contract DeployOnForkTest is ForkFixture {
             )
         );
         escrowImpl = address(new AssayEscrow());
-        escrow = AssayEscrow(
+        escrow = IAssayEscrow(
             address(
                 new ERC1967Proxy(
                     escrowImpl,

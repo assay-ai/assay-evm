@@ -160,6 +160,10 @@ $(abi_json_entries AssayStake)
           "runtimeKeccak": "$(kc ChannelDoor)"
         }
       },
+      "extension": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "runtimeKeccak": "$(kc AssayEscrowExtension)"
+      },
       "abiKeccak": "$(abi_hash AssayEscrow)",
       "abiFunctions": [
 $(abi_json_entries AssayEscrow)
@@ -176,6 +180,6 @@ $(abi_json_entries AssayEscrow)
 }
 JSON
 echo "wrote $OUT (status: pending-deploy)"
-echo "Fill the six addresses, the ChannelDoor library address (Deploy.s.sol prints it), the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
+echo "Fill the six addresses, the ChannelDoor library and AssayEscrowExtension addresses (Deploy.s.sol prints both), the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
 echo "two domain separators from Deploy.s.sol's output,"
 echo "flip .status to \"deployed\", then: ./script/verify-deployment.sh $CHAIN_ID $RPC"

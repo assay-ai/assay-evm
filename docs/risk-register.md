@@ -648,12 +648,17 @@ are the channel door's buckets and its set-aside payouts (§20, D-28), read with
   waive, refund until the window closes, or delay until the timeout. It cannot pay anyone but
   the channel's provider and the treasury. With `fromSettled` it cannot charge a range twice or
   charge a base it did not name.
-- **Liveness depends on the backend collecting first.** Two buckets per channel with no spare.
-  While both buckets hold money, a settlement for a third (maturity, rate) skips `NoBucket`:
-  an uncollected matured bucket next to an occupied one does that, and so does a take-rate
-  change while both are in use. So does `collectHoldSeconds` above one hour. The backend must collect every matured bucket
-  before settling in a new hour, and must offer channels only while the hold is ≤ 1 h. A stall
-  costs providers unsettled earnings once the newest voucher expires; buyers are not affected.
+- **Collecting late defers payouts instead of losing them.** Two buckets per channel. When
+  both hold money of other hours, a settlement folds into the newest bucket of its rate and moves
+  that bucket's maturity to the new charge's (`ChannelBucketDeferred`). Money is never released
+  earlier than its own hold. An uncollected matured bucket, or a hold above one hour, now delays
+  the older money in the newest bucket by up to the hold, instead of refusing the settlement
+  (before the fix, the provider lost the unsettled value once the newest voucher expired; review
+  finding H1). The deferral lasts only while an older matured bucket sits uncollected, and anyone
+  can collect that bucket after its maturity + 7 days. The backend should still collect before
+  settling. It must read a bucket's name again after `ChannelBucketDeferred`, because a refund by
+  the old name skips `NoSuchBucket`. A settlement still skips `NoBucket` when both buckets hold
+  another take rate (only across a rate change) or a bucket would exceed `MAX_BUCKET`.
 - **Issuer freeze.** A frozen provider or treasury no longer blocks anyone else: its share goes
   to `unpaid` and `claimUnpaid` pays it once the freeze lifts. While frozen, that money is out
   of reach of refunds. Mainnet USDG can also `decreaseSupplyFromAddress`, which would make the

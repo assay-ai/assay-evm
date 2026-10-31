@@ -238,6 +238,36 @@ for c in AssayConfig AssayStake AssayEscrow; do
   done
 
   # 4. The proxy has code at all.
+  # 3c. The escrow's extension (D-29). The implementation's `fallback` DELEGATECALLs it in the
+  #     proxy's storage, so its code moves the escrow's money as much as the implementation's
+  #     own. The implementation created it (first CREATE, nonce 1) and holds its address in a
+  #     MASKED immutable, so the address is checked by value here: what `EXTENSION()` returns,
+  #     what nonce 1 of the implementation is, and what the record names must agree. Its own
+  #     single immutable must be its own address (the direct-call guard), and the rest of its
+  #     code must be this build's; it has no EIP-712 immutables to mask, by design.
+  if [ "$c" = "AssayEscrow" ] && jq -e '.methodIdentifiers["EXTENSION()"]' "$art" >/dev/null; then
+    ext=$(cast call "$impl" 'EXTENSION()(address)' --rpc-url "$RPC")
+    nonce1=$(cast compute-address "$impl" --nonce 1 | awk '{print $NF}')
+    [ "$(lc "$ext")" = "$(lc "$nonce1")" ] \
+      || fail "escrow EXTENSION() is $ext, but the implementation's first CREATE is $nonce1"
+    erec=$(jq -er '.contracts.AssayEscrow.extension.address' "$REC") \
+      || fail "the escrow has an extension but the record names no .contracts.AssayEscrow.extension.address"
+    [ "$(lc "$ext")" = "$(lc "$erec")" ] || fail "escrow extension is $ext, record says $erec"
+    ewant=$(jq -er '.contracts.AssayEscrow.extension.runtimeKeccak' "$REC") \
+      || fail "the record has no extension runtimeKeccak"
+    eart="$(dirname "$(dirname "$art")")/AssayEscrowExtension.sol/AssayEscrowExtension.json"
+    [ "$(jq -r '.deployedBytecode.immutableReferences // {} | keys | length' "$eart")" = "1" ] \
+      || fail "AssayEscrowExtension must have exactly one immutable (its own address)"
+    ecode=$(cast code "$ext" --rpc-url "$RPC"); ecode=$(lc "${ecode#0x}")
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      [ "${ecode:$((start * 2)):$((len * 2))}" = "000000000000000000000000$(lc "${ext#0x}")" ] \
+        || fail "the extension at $ext does not hold its own address at $start"
+    done <<< "$(jq -r '.deployedBytecode.immutableReferences | [.[][]] | .[] | "\(.start) \(.length)"' "$eart")"
+    egot=$(cast keccak "$(masked_code AssayEscrowExtension "$ext" "$eart")")
+    [ "$(lc "$egot")" = "$(lc "$ewant")" ] || fail "extension bytecode ($egot != $ewant)"
+  fi
+
   [ "$(cast code "$proxy" --rpc-url "$RPC")" != "0x" ] || fail "$c proxy has no code"
 
 done
@@ -282,4 +312,4 @@ for c in AssayEscrow AssayStake; do
   [ "$(lc "$g")" = "$(lc "$w")" ] || fail "$c DOMAIN_SEPARATOR ($g != $w)"
 done
 
-echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"
+echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, libraries, extension, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"

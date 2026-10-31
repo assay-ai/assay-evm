@@ -6,6 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AssayConfig} from "../../src/AssayConfig.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {AssayStake} from "../../src/AssayStake.sol";
 import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
@@ -27,7 +29,7 @@ contract ChannelHandler is Test {
 
     MockUSDG public usdg;
     AssayConfig public config;
-    AssayEscrow public escrow;
+    IAssayEscrow public escrow;
     AssayStake public stake;
 
     address internal constant ADMIN = address(0xADAA);
@@ -60,6 +62,10 @@ contract ChannelHandler is Test {
 
     uint256 public settles;
     uint256 public settleAttempts;
+    /// Settlements that folded into an occupied bucket and moved its maturity (H1 fix), and
+    /// whether any settlement ever moved a holding bucket's maturity EARLIER (it must not).
+    uint256 public folds;
+    bool public maturityMovedEarlier;
     uint256 public collects;
     /// Refunds that moved money out of the bucket they did not name. Must stay zero.
     uint256 public wrongBucketRefunds;
@@ -98,7 +104,7 @@ contract ChannelHandler is Test {
                 )
             )
         );
-        escrow = AssayEscrow(
+        escrow = IAssayEscrow(
             address(
                 new ERC1967Proxy(
                     address(new AssayEscrow()),
@@ -220,6 +226,15 @@ contract ChannelHandler is Test {
             g.charged += held;
             g.waived += uint64(after_.settled - sl.settled) - held;
             ++settles;
+            // a bucket that held money and still holds the same rate keeps or delays its maturity
+            if (sl.h1 != 0 && after_.h1 != 0 && after_.r1 == sl.r1) {
+                if (after_.m1 < sl.m1) maturityMovedEarlier = true;
+                if (after_.m1 > sl.m1) ++folds;
+            }
+            if (sl.h2 != 0 && after_.h2 != 0 && after_.r2 == sl.r2) {
+                if (after_.m2 < sl.m2) maturityMovedEarlier = true;
+                if (after_.m2 > sl.m2) ++folds;
+            }
         }
     }
 
@@ -371,8 +386,8 @@ contract ChannelHandler is Test {
 
     function sumOfPerCallHeld() external view returns (uint256 t) {
         for (uint256 k = 0; k < heldSeq.length; ++k) {
-            AssayEscrow.HeldPayment memory h = escrow.held(payers[heldPayer[k]], heldSeq[k]);
-            if (h.status == AssayEscrow.HeldStatus.Held) t += h.amount;
+            AssayEscrowStorage.HeldPayment memory h = escrow.held(payers[heldPayer[k]], heldSeq[k]);
+            if (h.status == AssayEscrowStorage.HeldStatus.Held) t += h.amount;
         }
     }
 

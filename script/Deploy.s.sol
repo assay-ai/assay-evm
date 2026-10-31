@@ -170,6 +170,7 @@ contract Deploy is ChannelDoorLink {
         console2.log("AssayEscrow  proxy     ", address(escrow));
         console2.log("AssayEscrow  impl      ", escrowImpl);
         console2.log("ChannelDoor  library   ", _linkedChannelDoor(escrowImpl));
+        console2.log("Escrow extension       ", AssayEscrow(escrowImpl).EXTENSION());
         console2.log("owner                 ", owner);
         console2.log("admin                 ", admin);
         console2.log("asset                 ", asset);

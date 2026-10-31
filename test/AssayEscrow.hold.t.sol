@@ -5,6 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
 import {Voucher, ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import {Fee} from "../src/libraries/Fee.sol";
@@ -76,7 +77,10 @@ contract AssayEscrowHoldTest is Fixture {
         });
     }
 
-    function _redeem(uint64 amount, uint64 seq) internal returns (AssayEscrow.HeldPayment memory) {
+    function _redeem(uint64 amount, uint64 seq)
+        internal
+        returns (AssayEscrowStorage.HeldPayment memory)
+    {
         Voucher memory v = _v(amount, seq);
         bytes memory sig = VoucherSigner.signVoucher(buyerKey, ds, v);
         vm.prank(redeemer);
@@ -106,7 +110,7 @@ contract AssayEscrowHoldTest is Fixture {
         escrow.refundHeld(buyer, seq);
     }
 
-    function _status(uint64 seq) internal view returns (AssayEscrow.HeldStatus) {
+    function _status(uint64 seq) internal view returns (AssayEscrowStorage.HeldStatus) {
         return escrow.held(buyer, seq).status;
     }
 
@@ -126,12 +130,12 @@ contract AssayEscrowHoldTest is Fixture {
 
     function test_redeemWritesAHeldRecordAndMovesNoToken() public {
         uint256 escrowTokensBefore = usdg.balanceOf(address(escrow));
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
 
         assertEq(h.provider, provider);
         assertEq(h.amount, 250_000);
         assertEq(h.takeRateBps, TAKE_RATE_BPS);
-        assertEq(uint8(h.status), uint8(AssayEscrow.HeldStatus.Held));
+        assertEq(uint8(h.status), uint8(AssayEscrowStorage.HeldStatus.Held));
         assertEq(h.collectableAt, uint64(vm.getBlockTimestamp()) + HOLD);
 
         assertEq(usdg.balanceOf(provider), 0, "the provider is not paid at redemption");
@@ -147,8 +151,8 @@ contract AssayEscrowHoldTest is Fixture {
     }
 
     function test_anUnredeemedSeqReadsAsNoRecord() public view {
-        AssayEscrow.HeldPayment memory h = escrow.held(buyer, 7);
-        assertEq(uint8(h.status), uint8(AssayEscrow.HeldStatus.None));
+        AssayEscrowStorage.HeldPayment memory h = escrow.held(buyer, 7);
+        assertEq(uint8(h.status), uint8(AssayEscrowStorage.HeldStatus.None));
         assertEq(h.amount, 0);
         assertEq(h.provider, address(0));
     }
@@ -179,14 +183,14 @@ contract AssayEscrowHoldTest is Fixture {
     // --- collect: who and when ---------------------------------------------------------------
 
     function test_collect_refusedBeforeCollectableAt() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         _expectCollect(redeemer, 1, HeldNotYetCollectable.selector);
         vm.warp(h.collectableAt - 1);
         _expectCollect(redeemer, 1, HeldNotYetCollectable.selector);
     }
 
     function test_collect_theRedeemerMayCollectAtCollectableAt() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         vm.warp(h.collectableAt);
         vm.expectEmit(true, true, true, true, address(escrow));
         emit HeldCollected(buyer, 1, provider, 225_000, 25_000);
@@ -194,14 +198,14 @@ contract AssayEscrowHoldTest is Fixture {
 
         assertEq(usdg.balanceOf(provider), 225_000);
         assertEq(usdg.balanceOf(treasury), 25_000);
-        assertEq(uint8(_status(1)), uint8(AssayEscrow.HeldStatus.Collected));
+        assertEq(uint8(_status(1)), uint8(AssayEscrowStorage.HeldStatus.Collected));
         assertEq(escrow.totalHeld(), 0);
         assertEq(escrow.totalEscrowed(), 9_750_000, "a collect leaves the balances alone");
         assertEq(usdg.balanceOf(address(escrow)), 9_750_000);
     }
 
     function test_collect_anybodyElseIsRefusedUntilTheTimeout() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         vm.warp(h.collectableAt);
         _expectCollect(stranger, 1, HeldNotYetCollectable.selector);
         _expectCollect(provider, 1, HeldNotYetCollectable.selector);
@@ -214,19 +218,19 @@ contract AssayEscrowHoldTest is Fixture {
     /// Operator silence favours the provider: after the timeout anybody collects, and the money
     /// still goes to the voucher's provider and the treasury, never to the caller.
     function test_collect_anybodyMayCollectAfterTheTimeout() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         vm.warp(uint256(h.collectableAt) + TIMEOUT);
         _collectAs(stranger, 1);
         assertEq(usdg.balanceOf(provider), 225_000);
         assertEq(usdg.balanceOf(treasury), 25_000);
         assertEq(usdg.balanceOf(stranger), 0);
-        assertEq(uint8(_status(1)), uint8(AssayEscrow.HeldStatus.Collected));
+        assertEq(uint8(_status(1)), uint8(AssayEscrowStorage.HeldStatus.Collected));
     }
 
     // --- refund: who and when ----------------------------------------------------------------
 
     function test_refund_allowedFromRedemptionUntilJustBeforeTheTimeout() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         _redeem(100_000, 2);
 
         // seq 1 at once, seq 2 in the last second of the window
@@ -236,21 +240,21 @@ contract AssayEscrowHoldTest is Fixture {
         vm.warp(uint256(h.collectableAt) + TIMEOUT - 1);
         _refund(2);
 
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 10_000_000, "the whole amount is back in the balance");
         assertEq(e.totalRedeemed, 0, "the lifetime counter is lowered with it");
         assertEq(escrow.totalEscrowed(), 10_000_000);
         assertEq(escrow.totalHeld(), 0);
         assertEq(usdg.balanceOf(address(escrow)), 10_000_000, "a refund moves no token");
         assertEq(usdg.balanceOf(provider), 0);
-        assertEq(uint8(_status(1)), uint8(AssayEscrow.HeldStatus.Refunded));
-        assertEq(uint8(_status(2)), uint8(AssayEscrow.HeldStatus.Refunded));
+        assertEq(uint8(_status(1)), uint8(AssayEscrowStorage.HeldStatus.Refunded));
+        assertEq(uint8(_status(2)), uint8(AssayEscrowStorage.HeldStatus.Refunded));
         // the per-escrow identity survives the refund
         assertEq(e.totalFunded, uint256(e.balance) + e.totalRedeemed + e.totalWithdrawn);
     }
 
     function test_refund_refusedAtAndAfterTheTimeout() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         vm.warp(uint256(h.collectableAt) + TIMEOUT);
         _expectRefund(redeemer, 1, HeldRefundWindowClosed.selector);
         vm.warp(uint256(h.collectableAt) + TIMEOUT + 30 days);
@@ -291,7 +295,7 @@ contract AssayEscrowHoldTest is Fixture {
     // --- one exit per record -----------------------------------------------------------------
 
     function test_aRecordLeavesHeldExactlyOnce() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         _redeem(100_000, 2);
         vm.warp(h.collectableAt);
 
@@ -319,7 +323,7 @@ contract AssayEscrowHoldTest is Fixture {
     // --- pause and blocklist -----------------------------------------------------------------
 
     function test_thePauseFreezesCollectAndReleasesItIntact() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         vm.warp(uint256(h.collectableAt) + TIMEOUT);
         vm.prank(admin);
         config.setPaused(true);
@@ -333,7 +337,7 @@ contract AssayEscrowHoldTest is Fixture {
     }
 
     function test_theBlocklistFreezesCollectForThePayerAndForTheProvider() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         vm.warp(h.collectableAt);
         address[2] memory parties = [buyer, provider];
         for (uint256 i = 0; i < 2; i++) {
@@ -360,7 +364,7 @@ contract AssayEscrowHoldTest is Fixture {
     // --- withdraw cannot reach held money ----------------------------------------------------
 
     function test_withdrawCannotReachHeldMoney() public {
-        AssayEscrow.HeldPayment memory h = _redeem(1_000_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(1_000_000, 1);
         vm.prank(buyer);
         escrow.requestWithdraw(10_000_000);
         vm.warp(vm.getBlockTimestamp() + Constants.WITHDRAW_DELAY_SECONDS);
@@ -463,7 +467,7 @@ contract AssayEscrowHoldTest is Fixture {
 
     /// The treasury is not frozen: a collect pays Config's treasury at collect time.
     function test_aCollectPaysTheTreasuryInForceAtCollectTime() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         address newTreasury = address(0x7EA6);
         ParamSet memory p = config.params();
         p.treasury = newTreasury;
@@ -480,12 +484,12 @@ contract AssayEscrowHoldTest is Fixture {
     /// A held (say, disputed) seq n does not delay seq n+1: the next voucher redeems, and is
     /// collected, while n stays held and is refunded later.
     function test_aHeldSeqDoesNotBlockTheNextSeq() public {
-        AssayEscrow.HeldPayment memory h1 = _redeem(250_000, 1);
-        AssayEscrow.HeldPayment memory h2 = _redeem(100_000, 2);
+        AssayEscrowStorage.HeldPayment memory h1 = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h2 = _redeem(100_000, 2);
         vm.warp(h2.collectableAt);
         assertGe(vm.getBlockTimestamp(), h1.collectableAt);
         _collectAs(redeemer, 2);
-        assertEq(uint8(_status(1)), uint8(AssayEscrow.HeldStatus.Held));
+        assertEq(uint8(_status(1)), uint8(AssayEscrowStorage.HeldStatus.Held));
         _redeem(50_000, 3);
         _refund(1);
         assertEq(usdg.balanceOf(provider), 90_000);
@@ -560,7 +564,7 @@ contract AssayEscrowHoldTest is Fixture {
         _assertSolvent();
         vm.warp(vm.getBlockTimestamp() + TIMEOUT);
         for (uint64 s = 1; s <= n; s++) {
-            if (_status(s) == AssayEscrow.HeldStatus.Held) _collectAs(stranger, s);
+            if (_status(s) == AssayEscrowStorage.HeldStatus.Held) _collectAs(stranger, s);
         }
         _assertSolvent();
         assertEq(escrow.totalHeld(), 0);
@@ -591,7 +595,7 @@ contract AssayEscrowHoldTest is Fixture {
     }
 
     function test_collectHeldBatch_collectsEveryItem() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         _redeem(100_000, 2);
         vm.warp(h.collectableAt);
         (address[] memory payers, uint64[] memory seqs) = _pair(1, 2);
@@ -604,7 +608,7 @@ contract AssayEscrowHoldTest is Fixture {
 
     /// Atomic, like `redeemVoucherBatch`: one bad item reverts every item.
     function test_collectHeldBatch_isAtomic() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         _redeem(100_000, 2);
         vm.warp(h.collectableAt);
         _refund(2);
@@ -617,12 +621,12 @@ contract AssayEscrowHoldTest is Fixture {
         vm.prank(redeemer);
         vm.expectRevert(HeldPaymentNotHeld.selector);
         escrow.collectHeldBatch(payers, seqs);
-        assertEq(uint8(_status(1)), uint8(AssayEscrow.HeldStatus.Held));
+        assertEq(uint8(_status(1)), uint8(AssayEscrowStorage.HeldStatus.Held));
         assertEq(usdg.balanceOf(provider), 0);
     }
 
     function test_collectHeldBatch_permissionlessOnlyAfterTheTimeout() public {
-        AssayEscrow.HeldPayment memory h = _redeem(250_000, 1);
+        AssayEscrowStorage.HeldPayment memory h = _redeem(250_000, 1);
         _redeem(100_000, 2);
         (address[] memory payers, uint64[] memory seqs) = _pair(1, 2);
         vm.warp(h.collectableAt);

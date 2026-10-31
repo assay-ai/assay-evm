@@ -7,6 +7,8 @@ import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {RedeemReentrantUSDG} from "./helpers/MockUSDG.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {Voucher, ParamSet} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -77,15 +79,15 @@ contract RedeemObserverUSDG {
         if (armed) {
             armed = false;
             observed = true;
-            AssayEscrow.Escrow memory e = AssayEscrow(escrow).escrowOf(observedBuyer);
+            AssayEscrowStorage.Escrow memory e = IAssayEscrow(escrow).escrowOf(observedBuyer);
             seenBalance = e.balance;
             seenSeqHigh = e.seqHigh;
             seenSpentInWindow = e.spentInWindow;
             seenWindowStartedAt = e.windowStartedAt;
             seenTotalRedeemed = e.totalRedeemed;
-            seenTotalEscrowed = AssayEscrow(escrow).totalEscrowed();
-            seenTotalHeld = AssayEscrow(escrow).totalHeld();
-            seenHeldStatus = uint8(AssayEscrow(escrow).held(observedBuyer, observedSeq).status);
+            seenTotalEscrowed = IAssayEscrow(escrow).totalEscrowed();
+            seenTotalHeld = IAssayEscrow(escrow).totalHeld();
+            seenHeldStatus = uint8(IAssayEscrow(escrow).held(observedBuyer, observedSeq).status);
         }
         return true;
     }
@@ -858,7 +860,7 @@ contract AssayEscrowRedeemTest is Fixture {
     /// what refuses it.
     function test_wrongState_aReentrantAssetCannotRecurseIntoCollectHeld() public {
         RedeemReentrantUSDG evil = new RedeemReentrantUSDG();
-        AssayEscrow e2 = _deployEscrow(address(evil));
+        IAssayEscrow e2 = _deployEscrow(address(evil));
 
         evil.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -886,7 +888,9 @@ contract AssayEscrowRedeemTest is Fixture {
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         e2.collectHeld(buyer, 1);
 
-        assertEq(uint8(e2.held(buyer, 1).status), uint8(AssayEscrow.HeldStatus.Held), "unwound");
+        assertEq(
+            uint8(e2.held(buyer, 1).status), uint8(AssayEscrowStorage.HeldStatus.Held), "unwound"
+        );
         assertEq(e2.totalHeld(), 250_000);
         assertEq(evil.balanceOf(provider), 0, "and nothing moved");
     }
@@ -898,7 +902,7 @@ contract AssayEscrowRedeemTest is Fixture {
     /// `totalHeld` lowered) are all in place when the provider payout runs.
     function test_everyEffectIsWrittenBeforeTheFirstTransfer() public {
         RedeemObserverUSDG obs = new RedeemObserverUSDG();
-        AssayEscrow e2 = _deployEscrow(address(obs));
+        IAssayEscrow e2 = _deployEscrow(address(obs));
 
         obs.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -930,7 +934,7 @@ contract AssayEscrowRedeemTest is Fixture {
         assertEq(obs.seenTotalHeld(), 0, "totalHeld not yet lowered at payout time");
         assertEq(
             obs.seenHeldStatus(),
-            uint8(AssayEscrow.HeldStatus.Collected),
+            uint8(AssayEscrowStorage.HeldStatus.Collected),
             "the record not yet Collected at payout time"
         );
 
@@ -1129,7 +1133,12 @@ contract AssayEscrowRedeemTest is Fixture {
     /// the voucher's own digest, that the payer comparison is its first test, and that nothing else
     /// in the file raises the refusal. The behaviour is `test/AssayEscrow.delegate.t.sol`'s.
     function test_theSignatureComparisonIsUnconditionalInTheSource() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
+        // The per-call door lives in the extension (D-29); both halves are read so a copy in the
+        // core counts too.
+        string memory src = string.concat(
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol")),
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowExtension.sol"))
+        );
 
         assertEq(
             _count(

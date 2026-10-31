@@ -51,7 +51,7 @@ contract NoTokenDoorsTest is Test {
         "selfdestruct"
     ];
 
-    function _sites() internal pure returns (Site[9] memory s) {
+    function _sites() internal pure returns (Site[11] memory s) {
         // buyer money: the measured-delta pull, the buyer's own exit, a held voucher's two payouts
         // (redeem into hold: `_redeem` itself moves no token)
         s[0] = Site(
@@ -90,12 +90,33 @@ contract NoTokenDoorsTest is Test {
             "_transfer",
             "ok := call(gasLimit, asset, 0, add(data, 0x20), mload(data), 0, 0x20)"
         );
+        // the core/extension split (D-29): the escrow's `fallback` runs the extension's code in
+        // the escrow's own storage. The target is the `EXTENSION` immutable the constructor
+        // created, never an address from calldata or storage; the extension itself has no line
+        // in this list, so it moves no token.
+        s[9] = Site(
+            "AssayEscrow", "fallback", "let ok := delegatecall(gas(), ext, p, calldatasize(), 0, 0)"
+        );
+        // G2: the channel door's one-word reads of `Config.blocked` and `Stake.freeBondedOf`.
+        // A STATICCALL, so it can change no state anywhere; pinned because the tripwire matches
+        // every call spelled in assembly.
+        s[10] = Site(
+            "libraries/ChannelDoor",
+            "_staticWord",
+            "let ok := staticcall(gas(), target, 0x00, 0x24, 0x00, 0x20)"
+        );
     }
 
     function test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes() public view {
-        string[4] memory files =
-            ["AssayEscrow", "AssayStake", "AssayConfig", "libraries/ChannelDoor"];
-        Site[9] memory pinned = _sites();
+        string[6] memory files = [
+            "AssayEscrow",
+            "AssayEscrowExtension",
+            "AssayEscrowStorage",
+            "AssayStake",
+            "AssayConfig",
+            "libraries/ChannelDoor"
+        ];
+        Site[11] memory pinned = _sites();
         uint256 matched;
 
         for (uint256 f = 0; f < files.length; f++) {
@@ -137,12 +158,17 @@ contract NoTokenDoorsTest is Test {
     /// transfer itself is OpenZeppelin's `Ownable2Step`, which holds no token handle.
     function test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment() public view {
         string memory escrow = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
+        string memory escrowRest = string.concat(
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowExtension.sol")),
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowStorage.sol"))
+        );
         string memory stake = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayStake.sol"));
         string memory config = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayConfig.sol"));
 
         string memory door = "        if (msg.sender != CONFIG.owner()) revert NotOwner();\n";
         assertEq(_codeCount(escrow, "owner()"), 1, "the escrow reads the owner outside its upgrade");
         assertEq(_count(escrow, door), 1, "the escrow's upgrade door is not the pinned one");
+        assertEq(_codeCount(escrowRest, "owner()"), 0, "the escrow's other half reads the owner");
         assertEq(_codeCount(stake, "owner()"), 1, "the stake reads the owner outside its upgrade");
         assertEq(_count(stake, door), 1, "the stake's upgrade door is not the pinned one");
 
@@ -187,9 +213,18 @@ contract NoTokenDoorsTest is Test {
         return (true, string(out));
     }
 
-    /// `name` for a line that starts `function name(`, else "".
+    /// `name` for a line that starts `function name(`, `fallback` for one that starts
+    /// `fallback(`, else "".
     function _functionName(string memory line) internal pure returns (string memory) {
         bytes memory l = bytes(line);
+        bytes memory fb = bytes("fallback(");
+        if (l.length >= fb.length) {
+            bool isFallback = true;
+            for (uint256 i = 0; i < fb.length; i++) {
+                if (l[i] != fb[i]) isFallback = false;
+            }
+            if (isFallback) return "fallback";
+        }
         bytes memory kw = bytes("function ");
         if (l.length <= kw.length) return "";
         for (uint256 i = 0; i < kw.length; i++) {

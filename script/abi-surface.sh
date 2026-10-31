@@ -31,9 +31,23 @@
 
 # "<selector> <signature>" per line, sorted by signature. jq's sort is byte-wise on the key, so
 # the order is a property of the surface and not of the order solc happened to emit it in.
+#
+# `AssayEscrow` answers through its `fallback` with `AssayEscrowExtension` as well (D-29), so its
+# surface is the UNION of the two: a function added to the extension is a new door on the proxy
+# exactly as one added to the core is. The getters both inherit from the storage base appear
+# once.
+methods_json() {
+  if [ "$1" = "AssayEscrow" ]; then
+    jq -s '.[0] + .[1]' \
+      <("${FORGE:-forge}" inspect AssayEscrowExtension methodIdentifiers --json) \
+      <("${FORGE:-forge}" inspect AssayEscrow methodIdentifiers --json)
+  else
+    "${FORGE:-forge}" inspect "$1" methodIdentifiers --json
+  fi
+}
+
 abi_lines() {
-  "${FORGE:-forge}" inspect "$1" methodIdentifiers --json \
-    | jq -r 'to_entries|sort_by(.key)|.[]|"\(.value) \(.key)"'
+  methods_json "$1" | jq -r 'to_entries|sort_by(.key)|.[]|"\(.value) \(.key)"'
 }
 
 abi_hash() {
@@ -42,6 +56,6 @@ abi_hash() {
 
 # The same list, indented as JSON array entries for the deployment record.
 abi_json_entries() {
-  "${FORGE:-forge}" inspect "$1" methodIdentifiers --json \
+  methods_json "$1" \
     | jq -r 'to_entries|sort_by(.key)|map("        \"\(.value) \(.key)\"")|join(",\n")'
 }

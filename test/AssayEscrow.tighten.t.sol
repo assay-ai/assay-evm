@@ -5,6 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
 import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -139,7 +140,7 @@ contract AssayEscrowTightenTest is Fixture {
         vm.warp(_now() + 1_000);
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _now() + 30 days);
-        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrowStorage.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertFalse(d.revoked);
         assertEq(d.listPosition, 1);
         Voucher memory b = _v(100_000, 2);
@@ -399,7 +400,7 @@ contract AssayEscrowTightenTest is Fixture {
         Voucher memory signedBefore = _v(D_PER_CALL, 1);
         bytes memory sig = _byDelegate(signedBefore);
         vm.expectEmit(address(escrow));
-        emit AssayEscrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, oldEnd);
+        emit AssayEscrowStorage.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, oldEnd);
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, 1, 1, _now() + 30 days);
 
@@ -451,13 +452,15 @@ contract AssayEscrowTightenTest is Fixture {
     /// lowering that holds nothing emit none. The topic is pinned for the backend ABI.
     function test_f6_everyHoldEmitsCapsHeld() public {
         assertEq(
-            AssayEscrow.CapsHeld.selector,
+            AssayEscrowStorage.CapsHeld.selector,
             keccak256("CapsHeld(address,address,uint64,uint64,uint64)"),
             "CapsHeld topic"
         );
         uint64 t = _now();
         vm.expectEmit(address(escrow));
-        emit AssayEscrow.CapsHeld(buyer, address(0), ESCROW_PER_CALL, ESCROW_PER_WINDOW, t + DELAY);
+        emit AssayEscrowStorage.CapsHeld(
+            buyer, address(0), ESCROW_PER_CALL, ESCROW_PER_WINDOW, t + DELAY
+        );
         vm.prank(buyer);
         escrow.setLimits(1, 1);
 
@@ -468,7 +471,7 @@ contract AssayEscrowTightenTest is Fixture {
 
         vm.warp(t + 10);
         vm.expectEmit(address(escrow));
-        emit AssayEscrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, t + 10 + DELAY);
+        emit AssayEscrowStorage.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, t + 10 + DELAY);
         vm.prank(buyer);
         escrow.revokeDelegate(delegate);
     }
@@ -480,14 +483,14 @@ contract AssayEscrowTightenTest is Fixture {
     function test_n6_aSecondLoweringWhileAHoldRunsMergesThePairsAndRestartsTheHour() public {
         uint64 t1 = _now();
         vm.expectEmit(address(escrow));
-        emit AssayEscrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, t1 + DELAY);
+        emit AssayEscrowStorage.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, t1 + DELAY);
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, 600_000, 600_000, _now() + 30 days);
 
         vm.warp(t1 + 1_000);
         uint64 t2 = _now();
         vm.expectEmit(address(escrow));
-        emit AssayEscrow.CapsHeld(buyer, delegate, 600_000, D_PER_WINDOW, t2 + DELAY);
+        emit AssayEscrowStorage.CapsHeld(buyer, delegate, 600_000, D_PER_WINDOW, t2 + DELAY);
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, 1, 1, _now() + 30 days);
 
@@ -527,7 +530,7 @@ contract AssayEscrowTightenTest is Fixture {
         bytes memory sig = _byDelegate(v);
         assertLt(end, _now() + DELAY, "the grant ends inside the grace");
         vm.expectEmit(address(escrow));
-        emit AssayEscrow.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, end);
+        emit AssayEscrowStorage.CapsHeld(buyer, delegate, D_PER_CALL, D_PER_WINDOW, end);
         vm.prank(buyer);
         escrow.revokeDelegate(delegate);
 
@@ -547,7 +550,7 @@ contract AssayEscrowTightenTest is Fixture {
     }
 
     function _capsHeldLogs() internal returns (uint256 n) {
-        bytes32 topic = AssayEscrow.CapsHeld.selector;
+        bytes32 topic = AssayEscrowStorage.CapsHeld.selector;
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length > 0 && logs[i].topics[0] == topic) n++;

@@ -4,7 +4,7 @@ pragma solidity 0.8.38;
 import {IAssayConfig} from "../interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../interfaces/IAssayStakeView.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {AssayEscrow} from "../AssayEscrow.sol";
+import {AssayEscrowStorage} from "../AssayEscrowStorage.sol";
 import {Sig} from "./Sig.sol";
 import {Window} from "./Window.sol";
 import {Constants} from "../Constants.sol";
@@ -117,6 +117,11 @@ library ChannelDoor {
         uint24 maturityHour,
         uint16 takeRateBps
     );
+    /// @notice Emitted when a settlement moved a bucket's maturity later (`_fold`): the bucket
+    ///         named `fromHour << 16 | takeRateBps` is now named `toHour << 16 | takeRateBps`.
+    event ChannelBucketDeferred(
+        bytes32 indexed key, uint24 fromHour, uint24 toHour, uint16 takeRateBps
+    );
     /// @notice Emitted for a settle item that changed nothing. `key` is zero when the signer
     ///         was not recovered yet.
     event ChannelSettleSkipped(
@@ -138,12 +143,15 @@ library ChannelDoor {
     event ChannelRefundSkipped(bytes32 indexed key, uint40 bucket, uint64 amount, uint8 reason);
 
     /// @dev One read of every external parameter a door needs. Reverts while paused, so every
-    ///      door that builds a context is pause-gated.
-    function _ctx(IAssayConfig config, IAssayStakeView stake, IERC20 asset, bytes32 ds)
-        private
-        view
-        returns (Ctx memory x, address redeemer)
-    {
+    ///      door that builds a context is pause-gated. `withHold` is false for collect, which
+    ///      never reads the hold (`x.hold` is then zero).
+    function _ctx(
+        IAssayConfig config,
+        IAssayStakeView stake,
+        IERC20 asset,
+        bytes32 ds,
+        bool withHold
+    ) private view returns (Ctx memory x, address redeemer) {
         if (config.paused()) revert ProgramPaused();
         ParamSet memory p = config.params();
         x = Ctx({
@@ -153,7 +161,7 @@ library ChannelDoor {
             domainSeparator: ds,
             minimumStake: p.minimumStake,
             takeRateBps: p.takeRateBps,
-            hold: config.collectHoldSeconds(),
+            hold: withHold ? config.collectHoldSeconds() : 0,
             treasury: p.treasury
         });
         redeemer = p.redeemer;
@@ -239,7 +247,7 @@ library ChannelDoor {
         for (uint256 i = 0; i < c.n; ++i) {
             if (c.addr[i] == a) return c.blocked[i];
         }
-        bool b = config.blocked(a);
+        bool b = _blockedOf(config, a);
         c.addr[c.n] = a;
         c.blocked[c.n] = b;
         ++c.n;
@@ -254,11 +262,49 @@ library ChannelDoor {
         for (uint256 i = 0; i < c.pn; ++i) {
             if (c.prov[i] == provider) return c.staked[i];
         }
-        bool ok = x.stake.freeBondedOf(provider) >= x.minimumStake;
+        bool ok = _freeBondedOf(x.stake, provider) >= x.minimumStake;
         c.prov[c.pn] = provider;
         c.staked[c.pn] = ok;
         ++c.pn;
         return ok;
+    }
+
+    /// @dev `config.blocked(a)` without the ABI encoder's memory allocation per lookup (the
+    ///      blocklist is read up to three times per settle item). Same outcomes as the
+    ///      high-level call: a revert is bubbled verbatim; a target without code, short return
+    ///      data or a word that is not a bool reverts empty.
+    function _blockedOf(IAssayConfig config, address a) private view returns (bool b) {
+        bytes4 sel = IAssayConfig.blocked.selector;
+        uint256 w = _staticWord(address(config), sel, a);
+        if (w > 1) revert();
+        b = w == 1;
+    }
+
+    /// @dev `stake.freeBondedOf(provider)`, as `_blockedOf`; a word above `uint64` reverts empty.
+    function _freeBondedOf(IAssayStakeView stake, address provider) private view returns (uint64) {
+        uint256 w = _staticWord(address(stake), IAssayStakeView.freeBondedOf.selector, provider);
+        if (w > type(uint64).max) revert();
+        return uint64(w);
+    }
+
+    /// @dev STATICCALLs `target.sel(arg)` and returns the first return word, in scratch space.
+    function _staticWord(address target, bytes4 sel, address arg)
+        private
+        view
+        returns (uint256 w)
+    {
+        assembly ("memory-safe") {
+            mstore(0x00, sel)
+            mstore(0x04, and(arg, 0xffffffffffffffffffffffffffffffffffffffff))
+            let ok := staticcall(gas(), target, 0x00, 0x24, 0x00, 0x20)
+            if iszero(ok) {
+                let p := mload(0x40)
+                returndatacopy(p, 0, returndatasize())
+                revert(p, returndatasize())
+            }
+            if lt(returndatasize(), 0x20) { revert(0, 0) }
+            w := mload(0x00)
+        }
     }
 
     // --- caps (same semantics as `AssayEscrow._redeem` with `_heldRefusal`) ---------------
@@ -269,7 +315,7 @@ library ChannelDoor {
     function _caps(
         uint64 curV,
         uint64 curW,
-        AssayEscrow.PriorCaps storage held,
+        AssayEscrowStorage.PriorCaps storage held,
         uint256 charge,
         uint256 dCalls,
         uint256 spent,
@@ -283,8 +329,8 @@ library ChannelDoor {
     }
 
     function _canSign(
-        AssayEscrow.Delegation storage d,
-        AssayEscrow.PriorCaps storage prior,
+        AssayEscrowStorage.Delegation storage d,
+        AssayEscrowStorage.PriorCaps storage prior,
         uint256 nowTs
     ) private view returns (bool) {
         if (d.validUntil == 0 || nowTs > d.validUntil) return false;
@@ -310,10 +356,11 @@ library ChannelDoor {
     /// @dev `msg.sender` is the escrow's caller (DELEGATECALL keeps it).
     function settle(
         Store storage s,
-        mapping(address => AssayEscrow.Escrow) storage escrows,
-        mapping(address => mapping(address => AssayEscrow.Delegation)) storage delegations,
-        mapping(address => AssayEscrow.PriorCaps) storage priorEscrowCaps,
-        mapping(address => mapping(address => AssayEscrow.PriorCaps)) storage priorDelegateCaps,
+        mapping(address => AssayEscrowStorage.Escrow) storage escrows,
+        mapping(address => mapping(address => AssayEscrowStorage.Delegation)) storage delegations,
+        mapping(address => AssayEscrowStorage.PriorCaps) storage priorEscrowCaps,
+        mapping(address => mapping(address => AssayEscrowStorage.PriorCaps)) storage
+            priorDelegateCaps,
         IAssayConfig config,
         IAssayStakeView stake,
         bytes32 domainSeparator,
@@ -322,7 +369,8 @@ library ChannelDoor {
         uint64[] calldata fromSettled,
         uint64[] calldata charges
     ) external returns (uint256 total) {
-        (Ctx memory x, address redeemer) = _ctx(config, stake, IERC20(address(0)), domainSeparator);
+        (Ctx memory x, address redeemer) =
+            _ctx(config, stake, IERC20(address(0)), domainSeparator, true);
         if (msg.sender != redeemer) revert NotRedeemer();
         // One 65-byte signature per voucher, concatenated.
         if (sigs.length != vs.length * 65) revert BatchLengthMismatch();
@@ -353,10 +401,11 @@ library ChannelDoor {
 
     function _settleOne(
         Store storage s,
-        mapping(address => AssayEscrow.Escrow) storage escrows,
-        mapping(address => mapping(address => AssayEscrow.Delegation)) storage delegations,
-        mapping(address => AssayEscrow.PriorCaps) storage priorEscrowCaps,
-        mapping(address => mapping(address => AssayEscrow.PriorCaps)) storage priorDelegateCaps,
+        mapping(address => AssayEscrowStorage.Escrow) storage escrows,
+        mapping(address => mapping(address => AssayEscrowStorage.Delegation)) storage delegations,
+        mapping(address => AssayEscrowStorage.PriorCaps) storage priorEscrowCaps,
+        mapping(address => mapping(address => AssayEscrowStorage.PriorCaps)) storage
+            priorDelegateCaps,
         Ctx memory x,
         Cache memory c,
         uint256 i,
@@ -421,7 +470,8 @@ library ChannelDoor {
                 _skip(i, v, it.key, why);
                 return 0;
             }
-            // Bucket: the one already holding (maturity, rate), else an empty one; never merge.
+            // Bucket: the one already holding (maturity, rate), else an empty one, else the
+            // newest bucket of this rate with its maturity moved later (`_fold`).
             it.m = (nowTs + x.hold + GRID - 1) / GRID;
             uint256 r = x.takeRateBps;
             if (sl.h1 != 0 && sl.m1 == it.m && sl.r1 == r) {
@@ -436,7 +486,7 @@ library ChannelDoor {
             } else if (sl.h2 == 0) {
                 if (it.charge > MAX_BUCKET) return _noBucket(i, v, it);
                 (sl.h2, sl.m2, sl.r2) = (it.charge, it.m, r);
-            } else {
+            } else if (!_fold(sl, it, r)) {
                 return _noBucket(i, v, it);
             }
             _debit(escrows, delegations, v.payer, it, nowTs);
@@ -461,6 +511,30 @@ library ChannelDoor {
         return it.charge;
     }
 
+    /// @dev Both buckets hold money of other (maturity, rate) pairs. Adds the charge to the
+    ///      newest bucket of the same rate and moves that bucket's maturity to the later of its
+    ///      own and the charge's, so no money matures earlier than its own hold and every older
+    ///      amount in it is only held longer (its refund window moves with it). Without this a
+    ///      matured bucket left uncollected, or a hold above one hour, refused every settlement
+    ///      into a new hour until the newest voucher expired unsettled. False (the item skips
+    ///      `NoBucket`) when neither bucket has this rate or the bucket would overflow. The two
+    ///      buckets stay distinct (I11): the chosen one is the newest of its rate, so its new
+    ///      maturity is above the other's whenever the rates match. On `it.m` it leaves the
+    ///      maturity the charge landed in.
+    function _fold(Slot memory sl, Item memory it, uint256 r) private returns (bool) {
+        bool one = sl.r1 == r && (sl.r2 != r || sl.m1 >= sl.m2);
+        if (!one && sl.r2 != r) return false;
+        uint256 h = one ? sl.h1 : sl.h2;
+        if (h + it.charge > MAX_BUCKET) return false;
+        uint256 mOld = one ? sl.m1 : sl.m2;
+        uint256 mNew = mOld > it.m ? mOld : it.m;
+        if (one) (sl.h1, sl.m1) = (h + it.charge, mNew);
+        else (sl.h2, sl.m2) = (h + it.charge, mNew);
+        if (mNew != mOld) emit ChannelBucketDeferred(it.key, uint24(mOld), uint24(mNew), uint16(r));
+        it.m = mNew;
+        return true;
+    }
+
     function _noBucket(uint256 i, ChannelVoucher calldata v, Item memory it)
         private
         returns (uint256)
@@ -472,10 +546,11 @@ library ChannelDoor {
     /// @dev Every gate on a positive charge, in the spec's order: `(true, _)` passes, else the
     ///      first refusal.
     function _gate(
-        mapping(address => AssayEscrow.Escrow) storage escrows,
-        mapping(address => mapping(address => AssayEscrow.Delegation)) storage delegations,
-        mapping(address => AssayEscrow.PriorCaps) storage priorEscrowCaps,
-        mapping(address => mapping(address => AssayEscrow.PriorCaps)) storage priorDelegateCaps,
+        mapping(address => AssayEscrowStorage.Escrow) storage escrows,
+        mapping(address => mapping(address => AssayEscrowStorage.Delegation)) storage delegations,
+        mapping(address => AssayEscrowStorage.PriorCaps) storage priorEscrowCaps,
+        mapping(address => mapping(address => AssayEscrowStorage.PriorCaps)) storage
+            priorDelegateCaps,
         Ctx memory x,
         Cache memory c,
         ChannelVoucher calldata v,
@@ -487,7 +562,7 @@ library ChannelDoor {
                 || (it.delegate != address(0) && _isBlocked(c, x.config, it.delegate))
         ) return (false, SettleSkip.Blocked);
 
-        AssayEscrow.Escrow storage e = escrows[v.payer];
+        AssayEscrowStorage.Escrow storage e = escrows[v.payer];
         it.spent =
             uint256(Window.decay(e.spentInWindow, e.windowStartedAt, uint64(nowTs))) + it.charge;
         uint256 why = _caps(
@@ -503,7 +578,7 @@ library ChannelDoor {
         if (why == 2) return (false, SettleSkip.EscrowWindow);
 
         if (it.delegate != address(0)) {
-            AssayEscrow.Delegation storage d = delegations[v.payer][it.delegate];
+            AssayEscrowStorage.Delegation storage d = delegations[v.payer][it.delegate];
             it.dSpent =
                 uint256(Window.decay(d.spentInWindow, d.windowStartedAt, uint64(nowTs))) + it.charge;
             why = _caps(
@@ -526,13 +601,13 @@ library ChannelDoor {
 
     /// @dev The escrow side of a positive charge, as `_redeem` does it.
     function _debit(
-        mapping(address => AssayEscrow.Escrow) storage escrows,
-        mapping(address => mapping(address => AssayEscrow.Delegation)) storage delegations,
+        mapping(address => AssayEscrowStorage.Escrow) storage escrows,
+        mapping(address => mapping(address => AssayEscrowStorage.Delegation)) storage delegations,
         address payer,
         Item memory it,
         uint256 nowTs
     ) private {
-        AssayEscrow.Escrow storage e = escrows[payer];
+        AssayEscrowStorage.Escrow storage e = escrows[payer];
         uint64 n64 = uint64(nowTs);
         // `spent` passed a uint64 cap, so the narrowing cannot truncate.
         e.balance -= uint128(it.charge);
@@ -540,7 +615,7 @@ library ChannelDoor {
         e.windowStartedAt = n64 > e.windowStartedAt ? n64 : e.windowStartedAt;
         e.totalRedeemed += uint128(it.charge);
         if (it.delegate != address(0)) {
-            AssayEscrow.Delegation storage d = delegations[payer][it.delegate];
+            AssayEscrowStorage.Delegation storage d = delegations[payer][it.delegate];
             d.spentInWindow = uint64(it.dSpent);
             d.windowStartedAt = n64 > d.windowStartedAt ? n64 : d.windowStartedAt;
         }
@@ -568,7 +643,8 @@ library ChannelDoor {
         ChannelRef[] calldata refs,
         uint64[] calldata keepHeld
     ) external {
-        (Ctx memory x, address redeemer) = _ctx(config, IAssayStakeView(address(0)), asset, 0);
+        (Ctx memory x, address redeemer) =
+            _ctx(config, IAssayStakeView(address(0)), asset, 0, false);
         _shape(refs.length, keepHeld.length, keepHeld.length);
         bool byRedeemer = msg.sender == redeemer;
         Payout memory out;
@@ -696,7 +772,7 @@ library ChannelDoor {
     ///         two buckets of one channel never share both (I11). Returns the total.
     function refund(
         Store storage s,
-        mapping(address => AssayEscrow.Escrow) storage escrows,
+        mapping(address => AssayEscrowStorage.Escrow) storage escrows,
         IAssayConfig config,
         ChannelRef[] calldata refs,
         uint40[] calldata buckets,
@@ -714,7 +790,7 @@ library ChannelDoor {
 
     function _refundOne(
         Store storage s,
-        mapping(address => AssayEscrow.Escrow) storage escrows,
+        mapping(address => AssayEscrowStorage.Escrow) storage escrows,
         ChannelRef calldata ref,
         uint256 bucket,
         uint256 amount,
@@ -753,7 +829,7 @@ library ChannelDoor {
             if (sl.h2 == 0) (sl.m2, sl.r2) = (0, 0);
         }
         s.state[key] = pack(sl);
-        AssayEscrow.Escrow storage e = escrows[ref.payer];
+        AssayEscrowStorage.Escrow storage e = escrows[ref.payer];
         e.balance += uint128(amount);
         e.totalRedeemed -= uint128(amount);
         emit ChannelRefunded(key, ref.payer, uint40(bucket), uint64(amount));

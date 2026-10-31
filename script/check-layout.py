@@ -35,6 +35,20 @@ import sys
 
 GAP = "__gap"
 
+# Struct and enum declarations that MOVED to another contract without changing shape. A type's
+# label names the contract that declares it, so moving the declaration renames every label that
+# mentions it while the storage stays byte-identical. Each entry is a deliberate, reviewed move;
+# the old label is read as the new one, and every member, slot, offset, member type and size is
+# still compared, so a move that also changed the shape is refused like any other change.
+#   D-29: the escrow's state and types moved into the shared storage base its extension inherits.
+RENAMED_TYPES = {
+    "struct AssayEscrow.Escrow": "struct AssayEscrowStorage.Escrow",
+    "struct AssayEscrow.Delegation": "struct AssayEscrowStorage.Delegation",
+    "struct AssayEscrow.PriorCaps": "struct AssayEscrowStorage.PriorCaps",
+    "struct AssayEscrow.HeldPayment": "struct AssayEscrowStorage.HeldPayment",
+    "enum AssayEscrow.HeldStatus": "enum AssayEscrowStorage.HeldStatus",
+}
+
 IDENTICAL = 0
 REFUSED = 1
 APPENDED = 2
@@ -46,7 +60,10 @@ def entries(doc):
 
 
 def tlabel(doc, key):
-    return doc["types"][key]["label"]
+    label = doc["types"][key]["label"]
+    for old, new in RENAMED_TYPES.items():
+        label = label.replace(old, new)
+    return label
 
 
 def tbytes(doc, key):

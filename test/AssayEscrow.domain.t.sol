@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {Voucher712} from "../src/libraries/Voucher712.sol";
 import {Sig} from "../src/libraries/Sig.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -51,7 +52,7 @@ contract Voucher712Harness {
 /// does. `AssayEscrow.recoverVoucherSigner` was removed in D-18 (nothing called it); this harness
 /// keeps the recovery properties below testable without moving money.
 contract VoucherRecoverer {
-    function recoverVoucherSigner(AssayEscrow e, Voucher calldata v, bytes calldata sig)
+    function recoverVoucherSigner(IAssayEscrow e, Voucher calldata v, bytes calldata sig)
         external
         view
         returns (address)
@@ -551,7 +552,7 @@ contract AssayEscrowDomainTest is Fixture {
     /// CROSS-CONTRACT REPLAY. Two deployments, one chain. A second PROXY — which is what a
     /// redeploy is (D-7); an upgrade would reuse this one and is proved in `Upgrade.t.sol`.
     function test_aVoucherSignedForOneDeploymentDoesNotVerifyOnAnother() public {
-        AssayEscrow other = _deployEscrow(address(usdg));
+        IAssayEscrow other = _deployEscrow(address(usdg));
         assertTrue(other.DOMAIN_SEPARATOR() != escrow.DOMAIN_SEPARATOR());
 
         Voucher memory v = _voucher();

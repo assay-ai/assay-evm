@@ -6,6 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AssayConfig} from "../../src/AssayConfig.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {AssayStake} from "../../src/AssayStake.sol";
 import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
@@ -29,7 +31,7 @@ import {StepCounter} from "./StepCounter.sol";
 contract EscrowHandler is Test, StepCounter {
     MockUSDG public usdg;
     AssayConfig public config;
-    AssayEscrow public escrow;
+    IAssayEscrow public escrow;
     AssayStake public stake;
 
     address internal constant ADMIN = address(0xADAA);
@@ -94,7 +96,7 @@ contract EscrowHandler is Test, StepCounter {
                 )
             )
         );
-        escrow = AssayEscrow(
+        escrow = IAssayEscrow(
             address(
                 new ERC1967Proxy(
                     address(new AssayEscrow()),
@@ -131,8 +133,8 @@ contract EscrowHandler is Test, StepCounter {
     /// `totalHeld`'s identity.
     function sumOfHeld() external view returns (uint128 total) {
         for (uint256 k = 0; k < heldSeq.length; k++) {
-            AssayEscrow.HeldPayment memory h = escrow.held(actors[heldActor[k]], heldSeq[k]);
-            if (h.status == AssayEscrow.HeldStatus.Held) total += h.amount;
+            AssayEscrowStorage.HeldPayment memory h = escrow.held(actors[heldActor[k]], heldSeq[k]);
+            if (h.status == AssayEscrowStorage.HeldStatus.Held) total += h.amount;
         }
     }
 
@@ -193,7 +195,7 @@ contract EscrowHandler is Test, StepCounter {
     function redeem(uint256 actorSeed, uint64 seqDelta, uint64 amount) external step {
         uint256 i = _actor(actorSeed);
         address a = actors[i];
-        AssayEscrow.Escrow memory e = escrow.escrowOf(a);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(a);
 
         // Bias hard toward a redeem that CAN land: at or below the balance, at or below both
         // ceilings. The fuzzer still reaches the refusals through `seqDelta == 0` and through

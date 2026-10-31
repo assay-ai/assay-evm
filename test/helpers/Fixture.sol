@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {AssayConfig} from "../../src/AssayConfig.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {AssayStake} from "../../src/AssayStake.sol";
 import {IAssayConfig} from "../../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../../src/interfaces/IAssayStakeView.sol";
@@ -36,7 +37,7 @@ abstract contract Fixture is Test {
     address internal constant RH_TESTNET_USDG = 0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec;
     uint256 internal constant RH_TESTNET_CHAIN_ID = 46630;
     AssayConfig internal config;
-    AssayEscrow internal escrow;
+    IAssayEscrow internal escrow;
     AssayStake internal stake;
     IAssayStakeView internal stakeView;
 
@@ -156,8 +157,8 @@ abstract contract Fixture is Test {
     /// calls an implementation directly and accidentally proves something about a contract nobody
     /// deploys; the tests that need an asset that is not `usdg` (the re-entrancy prover, the
     /// decimals check) do not reach for a bare implementation to get one.
-    function _deployEscrow(address asset_) internal returns (AssayEscrow) {
-        return AssayEscrow(
+    function _deployEscrow(address asset_) internal returns (IAssayEscrow) {
+        return IAssayEscrow(
             address(
                 new ERC1967Proxy(
                     address(escrowImpl),
@@ -177,7 +178,7 @@ abstract contract Fixture is Test {
     /// optimiser may re-read TIMESTAMP after the `vm.warp`, and the warp back would then restore
     /// the warped time.
 
-    function _collect(AssayEscrow escrow_, address payer, uint64 seq) internal {
+    function _collect(IAssayEscrow escrow_, address payer, uint64 seq) internal {
         uint256 back = vm.getBlockTimestamp();
         uint64 at = escrow_.held(payer, seq).collectableAt;
         if (back < at) vm.warp(at);

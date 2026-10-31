@@ -356,31 +356,41 @@ calls of $0.10 per settlement.
 
 | Channels in the tx | Settle, recurring (per channel) | Settle, new channel (per channel) | Collect (per channel) |
 |---|---|---|---|
-| 1 | 152,603 | 171,620 | 133,763 |
-| 3 | 93,250 | 110,938 | 57,421 |
-| 7 | 79,611 | 96,531 | 39,077 |
-| 14 | 57,445 | 74,608 | 27,391 |
-| 28 | 46,589 | 63,683 | 21,718 |
-| 64 | 40,544 | 57,590 | 18,541 |
+| 1 | 151,422 | 170,439 | 129,334 |
+| 3 | 92,497 | 110,165 | 55,755 |
+| 7 | 78,863 | 95,790 | 38,159 |
+| 14 | 57,075 | 74,231 | 26,931 |
+| 28 | 46,410 | 63,496 | 21,488 |
+| 64 | 40,454 | 57,504 | 18,440 |
 
-**Refund of one item:** 79,472.
+**Refund of one item:** 79,295.
+
+Re-measured after the core/extension split (D-29) with G1 (collect no longer reads
+`collectHoldSeconds`) and G2 (the blocklist and stake reads without the ABI encoder): settle
+−0.2% to −1%, collect −0.5% to −3.3% against the first D-28 measurement (152,603 / 79,611 /
+40,544 settle and 133,763 / 39,077 / 18,541 collect at 1 / 7 / 64 channels; refund 79,472). The
+channel doors stay in the core, so the split adds no hop to them.
 
 **Cost model** (per settle tx): ≈ 85k + 67.5k per payer's first channel + 35.8k per further
 channel of that payer + 17k per channel opened. Collect tx ≈ 160k + 16k per channel from about
 7 channels up (it fits the table within 2% from 7 to 64; one channel alone is 134k).
 
 **Against the spec's targets.** The per-call target (≤ 20k gas per paid call) is met. The
-per-channel targets at 7 channels per transaction are **missed**: settle is 79.6k against
-≤ 45k, and settle plus its share of collect is 118.7k against ≤ 70k. They are met only from
+per-channel targets at 7 channels per transaction are **missed**: settle is 78.9k against
+≤ 45k, and settle plus its share of collect is 117.0k against ≤ 70k. They are met only from
 about 64 channels per transaction (40.6k and 59.1k). The per-call figure is what the
 production traffic sees, because settlement batches every pending channel at once.
 
-**The per-call door after the upgrade** is within +0.2% of before: redeem batch 64 at 85,615
-against 85,444 per item, collect batch 64 at 30,599 against 30,599.
+**The per-call door after the upgrade.** `redeemVoucher(Batch)` is answered by the extension
+through the core's `fallback` (D-29), one extra DELEGATECALL per transaction: redeem batch 64
+at 85,762 per item against 85,445 before (+0.4%), batch 1 at 186,956 against 183,531 (+1.9%,
+the hop's ≈3.2k paid once). Collect is in the core and unchanged: batch 64 at 30,596 against
+30,599.
 
 **Per paid call** (replaying the production log of 874 calls on this cost model, with
 settlement when the oldest pending call is 30 minutes old, every pending channel joining, and a
-separate hourly collect): about 16.8k gas, against about 121k for the per-call door with full
+separate hourly collect): about 16.8k gas with the first D-28 build, about 16.6k after D-29 and
+G1/G2 (scaled by the measured settle and collect changes), against about 121k for the per-call door with full
 batches and about 196k on 2026-10-30's real receipts. At 15 minutes about 22k, at 60 minutes
 about 13k.
 
@@ -393,11 +403,13 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
 | `AssayConfig` | 7,405 | 30.1% | 7,636 |
-| `AssayEscrow` | 22,963 | 93.4% | 24,396 |
+| `AssayEscrow` (core) | 13,834 | 56.3% | 29,689 |
+| `AssayEscrowExtension` | 14,250 | 58.0% | 14,337 |
 | `AssayStake` | 13,759 | 56.0% | 15,192 |
-| `ChannelDoor` (library) | 11,915 | 48.5% | 11,947 |
+| `ChannelDoor` (library) | 12,042 | 49.0% | 12,074 |
 
-Measured 2026-10-31 with the channel door (D-28; AssayEscrow was 20,312 before it). First measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
+Measured 2026-10-31 after the core/extension split (D-29). The escrow was 20,312 before the
+channel door and 22,963 with it in one contract; its creation code now carries the extension's. First measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
 (`docs/ci-gates.md` §4 has the history). For D-19 (the dispute upgrade, on the earlier compiler) the figures
 were AssayConfig 7,466, AssayEscrow 17,228 and AssayStake 14,791.
 
@@ -406,6 +418,6 @@ leaving room for an auditor's remediation round and for the append a
 future upgrade adds. If a contract ever goes over it, **the gate does not move** — the contract
 splits, and the reason is recorded in the pull request that does it.
 
-The creation column is information only. EIP-3860 bounds initcode at 49,152 bytes and nothing here
-is within a factor of three of it. The two columns differ by 1,433 bytes on both money contracts:
+The creation column is information only, except for the escrow: EIP-3860 bounds initcode at
+49,152 bytes, and the escrow's (29,689) carries its extension's, so `check-sizes.sh` gates it. The two columns differ by 1,433 bytes on both money contracts:
 constructor code plus the EIP-712 ShortString immutables, which are returned as part of neither.

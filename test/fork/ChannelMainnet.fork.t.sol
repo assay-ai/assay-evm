@@ -5,6 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {AssayConfig} from "../../src/AssayConfig.sol";
 import {ChannelDoor} from "../../src/libraries/ChannelDoor.sol";
 import {Voucher, ChannelVoucher, ChannelRef, VOUCHER_TYPEHASH} from "../../src/Types.sol";
@@ -36,7 +37,7 @@ abstract contract MainnetBase is Test {
     uint256 constant PAYERS = 7;
     uint64 constant PRICE = 100_000;
 
-    AssayEscrow internal esc = AssayEscrow(ESCROW);
+    IAssayEscrow internal esc = IAssayEscrow(ESCROW);
     uint64[PAYERS] internal nextSeq;
     bool internal live;
 
@@ -124,7 +125,7 @@ abstract contract MainnetBase is Test {
             });
             sigs[k] = VoucherSigner.signVoucher(_delegateKey(i), ds, vs[k]);
         }
-        data = abi.encodeCall(AssayEscrow.redeemVoucherBatch, (vs, sigs));
+        data = abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (vs, sigs));
     }
 
     function _collectHeldData(Voucher[] memory vs) internal pure returns (bytes memory) {

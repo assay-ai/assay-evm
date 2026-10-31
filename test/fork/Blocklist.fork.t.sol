@@ -5,6 +5,8 @@ import {Fixture} from "../helpers/Fixture.sol";
 import {BlockingUSDG} from "../helpers/BlockingUSDG.sol";
 import {VoucherSigner} from "../helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../../src/interfaces/IAssayEscrow.sol";
 import {Voucher} from "../../src/Types.sol";
 
 /// **What a payout transfer that reverts does to the escrow's accounting.**
@@ -35,7 +37,7 @@ import {Voucher} from "../../src/Types.sol";
 /// already reaches a hostile asset (`_deployEscrow(address asset_)`).
 contract BlocklistAccountingForkTest is Fixture {
     BlockingUSDG internal token;
-    AssayEscrow internal blocking;
+    IAssayEscrow internal blocking;
     bytes32 internal ds;
 
     /// A provider that is NOT blocked, bonded on the shared stake contract.
@@ -88,7 +90,7 @@ contract BlocklistAccountingForkTest is Fixture {
     // accounting-consistency suite drifts toward whichever it was last edited for.
 
     function _snapshot(address who) internal view returns (uint64 bal, uint64 seq, uint64 nonce) {
-        AssayEscrow.Escrow memory e = blocking.escrowOf(who);
+        AssayEscrowStorage.Escrow memory e = blocking.escrowOf(who);
         return (uint64(e.balance), e.seqHigh, e.authNonce);
     }
 

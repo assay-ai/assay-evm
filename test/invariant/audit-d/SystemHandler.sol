@@ -6,6 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AssayConfig} from "../../../src/AssayConfig.sol";
 import {AssayEscrow} from "../../../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../../../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../../../src/interfaces/IAssayEscrow.sol";
 import {AssayStake} from "../../../src/AssayStake.sol";
 import {IAssayConfig} from "../../../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../../../src/interfaces/IAssayStakeView.sol";
@@ -33,7 +35,7 @@ contract SystemHandler is Test {
     MockUSDG public usdg;
     AssayConfig public config;
     AssayStake public stake;
-    AssayEscrow public escrow;
+    IAssayEscrow public escrow;
 
     address public constant OWNER = address(0x0A1E);
     address public constant ADMIN0 = address(0xADAA);
@@ -146,7 +148,7 @@ contract SystemHandler is Test {
                 )
             )
         );
-        escrow = AssayEscrow(
+        escrow = IAssayEscrow(
             address(
                 new ERC1967Proxy(
                     address(new AssayEscrow()),
@@ -248,20 +250,21 @@ contract SystemHandler is Test {
     function _post() internal {
         // seqHigh and authNonce are high-water marks; the delegate list agrees with positions.
         for (uint256 i = 0; i < 3; i++) {
-            AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[i]);
+            AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyers[i]);
             if (e.seqHigh < seenSeqHigh[i]) _violate("monotonic", "seqHigh went backwards");
             if (e.authNonce < seenAuthNonce[i]) _violate("monotonic", "authNonce went backwards");
             seenSeqHigh[i] = e.seqHigh;
             seenAuthNonce[i] = e.authNonce;
             address[] memory list = escrow.delegatesOf(buyers[i]);
             for (uint256 k = 0; k < list.length; k++) {
-                AssayEscrow.Delegation memory d = escrow.delegationOf(buyers[i], list[k]);
+                AssayEscrowStorage.Delegation memory d = escrow.delegationOf(buyers[i], list[k]);
                 if (d.listPosition != k + 1 || d.revoked) {
                     _violate("delegateList", "listed delegate has a wrong position or is revoked");
                 }
             }
             for (uint256 k = 0; k < 3; k++) {
-                AssayEscrow.Delegation memory d = escrow.delegationOf(buyers[i], delegates[k]);
+                AssayEscrowStorage.Delegation memory d =
+                    escrow.delegationOf(buyers[i], delegates[k]);
                 if (d.listPosition > list.length) {
                     _violate("delegateList", "position past the list");
                 }
@@ -473,7 +476,7 @@ contract SystemHandler is Test {
         bool s = _call(
             strangers[0],
             address(escrow),
-            abi.encodeCall(AssayEscrow.setLimitsBySig, (buyer, a, b, nonce, deadline, sig))
+            abi.encodeCall(IAssayEscrow.setLimitsBySig, (buyer, a, b, nonce, deadline, sig))
         );
         if (s) _ghostSet(buyer, address(0), a, b, type(uint64).max);
         if (s && paused) _violate("pause", "setLimitsBySig while paused");
@@ -500,7 +503,7 @@ contract SystemHandler is Test {
                 REDEEMER,
                 address(escrow),
                 abi.encodeCall(
-                    AssayEscrow.requestWithdrawBySig, (buyer, amount, nonce, deadline, sig)
+                    IAssayEscrow.requestWithdrawBySig, (buyer, amount, nonce, deadline, sig)
                 )
             );
         } else {
@@ -512,7 +515,7 @@ contract SystemHandler is Test {
 
     function withdraw(uint256 buyerSeed) external step("withdraw") {
         address buyer = buyers[buyerSeed % 3];
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         uint256 tokBefore = usdg.balanceOf(buyer);
         bool paused = config.paused();
         bool blk = config.blocked(buyer);
@@ -562,7 +565,7 @@ contract SystemHandler is Test {
                 strangers[1],
                 address(escrow),
                 abi.encodeCall(
-                    AssayEscrow.authorizeDelegateBySig,
+                    IAssayEscrow.authorizeDelegateBySig,
                     (buyer, del, a, b, validUntil, nonce, deadline, sig)
                 )
             );
@@ -598,7 +601,7 @@ contract SystemHandler is Test {
             s = _call(
                 strangers[0],
                 address(escrow),
-                abi.encodeCall(AssayEscrow.revokeDelegateBySig, (buyer, del, nonce, deadline, sig))
+                abi.encodeCall(IAssayEscrow.revokeDelegateBySig, (buyer, del, nonce, deadline, sig))
             );
         } else {
             s = _call(buyer, address(escrow), abi.encodeCall(AssayEscrow.revokeDelegate, (del)));
@@ -649,7 +652,7 @@ contract SystemHandler is Test {
     {
         rp.signerIdx = seed % 2 == 0 ? 0 : 1 + (seed >> 1) % 3;
         rp.provider = seed % 13 == 12 ? strangers[0] : providers[(seed >> 4) % 3];
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[buyerIdx]);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyers[buyerIdx]);
         uint64 ceil = e.maxVoucherAmount;
         if (e.balance < ceil) ceil = uint64(e.balance);
         if (ceil == 0) ceil = 1;
@@ -663,7 +666,7 @@ contract SystemHandler is Test {
     function redeem(uint256 buyerSeed, uint256 seed, uint64 amount) external step("redeem") {
         uint256 bi = buyerSeed % 3;
         RedeemPlan memory rp = _plan(seed, amount, bi);
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[bi]);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyers[bi]);
         (Voucher memory v, bytes memory sig, address del) =
             _voucher(bi, rp, e.seqHigh + rp.seqDelta);
         address caller = seed % 17 == 16 ? strangers[1] : REDEEMER;
@@ -676,7 +679,8 @@ contract SystemHandler is Test {
             || (del != address(0) && config.blocked(del));
         uint16 take = config.params().takeRateBps;
         uint64 hold = config.collectHoldSeconds();
-        bool s = _call(caller, address(escrow), abi.encodeCall(AssayEscrow.redeemVoucher, (v, sig)));
+        bool s =
+            _call(caller, address(escrow), abi.encodeCall(IAssayEscrow.redeemVoucher, (v, sig)));
         if (!s) return;
         if (caller != REDEEMER) _violate("role", "redeem by a non-redeemer");
         if (paused) _violate("pause", "redeem while paused");
@@ -685,9 +689,9 @@ contract SystemHandler is Test {
         // Redeem into hold: nobody is paid, the amount is held with the take rate and clock frozen.
         if (usdg.balanceOf(v.provider) != provBefore) _violate("payout", "provider paid at redeem");
         if (usdg.balanceOf(TREASURY) != treasBefore) _violate("payout", "treasury paid at redeem");
-        AssayEscrow.HeldPayment memory hp = escrow.held(v.payer, v.seq);
+        AssayEscrowStorage.HeldPayment memory hp = escrow.held(v.payer, v.seq);
         if (
-            hp.status != AssayEscrow.HeldStatus.Held || hp.amount != v.amount
+            hp.status != AssayEscrowStorage.HeldStatus.Held || hp.amount != v.amount
                 || hp.provider != v.provider || hp.takeRateBps != take
                 || hp.collectableAt != uint64(block.timestamp) + hold
         ) _violate("hold", "the held record is not the redemption");
@@ -708,7 +712,7 @@ contract SystemHandler is Test {
         uint64 back = uint64(seed % 4);
         if (high <= back) return;
         uint64 seq = high - back;
-        AssayEscrow.HeldPayment memory hp = escrow.held(payer, seq);
+        AssayEscrowStorage.HeldPayment memory hp = escrow.held(payer, seq);
         address caller = seed % 5 == 4 ? strangers[0] : REDEEMER;
         address treasury = config.params().treasury;
         uint256 provBefore = usdg.balanceOf(hp.provider);
@@ -720,7 +724,9 @@ contract SystemHandler is Test {
         bool s =
             _call(caller, address(escrow), abi.encodeCall(AssayEscrow.collectHeld, (payer, seq)));
         if (!s) return;
-        if (hp.status != AssayEscrow.HeldStatus.Held) _violate("hold", "collect of a non-Held");
+        if (hp.status != AssayEscrowStorage.HeldStatus.Held) {
+            _violate("hold", "collect of a non-Held");
+        }
         if (block.timestamp < opensAt) _violate("hold", "collect before its time");
         if (paused) _violate("pause", "collect while paused");
         if (blk) _violate("block", "collect paid a blocked party");
@@ -733,7 +739,7 @@ contract SystemHandler is Test {
             if (usdg.balanceOf(hp.provider) - provBefore != net) _violate("payout", "collect net");
             if (usdg.balanceOf(treasury) - treasBefore != fee) _violate("payout", "collect fee");
         }
-        if (escrow.held(payer, seq).status != AssayEscrow.HeldStatus.Collected) {
+        if (escrow.held(payer, seq).status != AssayEscrowStorage.HeldStatus.Collected) {
             _violate("hold", "collected record not marked");
         }
     }
@@ -744,21 +750,23 @@ contract SystemHandler is Test {
     function refundHeld(uint256 buyerSeed, uint256 seed) external step("refundHeld") {
         uint256 bi = buyerSeed % 3;
         address payer = buyers[bi];
-        AssayEscrow.Escrow memory e = escrow.escrowOf(payer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(payer);
         uint64 back = uint64(seed % 4);
         if (e.seqHigh <= back) return;
         uint64 seq = e.seqHigh - back;
-        AssayEscrow.HeldPayment memory hp = escrow.held(payer, seq);
+        AssayEscrowStorage.HeldPayment memory hp = escrow.held(payer, seq);
         address caller = seed % 7 == 6 ? strangers[1] : REDEEMER;
         bool s =
             _call(caller, address(escrow), abi.encodeCall(AssayEscrow.refundHeld, (payer, seq)));
         if (!s) return;
         if (caller != REDEEMER) _violate("role", "refund by a non-redeemer");
-        if (hp.status != AssayEscrow.HeldStatus.Held) _violate("hold", "refund of a non-Held");
+        if (hp.status != AssayEscrowStorage.HeldStatus.Held) {
+            _violate("hold", "refund of a non-Held");
+        }
         if (block.timestamp >= uint256(hp.collectableAt) + Constants.HELD_TIMEOUT_SECONDS) {
             _violate("hold", "refund after the timeout");
         }
-        AssayEscrow.Escrow memory a = escrow.escrowOf(payer);
+        AssayEscrowStorage.Escrow memory a = escrow.escrowOf(payer);
         if (a.balance != e.balance + hp.amount) _violate("hold", "refund credit");
         if (a.spentInWindow != e.spentInWindow) _violate("hold", "refund restored the window");
     }
@@ -869,7 +877,7 @@ contract SystemHandler is Test {
         uint64[3] memory seqs;
         uint64[3] memory allowance;
         for (uint256 b = 0; b < 3; b++) {
-            AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[b]);
+            AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyers[b]);
             seqs[b] = e.seqHigh;
             allowance[b] = uint64(e.balance);
         }
@@ -888,7 +896,7 @@ contract SystemHandler is Test {
                 || (dels[k] != address(0) && config.blocked(dels[k]));
         }
         bool s = _call(
-            REDEEMER, address(escrow), abi.encodeCall(AssayEscrow.redeemVoucherBatch, (vs, sigs))
+            REDEEMER, address(escrow), abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (vs, sigs))
         );
         if (!s) return;
         if (paused) _violate("pause", "redeemBatch while paused");
@@ -1351,7 +1359,7 @@ contract SystemHandler is Test {
                     + nudge
             );
         } else if (c == 10) {
-            AssayEscrow.Escrow memory e = escrow.escrowOf(buyers[(choice >> 16) % 3]);
+            AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyers[(choice >> 16) % 3]);
             target =
                 uint256(int256(uint256(e.windowStartedAt) + Constants.SLASH_WINDOW_SECONDS) + nudge);
         } else if (c == 11) {

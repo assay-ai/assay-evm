@@ -5,7 +5,13 @@ import {Test} from "forge-std/Test.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {AssayStake} from "../src/AssayStake.sol";
 import {UpgradeByOwner, LibraryCodehashMismatch} from "../script/UpgradeByOwner.s.sol";
-import {LinkedLibraryMismatch, NotThisBuild} from "../script/ChannelDoorLink.sol";
+import {
+    LinkedLibraryMismatch,
+    NotThisBuild,
+    ExtensionMismatch,
+    ExtensionCodehashMismatch
+} from "../script/ChannelDoorLink.sol";
+import {AssayEscrowSilentDomainV2} from "./helpers/AssayEscrowSilentDomainV2.sol";
 import {AssayConfig} from "../src/AssayConfig.sol";
 
 contract UpgradeByOwnerProbe is UpgradeByOwner {
@@ -19,6 +25,94 @@ contract UpgradeByOwnerProbe is UpgradeByOwner {
 
     function assertBuilt(address at, string calldata artifact, address lib) external view {
         _assertBuilt(at, artifact, lib);
+    }
+
+    function assertExtension(address impl, bytes32 want) external view returns (address) {
+        return _assertExtension(impl, want);
+    }
+}
+
+/// D-29: the owner's upgrade script pins the extension the escrow's `fallback` DELEGATECALLs,
+/// by address (the implementation's first CREATE) and by code (exactly this build, its one
+/// immutable checked by value).
+contract UpgradeByOwnerExtensionTest is Test {
+    UpgradeByOwnerProbe internal probe;
+    address internal impl;
+    address internal ext;
+
+    function setUp() public {
+        probe = new UpgradeByOwnerProbe();
+        impl = address(new AssayEscrow());
+        ext = AssayEscrow(impl).EXTENSION();
+    }
+
+    function test_acceptsTheExtensionTheImplementationCreated() public view {
+        assertEq(probe.assertExtension(impl, ext.codehash), ext);
+    }
+
+    function test_refusesAnotherPinnedHash() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ExtensionCodehashMismatch.selector, ext, ext.codehash, bytes32(uint256(1))
+            )
+        );
+        probe.assertExtension(impl, bytes32(uint256(1)));
+    }
+
+    /// The reviewer's case: an implementation whose OWN code is the build but whose extension
+    /// enforces another EIP-712 domain. Its hash pinned from that very code changes nothing.
+    function test_refusesAnExtensionThatIsNotThisBuild_evenWithItsHashPinned() public {
+        address silent = address(new AssayEscrowSilentDomainV2());
+        address bad = AssayEscrow(silent).EXTENSION();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NotThisBuild.selector, bad, "out/AssayEscrowExtension.sol/AssayEscrowExtension.json"
+            )
+        );
+        probe.assertExtension(silent, bad.codehash);
+    }
+
+    /// Build code at the right address, but its direct-call guard names another address: not
+    /// this extension deployed here.
+    function test_refusesAnExtensionWhoseGuardNamesAnotherAddress() public {
+        bytes memory code = ext.code;
+        // the guard's 32-byte word holds `ext`; flip its last byte wherever it appears
+        bytes32 word = bytes32(uint256(uint160(ext)));
+        uint256 hits;
+        for (uint256 i = 0; i + 32 <= code.length; i++) {
+            bytes32 w;
+            assembly ("memory-safe") {
+                w := mload(add(add(code, 32), i))
+            }
+            if (w == word) {
+                code[i + 31] = code[i + 31] ^ 0x01;
+                hits++;
+            }
+        }
+        assertGt(hits, 0);
+        vm.etch(ext, code);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NotThisBuild.selector, ext, "out/AssayEscrowExtension.sol/AssayEscrowExtension.json"
+            )
+        );
+        probe.assertExtension(impl, keccak256(code));
+    }
+
+    /// An implementation that reports an extension other than its first CREATE.
+    function test_refusesAnExtensionThatIsNotTheImplementationsFirstCreate() public {
+        address stranger = address(new AssayEscrow());
+        vm.mockCall(impl, abi.encodeWithSignature("EXTENSION()"), abi.encode(stranger));
+        vm.expectRevert(abi.encodeWithSelector(ExtensionMismatch.selector, impl, stranger, ext));
+        probe.assertExtension(impl, stranger.codehash);
+    }
+
+    function test_refusesAnImplementationWithoutAnExtension() public {
+        address stake = address(new AssayStake());
+        vm.expectRevert(
+            abi.encodeWithSelector(ExtensionMismatch.selector, stake, address(0), address(0))
+        );
+        probe.assertExtension(stake, bytes32(0));
     }
 }
 

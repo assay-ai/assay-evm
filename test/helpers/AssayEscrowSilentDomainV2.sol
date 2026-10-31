@@ -3,6 +3,7 @@ pragma solidity 0.8.38;
 
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
+import {AssayEscrowExtension} from "../../src/AssayEscrowExtension.sol";
 
 /// The **quiet** version of `AssayEscrowBadDomainV2`, and the one that catches a lazy test.
 ///
@@ -10,9 +11,10 @@ import {AssayEscrow} from "../../src/AssayEscrow.sol";
 /// test that compares that one getter across the upgrade sees it. This contract does not touch
 /// `DOMAIN_SEPARATOR()` at all — it is `external` and non-`virtual` on the parent, so it keeps
 /// returning the old, correct value and every "the separator did not move" assertion stays
-/// green. What it changes is `_hashTypedDataV4`, which is `internal view virtual` on OZ's
-/// `EIP712` and is what `redeemVoucher`, `setLimitsBySig` and `requestWithdrawBySig` actually
-/// build their digests from.
+/// green. What it changes is the extension's `_hashTypedDataV4`, which is what `redeemVoucher`,
+/// `setLimitsBySig` and `requestWithdrawBySig` actually build their digests from (D-29: those
+/// doors live in the extension, so the wrong domain arrives with the extension the constructor
+/// binds).
 ///
 /// So the exported domain and the enforced domain disagree, and the only symptom is that every
 /// signature made before the upgrade recovers to the wrong address. **A test that checks
@@ -22,7 +24,7 @@ import {AssayEscrow} from "../../src/AssayEscrow.sol";
 ///
 /// The layout is the parent's, unchanged — nothing is appended — so it is a legal upgrade in
 /// every respect the storage gate can see. Nothing on chain refuses it either.
-contract AssayEscrowSilentDomainV2 is AssayEscrow {
+contract SilentDomainExtension is AssayEscrowExtension {
     bytes32 private constant TYPE_HASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
@@ -38,5 +40,11 @@ contract AssayEscrowSilentDomainV2 is AssayEscrow {
             )
         );
         return MessageHashUtils.toTypedDataHash(wrongSeparator, structHash);
+    }
+}
+
+contract AssayEscrowSilentDomainV2 is AssayEscrow {
+    function _newExtension() internal override returns (address) {
+        return address(new SilentDomainExtension());
     }
 }

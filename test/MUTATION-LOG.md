@@ -2026,3 +2026,37 @@ the same 37: 37 killed.**
 | M94 | rate emitted on a pure waive | `test_edge_pureWaive_carriesNoRateNorMaturity` |
 | M97 | collect shape check loosened | `test_edge_collect_batchShape` |
 | M72 | claim: state written after the transfer | only `NoTokenDoors.t.sol` (the pinned transfer line moved). **Behaviourally equivalent**: `claimUnpaid` is `nonReentrant` at the escrow, so no re-entry can observe the order; the order is kept as defence in depth. |
+
+## D-29 split, H1 fold, G1/G2 (2026-10-31)
+
+25 targeted mutants of the new code, each run against the suites that own it (a scratch copy,
+`forge test --match-path`). Round 1: 18 killed, 5 survived, 1 equivalent, 1 not compilable.
+Round 2, after the tests below were written: all 4 non-equivalent survivors killed.
+
+| ID | Mutation | Round 1 | Killed by (round 2) |
+|---|---|---|---|
+| F1 | `_fold` picks the OLDER bucket of the rate | killed | |
+| F2 | `_fold` ignores the rate (folds across rates) | killed | |
+| F3 | `_fold` overflow bound `MAX_BUCKET + 1` | survived | `test_edge_foldCapacity` |
+| F4 | `_fold` maturity = the charge's (may move earlier) | killed | |
+| F5 | `_fold` maturity = the bucket's (never deferred) | killed | |
+| F6 | no `ChannelBucketDeferred` | killed | |
+| F7 | `it.m` not set to the bucket's maturity | survived | `test_edge_foldReportsTheBucketsMaturity` |
+| F8 | never fold (old behaviour) | killed | |
+| G1 | `blocked` accepts a word of 2 | killed | |
+| G2 | `blocked` always false | killed | |
+| G3 | `freeBondedOf` word not bounded to uint64 | killed | |
+| G4 | no `returndatasize < 32` check | **equivalent** | a short answer leaves the selector and argument bytes in the scratch word, so the word is always above 1 and above `uint64` and the call still reverts empty; the check stays as the stated rule |
+| G5 | a failing read reverts empty instead of bubbling | killed | |
+| G6 | settle uses hold 0 | killed | |
+| X1 | the extension's direct-call guard never fires | killed | |
+| X2 | the extension's separator uses its own address | killed | |
+| X3 | `EIP712_VERSION` "3" (both halves move together) | survived | `test_theDomainIsAssaySettlementVersionTwo` |
+| X4 | `revokeDelegateBySig` without `nonReentrant` | survived | `test_everyExtensionDoorIsGuarded` |
+| C1 | `fallback` returns on a failed DELEGATECALL | killed | |
+| C2 | `fallback` forwards only 4 bytes | killed | |
+| C3 | `fallback` payable | not compilable | (solc requires a `receive` beside a payable fallback; not a reachable state) |
+| T1 | `_assertExtension` skips the nonce-1 check | killed | |
+| T2 | skips the codehash pin | killed | |
+| T3 | skips the build comparison | killed | |
+| T4 | skips the guard's by-value check | killed | |

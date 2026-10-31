@@ -131,7 +131,12 @@ contract AssayEscrowSeqCapTest is Fixture {
     /// The order: the cap is checked after the used-seq check (D-23), only above the mark (so
     /// the subtraction cannot wrap), and before the signature, like the rest of the seq rule.
     function test_theCapSitsBesideTheUsedSeqCheckInTheSource() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
+        // The per-call door lives in the extension (D-29); both halves are read so a copy in the
+        // core counts too.
+        string memory src = string.concat(
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol")),
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowExtension.sol"))
+        );
         bytes memory h = bytes(src);
         bytes memory n = bytes(
             "        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();\n        // Jump cap, applied only above the high-water mark; the first operand keeps the\n        // subtraction from underflowing.\n        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {\n            revert VoucherSeqGapTooLarge();\n        }\n"

@@ -62,6 +62,20 @@ for rec in deployments/*.json; do
         rc=1
       fi
     done
+    # The escrow's extension (D-29): code the escrow's `fallback` runs in the escrow's storage,
+    # so a change to it is bytecode drift of the escrow. Its one immutable (its own address) is
+    # zero in the build, as `runtime_keccak` hashes it.
+    if [ "$c" = "AssayEscrow" ] && jq -e '.methodIdentifiers["EXTENSION()"]' "out/$c.sol/$c.json" >/dev/null; then
+      wantExt=$(jq -r ".contracts.AssayEscrow.extension.runtimeKeccak // empty" "$rec")
+      gotExt=$(runtime_keccak AssayEscrowExtension)
+      if [ "$gotExt" != "$wantExt" ]; then
+        echo "extension bytecode drift in AssayEscrowExtension vs $rec"
+        echo "  built  $gotExt"
+        echo "  record ${wantExt:-<none: the record predates the extension>}"
+        echo "  -> this is an UPGRADE (runbook §7) or a redeploy. Say which in .status."
+        rc=1
+      fi
+    fi
     # The function surface, separately, because it answers a different question. Bytecode drift
     # says "the code changed"; surface drift says "the code changed SHAPE", and only the second
     # can hand a live proxy a door that was never reviewed. A record written before

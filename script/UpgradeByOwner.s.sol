@@ -7,6 +7,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {AssayConfig} from "../src/AssayConfig.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {AssayStake} from "../src/AssayStake.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {UnexpectedLinks, LinkedLibraryMismatch} from "./ChannelDoorLink.sol";
 
 error UnexpectedChain(uint256 got, uint256 want);
@@ -52,6 +53,12 @@ error LibraryCodehashMismatch(address lib, bytes32 got, bytes32 want);
 ///                 implementation's own; the escrow codehash pins the library ADDRESS (it is
 ///                 written into the bytecode), this pins the library CODE. Take the hash from the
 ///                 library `verify-deployment.sh` matched (`cast keccak $(cast code $CHANNEL_DOOR)`).
+///   EXPECTED_CODEHASH_EXTENSION   (run, safeCalldata; REQUIRED with UPGRADE_ESCROW) the
+///                 `extcodehash` of the implementation's `AssayEscrowExtension` (D-29), which its
+///                 `fallback` DELEGATECALLs for every selector the core does not have. The
+///                 address is not an input: it is `EXTENSION()` of the implementation and must
+///                 be its first CREATE. Take the hash from the extension `verify-deployment.sh`
+///                 matched (`cast keccak $(cast code $(cast call $IMPL_ESCROW 'EXTENSION()(address)'))`).
 ///
 /// **Order.** The proxies are always upgraded Config, Stake, Escrow, in that order (`_plan`), so
 /// a Stake or Escrow build that reads a new Config function lands after the Config that has it.
@@ -75,6 +82,7 @@ contract UpgradeByOwner is ChannelDoorLink {
             // forge deploys and links the library itself; the address is read back from the
             // implementation's code at the link offsets of this build.
             console2.log("CHANNEL_DOOR=", _linkedChannelDoor(impl));
+            console2.log("EXTENSION=", AssayEscrow(impl).EXTENSION());
         }
         vm.stopBroadcast();
     }
@@ -92,7 +100,10 @@ contract UpgradeByOwner is ChannelDoorLink {
             if (!on[i]) continue;
             _assertImplementation(impls[i], hashes[i]);
             _assertBuiltPlain(i, impls[i]);
-            if (i == 2) _assertChannelDoor(impls[i]);
+            if (i == 2) {
+                _assertChannelDoor(impls[i]);
+                _assertExtension(impls[i], vm.envBytes32("EXPECTED_CODEHASH_EXTENSION"));
+            }
             console2.log("to  ", proxies[i]);
             console2.logBytes(
                 abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (impls[i], calls[i]))
@@ -121,7 +132,10 @@ contract UpgradeByOwner is ChannelDoorLink {
             _assertImplementation(impls[i], hashes[i]);
             _assertBuiltPlain(i, impls[i]);
         }
-        if (on[2]) _assertChannelDoor(impls[2]);
+        if (on[2]) {
+            _assertChannelDoor(impls[2]);
+            _assertExtension(impls[2], vm.envBytes32("EXPECTED_CODEHASH_EXTENSION"));
+        }
 
         address sampleBuyer = vm.envAddress("SAMPLE_BUYER");
         address sampleProvider = vm.envAddress("SAMPLE_PROVIDER");
@@ -136,6 +150,9 @@ contract UpgradeByOwner is ChannelDoorLink {
         bytes32 paramsBefore = keccak256(abi.encode(config.params()));
         bool pausedBefore = config.paused();
         bytes32 channelsBefore = _channelTotals(escrow);
+        // Extension-answered reads, captured before and required after (no try/catch: a broken
+        // extension must fail here, not compare equal to itself).
+        bytes32 extensionReadsBefore = _extensionReads(escrow, sampleBuyer);
 
         vm.startBroadcast(owner);
         for (uint256 i = 0; i < 3; i++) {
@@ -165,6 +182,13 @@ contract UpgradeByOwner is ChannelDoorLink {
         if (keccak256(abi.encode(config.params())) != paramsBefore) revert StateMoved("params");
         if (config.paused() != pausedBefore) revert StateMoved("paused");
         if (_channelTotals(escrow) != channelsBefore) revert StateMoved("channel totals");
+        if (_extensionReads(escrow, sampleBuyer) != extensionReadsBefore) {
+            revert StateMoved("extension reads");
+        }
+        if (on[2] && IAssayEscrow(address(escrow)).EXTENSION() != AssayEscrow(impls[2]).EXTENSION())
+        {
+            revert StateMoved("extension");
+        }
         // Printed for the record.
         console2.log("slashDelaySeconds", config.slashDelaySeconds());
         console2.log("arbiter", config.arbiter());
@@ -249,6 +273,15 @@ contract UpgradeByOwner is ChannelDoorLink {
                     || _word(code, refs[i].start) != uint256(uint160(door))
             ) revert LinkedLibraryMismatch(impl, door, door);
         }
+    }
+
+    /// What the escrow answers through `effectiveCapsOf` and `delegatesOf` for the sample buyer:
+    /// before D-29 the implementation answered both itself, after it `effectiveCapsOf` comes from
+    /// the extension. Equal before and after means the extension reads the same storage.
+    function _extensionReads(AssayEscrow escrow, address buyer) internal view returns (bytes32) {
+        IAssayEscrow e = IAssayEscrow(address(escrow));
+        (uint64 a, uint64 b, uint64 c, uint64 d) = e.effectiveCapsOf(buyer, address(0));
+        return keccak256(abi.encode(a, b, c, d, e.delegatesOf(buyer)));
     }
 
     /// The channel door's set-aside and held totals; zero before the first build that has them.

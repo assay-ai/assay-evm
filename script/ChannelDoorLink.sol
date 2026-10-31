@@ -6,6 +6,8 @@ import {Script} from "forge-std/Script.sol";
 error UnexpectedLinks(uint256 libraries);
 error LinkedLibraryMismatch(address impl, address got, address want);
 error NotThisBuild(address at, string artifact);
+error ExtensionMismatch(address impl, address got, address want);
+error ExtensionCodehashMismatch(address ext, bytes32 got, bytes32 want);
 
 /// Reads back which `ChannelDoor` library an `AssayEscrow` implementation is linked to (D-28),
 /// and compares deployed code with THIS tree's build. forge deploys and links the library itself,
@@ -88,6 +90,40 @@ abstract contract ChannelDoorLink is Script {
             }
         }
         if (keccak256(got) != keccak256(want)) revert NotThisBuild(at, artifact);
+    }
+
+    /// The escrow implementation's extension (D-29) is the one its constructor created
+    /// (first CREATE, nonce 1), its code is exactly the extension's code that the operator
+    /// verified (`want`), and it is this tree's build. The extension's one immutable is its own
+    /// address (the direct-call guard) and is checked BY VALUE: it has no EIP-712 immutables, so
+    /// nothing in it is masked unchecked and a deployer-built extension cannot carry its own
+    /// domain past this. `EXTENSION()` is read from the implementation, whose own code is
+    /// compared with the build separately, so the getter is the one the fallback uses.
+    function _assertExtension(address impl, bytes32 want) internal view returns (address ext) {
+        (bool ok, bytes memory ret) = impl.staticcall(abi.encodeWithSignature("EXTENSION()"));
+        if (!ok || ret.length != 32) revert ExtensionMismatch(impl, address(0), address(0));
+        ext = abi.decode(ret, (address));
+        address nonce1 = vm.computeCreateAddress(impl, 1);
+        if (ext != nonce1) revert ExtensionMismatch(impl, ext, nonce1);
+        if (ext.codehash != want) revert ExtensionCodehashMismatch(ext, ext.codehash, want);
+        string memory artifact = "out/AssayEscrowExtension.sol/AssayEscrowExtension.json";
+        _assertBuilt(ext, artifact, address(0));
+        string memory art = vm.readFile(artifact);
+        string[] memory ids = vm.parseJsonKeys(art, ".deployedBytecode.immutableReferences");
+        if (ids.length != 1) revert NotThisBuild(ext, artifact);
+        LinkRef[] memory spans = abi.decode(
+            vm.parseJson(
+                art, string.concat(".deployedBytecode.immutableReferences.['", ids[0], "']")
+            ),
+            (LinkRef[])
+        );
+        bytes memory code = ext.code;
+        if (spans.length == 0) revert NotThisBuild(ext, artifact);
+        for (uint256 i = 0; i < spans.length; i++) {
+            if (spans[i].length != 32 || _word(code, spans[i].start) != uint256(uint160(ext))) {
+                revert NotThisBuild(ext, artifact);
+            }
+        }
     }
 
     /// solc's placeholder for `ChannelDoor`: `__$` + the first 34 hex digits of

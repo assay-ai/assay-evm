@@ -4,6 +4,8 @@ pragma solidity 0.8.38;
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {ChannelDoor} from "../src/libraries/ChannelDoor.sol";
 import {Constants} from "../src/Constants.sol";
 import {ChannelVoucher, ChannelRef, Voucher, ParamSet} from "../src/Types.sol";
@@ -71,12 +73,12 @@ contract ReenterCollectToken {
     uint8 public constant decimals = 6;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
-    AssayEscrow public target;
+    IAssayEscrow public target;
     bytes public refsAndKeep;
     bool public reentered;
     bool public reentryRefused;
 
-    function arm(AssayEscrow t, bytes calldata call) external {
+    function arm(IAssayEscrow t, bytes calldata call) external {
         target = t;
         refsAndKeep = call;
     }
@@ -296,14 +298,14 @@ contract AssayEscrowChannelTest is Fixture {
             uint256(escrow.totalEscrowed()) + escrow.totalHeld() + held + totalUnpaid,
             "I7"
         );
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.totalFunded, e.balance + e.totalRedeemed + e.totalWithdrawn, "D-14");
     }
 
     // ---------------------------------------------------------------------- settle: happy
 
     function test_settle_delegateSigned_movesTheChargeIntoABucket() public {
-        AssayEscrow.Escrow memory before = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory before = escrow.escrowOf(buyer);
         uint128 escrowedBefore = escrow.totalEscrowed();
         uint64 m = _maturity();
 
@@ -330,7 +332,7 @@ contract AssayEscrowChannelTest is Fixture {
         assertEq(s.m1, m);
         assertEq(s.r1, TAKE_RATE_BPS);
         assertEq(s.h2, 0);
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, before.balance - 300_000);
         assertEq(e.totalRedeemed, before.totalRedeemed + 300_000);
         assertEq(e.spentInWindow, 300_000);
@@ -412,7 +414,10 @@ contract AssayEscrowChannelTest is Fixture {
 
     // ---------------------------------------------------------------------- settle: buckets
 
-    function test_buckets_secondHourUsesTheSecondBucket_thirdHourSkipsUntilCollected() public {
+    /// H1: a third hour while both buckets hold money no longer skips. The charge folds into the
+    /// newest bucket of its rate, whose maturity moves to the charge's; the older bucket and its
+    /// maturity are untouched, and collecting it later frees it for the next hour as before.
+    function test_buckets_thirdHourFoldsIntoTheNewestBucketAndDefersIt() public {
         _settleD(0, 100_000, 1);
         uint256 m1 = _slot(delegate).m1;
         vm.warp(_now() + 3600);
@@ -423,20 +428,189 @@ contract AssayEscrowChannelTest is Fixture {
         assertEq(s.m2, m1 + 1);
 
         vm.warp(_now() + 3600);
+        vm.expectEmit(address(escrow));
+        emit ChannelDoor.ChannelBucketDeferred(
+            _key(delegate), uint24(m1 + 1), uint24(m1 + 2), TAKE_RATE_BPS
+        );
+        _settleD(300_000, 600_000, 6);
+        s = _slot(delegate);
+        assertEq(s.settled, 600_000);
+        assertEq(s.h1, 100_000, "the older bucket is untouched");
+        assertEq(s.m1, m1, "and keeps its maturity");
+        assertEq(s.h2, 500_000, "the charge folded into the newest bucket");
+        assertEq(s.m2, m1 + 2, "whose maturity moved to the charge's");
+        assertEq(s.r2, TAKE_RATE_BPS);
+        _assertBooks();
+
+        // the older bucket is matured and collects alone; the deferred one is not yet payable
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(0));
+        s = _slot(delegate);
+        assertEq(s.h1, 0, "bucket 1 paid");
+        assertEq(s.h2, 500_000, "the deferred bucket waits for its new maturity");
+        vm.warp((m1 + 2) * 3600);
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(0));
+        assertEq(_slot(delegate).h2, 0, "paid at the new maturity");
+        _assertBooks();
+    }
+
+    /// Deferral never makes money mature earlier: a charge settled after `collectHoldSeconds`
+    /// was LOWERED folds into a bucket whose maturity is already later, which keeps it.
+    function test_buckets_foldNeverMovesAMaturityEarlier() public {
+        vm.prank(admin);
+        config.setCollectHold(86_400);
+        _settleD(0, 100_000, 1);
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        S memory s = _slot(delegate);
+        uint256 newest = s.m2;
+        vm.prank(admin);
+        config.setCollectHold(60);
+        _settleD(300_000, 400_000, 4);
+        s = _slot(delegate);
+        assertEq(s.m2, newest, "the later maturity is kept");
+        assertEq(s.h2, 300_000);
+        assertGt(s.m2 * 3600, _now() + 60, "the new charge is held longer than its own hold");
+    }
+
+    /// A hold above one hour used to refuse every settlement into a new hour once two buckets
+    /// held money; now a settlement every 30 minutes for 6 hours never skips.
+    function test_buckets_aLongHoldNeverSkipsASettlement() public {
+        vm.prank(admin);
+        config.setCollectHold(3 * 3600);
+        uint64 cum;
+        for (uint32 k = 1; k <= 12; ++k) {
+            _settleD(cum, cum + 100_000, k);
+            cum += 100_000;
+            assertEq(_slot(delegate).settled, cum, "every settlement landed");
+            vm.warp(_now() + 1800);
+        }
+        S memory s = _slot(delegate);
+        assertEq(s.h1 + s.h2, cum);
+        assertTrue(s.m1 != s.m2 || s.r1 != s.r2, "I11");
+        _assertBooks();
+    }
+
+    /// Folding is within one rate only: both buckets at other rates still skip `NoBucket`.
+    function test_buckets_foldNeverMixesRates() public {
+        _settleD(0, 100_000, 1);
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        ParamSet memory p = config.params();
+        p.takeRateBps = 2_000;
+        vm.prank(admin);
+        config.updateConfig(p);
+        vm.warp(_now() + 3600);
         ChannelVoucher memory v = _cv(CH, 600_000, 6);
         _expectSkip(0, _key(delegate), 600_000, ChannelDoor.SettleSkip.NoBucket);
         _settle(v, _sign(delegateKey, v), 300_000, 300_000);
         assertEq(_slot(delegate).settled, 300_000, "a skip writes nothing");
+    }
 
-        // bucket 1 has matured: collect it, then the same voucher settles into the freed bucket
+    /// A refund names a bucket by hour and rate: after a fold the old name is gone (skipped,
+    /// nothing moves) and the new name reaches the whole bucket, older money included, because
+    /// its refund window moved with its maturity.
+    function test_buckets_aDeferredBucketIsRefundedByItsNewName() public {
+        _settleD(0, 100_000, 1);
+        uint256 m1 = _slot(delegate).m1;
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        vm.warp(_now() + 3600);
+        _settleD(300_000, 600_000, 6);
+
+        uint128 bal = escrow.escrowOf(buyer).balance;
         vm.prank(redeemer);
-        escrow.collectChannels(_ref(delegate), _u(0));
-        _settle(v, _sign(delegateKey, v), 300_000, 300_000);
-        s = _slot(delegate);
-        assertEq(s.settled, 600_000);
-        assertEq(s.h1, 300_000);
-        assertEq(s.m1, m1 + 2);
-        assertEq(s.h2, 200_000);
+        escrow.refundChannels(_ref(delegate), _bid(m1 + 1, TAKE_RATE_BPS), _u(500_000));
+        assertEq(escrow.escrowOf(buyer).balance, bal, "the old name refunds nothing");
+
+        vm.prank(redeemer);
+        escrow.refundChannels(_ref(delegate), _bid(m1 + 2, TAKE_RATE_BPS), _u(500_000));
+        assertEq(escrow.escrowOf(buyer).balance, bal + 500_000);
+        assertEq(_slot(delegate).h2, 0);
+        _assertBooks();
+    }
+
+    // ------------------------------------------- G2: the lean blocklist and stake reads
+
+    /// `_staticWord` must answer exactly as the high-level call did: these are the four ways the
+    /// target's answer can be malformed, and each one reverts the batch rather than reading as
+    /// "not blocked" or "staked".
+    function _settleOneExpectingRevert(bytes memory err) internal {
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        bytes memory sig = _sign(delegateKey, v);
+        vm.prank(redeemer);
+        vm.expectRevert(err);
+        escrow.settleChannels(_one(v), sig, _u(0), _u(100_000));
+    }
+
+    function test_g2_aBlocklistRevertIsBubbledVerbatim() public {
+        bytes memory boom = abi.encodeWithSignature("Boom(uint256)", 7);
+        vm.mockCallRevert(
+            address(config), abi.encodeWithSelector(config.blocked.selector, buyer), boom
+        );
+        _settleOneExpectingRevert(boom);
+    }
+
+    function test_g2_aBlocklistAnswerThatIsNotABoolReverts() public {
+        vm.mockCall(
+            address(config),
+            abi.encodeWithSelector(config.blocked.selector, buyer),
+            abi.encode(uint256(2))
+        );
+        _settleOneExpectingRevert("");
+    }
+
+    function test_g2_aShortBlocklistAnswerReverts() public {
+        vm.mockCall(
+            address(config), abi.encodeWithSelector(config.blocked.selector, buyer), hex"01"
+        );
+        _settleOneExpectingRevert("");
+    }
+
+    function test_g2_aBlockedAnswerOfOneSkips() public {
+        vm.mockCall(
+            address(config),
+            abi.encodeWithSelector(config.blocked.selector, provider),
+            abi.encode(true)
+        );
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        bytes memory sig = _sign(delegateKey, v);
+        _expectSkip(0, _key(delegate), 100_000, ChannelDoor.SettleSkip.Blocked);
+        _settle(v, sig, 0, 100_000);
+        assertEq(_held(), 0);
+    }
+
+    function test_g2_aStakeAnswerAboveUint64Reverts() public {
+        vm.mockCall(
+            address(stake),
+            abi.encodeWithSelector(stake.freeBondedOf.selector, provider),
+            abi.encode(uint256(type(uint64).max) + 1)
+        );
+        _settleOneExpectingRevert("");
+    }
+
+    function test_g2_aStakeRevertIsBubbledVerbatim() public {
+        bytes memory boom = abi.encodeWithSignature("Boom(uint256)", 9);
+        vm.mockCallRevert(
+            address(stake), abi.encodeWithSelector(stake.freeBondedOf.selector, provider), boom
+        );
+        _settleOneExpectingRevert(boom);
+    }
+
+    function test_g2_theStakeFloorStillDecides() public {
+        vm.mockCall(
+            address(stake),
+            abi.encodeWithSelector(stake.freeBondedOf.selector, provider),
+            abi.encode(uint256(MINIMUM_STAKE - 1))
+        );
+        ChannelVoucher memory v = _cv(CH, 100_000, 1);
+        bytes memory sig = _sign(delegateKey, v);
+        _expectSkip(0, _key(delegate), 100_000, ChannelDoor.SettleSkip.Stake);
+        _settle(v, sig, 0, 100_000);
+        vm.clearMockedCalls();
+        _settleD(0, 100_000, 1);
+        assertEq(_held(), 100_000, "at the floor it settles");
     }
 
     function test_buckets_aRateChangeOpensTheOtherBucket_neverMixesRates() public {
@@ -726,7 +900,7 @@ contract AssayEscrowChannelTest is Fixture {
     }
 
     function test_aChannelSignatureForAnotherEscrowIsWorthless() public {
-        AssayEscrow other = _deployEscrow(address(usdg));
+        IAssayEscrow other = _deployEscrow(address(usdg));
         ChannelVoucher memory v = _cv(CH, 100_000, 1);
         bytes32 sh = keccak256(
             abi.encode(
@@ -924,7 +1098,7 @@ contract AssayEscrowChannelTest is Fixture {
     /// sets the payout aside, because the token itself failed the full stipend.
     function test_unpaid_starvingTheCallReverts_aTokenThatBurnsTheStipendIsDeferred() public {
         GasBurnToken t = new GasBurnToken();
-        AssayEscrow e2 = _deployEscrow(address(t));
+        IAssayEscrow e2 = _deployEscrow(address(t));
         t.mint(buyer, 10e6);
         vm.startPrank(buyer);
         t.approve(address(e2), type(uint256).max);
@@ -976,7 +1150,7 @@ contract AssayEscrowChannelTest is Fixture {
         uint128 escrowedBefore = escrow.totalEscrowed();
         vm.prank(redeemer);
         escrow.refundChannels(_ref(delegate), ms, _u(100_000));
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 500e6 - 200_000);
         assertEq(e.totalRedeemed, 200_000);
         assertEq(e.spentInWindow, 300_000, "refund does not restore window spend");
@@ -1371,6 +1545,61 @@ contract AssayEscrowChannelTest is Fixture {
         assertEq(_slot(buyer).h1, maxB);
     }
 
+    /// The fold (H1) holds the same cap: topping the newest bucket up to exactly `MAX_BUCKET`
+    /// fits, one more skips `NoBucket` and writes nothing.
+    function test_edge_foldCapacity() public {
+        uint256 maxB = (1 << 48) - 1;
+        _fund(buyer, maxB + 2);
+        vm.startPrank(buyer);
+        escrow.deposit(uint64(maxB + 2));
+        escrow.setLimits(type(uint64).max, type(uint64).max);
+        vm.stopPrank();
+        _settleP(0, 1, 1); // bucket 1
+        vm.warp(_now() + 3600);
+        _settleP(1, uint64(maxB), 2); // bucket 2 holds maxB - 1
+        vm.warp(_now() + 3600);
+        _settleP(uint64(maxB), uint64(maxB + 1), 3); // folds: bucket 2 exactly full
+        S memory s = _slot(buyer);
+        assertEq(s.h2, maxB, "a fold to exactly the cap fits");
+        assertEq(s.m2, _maturity(), "and moved the maturity");
+        vm.warp(_now() + 3600);
+        ChannelVoucher memory v = _cv(CH, uint64(maxB + 2), 4);
+        _expectSkip(0, _keyP(), uint64(maxB + 2), ChannelDoor.SettleSkip.NoBucket);
+        _settle(v, _sign(buyerKey, v), uint64(maxB + 1), 1);
+        assertEq(_slot(buyer).h2, maxB, "one over is refused");
+        assertEq(_slot(buyer).settled, maxB + 1, "and writes nothing");
+    }
+
+    /// A fold into a bucket that already matures later (the hold was lowered) reports THAT
+    /// maturity in `ChannelSettled`, the bucket the charge is really in.
+    function test_edge_foldReportsTheBucketsMaturity() public {
+        vm.prank(admin);
+        config.setCollectHold(86_400);
+        _settleD(0, 100_000, 1);
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3);
+        uint256 newest = _slot(delegate).m2;
+        vm.prank(admin);
+        config.setCollectHold(60);
+        ChannelVoucher memory v = _cv(CH, 400_000, 4);
+        bytes memory sig = _sign(delegateKey, v);
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit ChannelDoor.ChannelSettled(
+            _key(delegate),
+            buyer,
+            delegate,
+            provider,
+            CH,
+            400_000,
+            4,
+            100_000,
+            0,
+            uint24(newest),
+            TAKE_RATE_BPS
+        );
+        _settle(v, sig, 300_000, 100_000);
+    }
+
     function test_edge_pureWaive_carriesNoRateNorMaturity() public {
         ChannelVoucher memory v = _cv(CH, 100_000, 1);
         bytes memory sig = _sign(delegateKey, v);
@@ -1466,7 +1695,7 @@ contract AssayEscrowChannelTest is Fixture {
     /// A token that answers `false` has refused: the payout is set aside, never counted paid.
     function test_edge_payoutReadsAFalseReturn() public {
         FalseTransferToken t = new FalseTransferToken();
-        AssayEscrow e2 = _deployEscrow(address(t));
+        IAssayEscrow e2 = _deployEscrow(address(t));
         t.mint(buyer, 10e6);
         vm.startPrank(buyer);
         t.approve(address(e2), type(uint256).max);
@@ -1487,7 +1716,7 @@ contract AssayEscrowChannelTest is Fixture {
     /// The collect door refuses a re-entry from the token it pays with.
     function test_edge_collect_refusesReentry() public {
         ReenterCollectToken t = new ReenterCollectToken();
-        AssayEscrow e2 = _deployEscrow(address(t));
+        IAssayEscrow e2 = _deployEscrow(address(t));
         t.mint(buyer, 10e6);
         vm.startPrank(buyer);
         t.approve(address(e2), type(uint256).max);
@@ -1537,7 +1766,10 @@ contract AssayEscrowChannelTest is Fixture {
     }
 
     /// Settles `amount` payer-signed on `e2` and warps to its maturity.
-    function _settleOn(AssayEscrow e2, uint64 amount) internal returns (ChannelRef[] memory refs) {
+    function _settleOn(IAssayEscrow e2, uint64 amount)
+        internal
+        returns (ChannelRef[] memory refs)
+    {
         ChannelVoucher memory v = _cv(CH, amount, 1);
         bytes32 sh = keccak256(
             abi.encode(
@@ -1565,7 +1797,7 @@ contract AssayEscrowChannelTest is Fixture {
     /// reverts or pays in full, never sets money aside.
     function test_edge_noGasLimitForcesADeferral_ofAnHonestHeavyPayout() public {
         HeavyTransferToken t = new HeavyTransferToken();
-        AssayEscrow e2 = _deployEscrow(address(t));
+        IAssayEscrow e2 = _deployEscrow(address(t));
         t.mint(buyer, 10e6);
         vm.startPrank(buyer);
         t.approve(address(e2), type(uint256).max);

@@ -622,8 +622,9 @@ half is the last paragraph.
       classify against the **merge base**, not `HEAD`; `docs/ci-gates.md` §3 has the recipe and the
       reason (a branch can otherwise append twice and land a net reorder nobody refused).
 - [ ] `forge test` green, including `test/Upgrade.t.sol`. `./script/check-sizes.sh` green — the new
-      implementation is still under the 23,000-byte gate (the escrow is 22,963 with D-28: 37
-      bytes of room, so an audit fix to the escrow likely moves code into `ChannelDoor`).
+      implementation is still under the 23,000-byte gate (with D-29 the escrow core is 13,834
+      and its extension 14,250; the escrow's creation code carries the extension's and is held
+      under EIP-3860's 49,152).
       `./script/check-vendor.sh` green.
 - [ ] **The storage-layout snapshot diff is read by a human, out loud, field by field.** This is
       the review the Solana side did not have when a layout change left 41 devnet accounts
@@ -653,8 +654,10 @@ half is the last paragraph.
       what was added and why it is safe to expose. `script/abi-surface.sh` states what the
       comparison can and cannot see.
 - [ ] **The new implementation's EIP-712 constructor is still `EIP712("Assay Settlement", "2")`.**
-      `grep -rn 'EIP712("' src/` must print exactly two lines, `AssayEscrow.sol` and `AssayStake.sol`,
-      both with those two strings. See the warning below.
+      `grep -rn 'EIP712("' src/` must print exactly one line, `AssayStake.sol`; the escrow passes
+      `EIP712_NAME` and `EIP712_VERSION` from `src/AssayEscrowStorage.sol` (D-29), which must still
+      be those two strings, because the extension builds the same separator from them. See the
+      warning below.
 
 ### The transaction
 
@@ -683,6 +686,16 @@ link spans name any other address (`LinkedLibraryMismatch`) and a library whose 
 that hash (`LibraryCodehashMismatch`). The record carries the pair under
 `.contracts.AssayEscrow.libraries.ChannelDoor` (`address`, `runtimeKeccak`); the escrow's own
 `implementationRuntimeKeccak` is taken with the link spans zeroed (`script/linked-code.sh`).
+
+**An escrow upgrade also pins its extension (D-29).** `UPGRADE_ESCROW` requires
+`EXPECTED_CODEHASH_EXTENSION`: `cast keccak $(cast code $(cast call $IMPL_ESCROW 'EXTENSION()(address)' --rpc-url <rpc>) --rpc-url <rpc>)`.
+The extension's address is not an input. The script reads `EXTENSION()` from the implementation,
+refuses it unless it is the implementation's first CREATE (`ExtensionMismatch`), refuses other
+code (`ExtensionCodehashMismatch`), and compares the code with the local build with its one
+immutable (its own address) checked by value (`NotThisBuild`). After the upgrade it requires
+`effectiveCapsOf` and `delegatesOf` of the sample buyer, now answered through the extension, to
+equal what they were before. The record carries `.contracts.AssayEscrow.extension` (`address`,
+`runtimeKeccak`), and `verify-deployment.sh` check 3c verifies it on chain.
 
 `check-bytecode.sh` will also report AssayConfig and AssayStake as drifted after D-28. That is the
 CBOR metadata trailer only (the shared `Types.sol` and `Errors.sol` changed, so the source hashes in
