@@ -2084,3 +2084,33 @@ replaced is refused ("immutable … holds different values at its spans").
 The ABI gate's fail-open (an overlap error swallowed by nested `$(...)`) was reproduced with a
 fake `FORGE` returning one selector for both halves: before the fix `abi_hash` printed keccak("")
 and exited 0; after it, `abi_hash` exits 1 with the overlapping signature named.
+
+## D-30: per-call memo, grouped payouts, calldata forward, lookup table (2026-10-31)
+
+Run on a copy of the tree, one mutant at a time, against the suites named per row.
+
+| ID | Mutation | Result |
+|---|---|---|
+| M1 | redeem never calls `assertActive` once the memo is consulted | killed (`test_wrongState_theBatchIsClosedWhilePaused`, the C1 collision tests) |
+| M2 | `_seen` reports a hit on an empty slot | killed |
+| M3 | `_seen` matches any occupied slot (no key compare) | killed (`test_C1_collidingBlockedDelegateIsStillRefused`, `test_C1_collidingUnstakedProviderIsStillRefused`) |
+| M4 | redeem never books `totalHeld` | killed (`test_fullestSetsRedeemAndCollect`, fuzz) |
+| M5 | the memo's active set sized `n` instead of `4n` (fills, probe never ends) | killed (out of gas: `test_fullestSetsRedeemAndCollect`, `test_collidingBuyersCostBoundedGas`) |
+| M6 | the stake-floor cache inverted | killed (`test_wrongState_anUnderStakedProviderIsNotPaid`) |
+| M7 | `collectableAt` without the hold | killed (`test_collect_refusedBeforeCollectableAt`, the `PaymentHeld` emit test) |
+| M8 | grouped payout books every provider at index 0 | killed (`testFuzz_C4_batchEqualsItemByItem`) |
+| M9 | the provider map compares the whole word (never finds an entry above index 0) | survived the first run (totals stay equal, payouts split); killed after `test_C4_aRecurringProviderIsPaidInOneTransfer` |
+| M10 | grouped collect never lowers `totalHeld` | killed |
+| M11 | grouped collect drops the fee transfer | killed |
+| M12 | grouped collect skips `assertActive` | killed (`test_C4_blockedPayerMidBatchFreezesTheBatch`) |
+| M13 | `settleChannels` without the `o < 0x80` offset guard | **equivalent**: the library's own decoder refuses a shifted head offset (it reads a length of 0x160 or more), so the call still reverts empty; the guard stays as defence in depth (`test_E1_headOffsetAcceptedBySolidityHitsTheGuard` passes either way) |
+| M14 | offsets shifted by 0xe0 instead of 0x100 | killed |
+| M15 | the door's table ignores the entry kind (blocklist and stake answers alias) | killed |
+| M16 | `ChannelOpened` on every settlement | killed (`test_E5_openedOncePerKey_evenWhenFirstItemSkipsThenSettles`, `test_E5_twoItemsSameNewKeyOneBatch`) |
+| M17 | the door's table sized `n` instead of `8n` | killed (out of gas: `test_E4_fullyCollidingProvidersStayExact`) |
+| M18 | `SET_HASH` changed by one bit | killed (`test_setHashMatchesTheSources`) |
+| M19 | a one-item `collectHeldBatch` takes the grouped path | **equivalent**: one item gives the same checks, effects, event and the same two transfers; the single-item path is kept for its gas |
+| M20 | `settleChannels` without the short-return-data check | **equivalent**: the linked library always returns one word; the check stays for a library that does not |
+
+The free-pointer capture moved before the table allocation was also run (by the final security
+review) and is killed by five channel tests.

@@ -104,20 +104,23 @@ library ChannelDoor {
         WindowClosed
     }
 
-    /// @notice Emitted when a channel settles: `charge` moves into hold, `waived` is forgiven.
+    /// @notice Emitted when a channel settles: `charge` moves into hold and the rest of the step
+    ///         to `cumulative` is forgiven. On a key's first settlement `ChannelOpened` is emitted
+    ///         just before it, in the same item.
+    /// @dev `signer` and `channelId` are in `ChannelOpened`, sent once per key. The waived part
+    ///      is `cumulative - the key's previous cumulative (0 at open) - charge`.
     event ChannelSettled(
         bytes32 indexed key,
         address indexed payer,
-        address signer,
         address indexed provider,
-        bytes32 channelId,
         uint64 cumulative,
         uint32 calls,
         uint64 charge,
-        uint64 waived,
         uint24 maturityHour,
         uint16 takeRateBps
     );
+    /// @notice Emitted on a channel's first settlement: the key's two inputs not in its topics.
+    event ChannelOpened(bytes32 indexed key, address signer, bytes32 channelId);
     /// @notice Emitted when a settlement moved a bucket's maturity later (`_fold`): the bucket
     ///         named `fromHour << 16 | takeRateBps` is now named `toHour << 16 | takeRateBps`.
     event ChannelBucketDeferred(
@@ -224,20 +227,50 @@ library ChannelDoor {
 
     // --- per-transaction caches (blocklist and stake only; window and balance are read live) --
 
+    /// @dev An open-addressing table in memory. One word
+    ///      per entry: `tag | value << 168`, where `tag = address | kind << 160` (kind 1 =
+    ///      blocklist, 2 = stake), so an empty word (0) never matches. At most 4n entries in a
+    ///      table of at least 8n words (load <= 1/2); a lookup is O(1) expected, and an adversary
+    ///      grinding colliding addresses degrades it at worst to a linear scan of the table,
+    ///      no worse than the arrays it replaces.
     struct Cache {
-        address[] addr;
-        bool[] blocked;
-        uint256 n;
-        address[] prov;
-        bool[] staked;
-        uint256 pn;
+        uint256 tab;
+        uint256 mask;
     }
 
+    uint256 private constant TAG_MASK = (1 << 168) - 1;
+
     function _newCache(uint256 n) private pure returns (Cache memory c) {
-        c.addr = new address[](3 * n);
-        c.blocked = new bool[](3 * n);
-        c.prov = new address[](n);
-        c.staked = new bool[](n);
+        uint256 size = 16;
+        while (size < 8 * n) size <<= 1;
+        uint256 tab;
+        assembly ("memory-safe") {
+            tab := mload(0x40)
+            // Memory past the free pointer may be dirty: zero the table (calldata past its end
+            // reads as zeros).
+            calldatacopy(tab, calldatasize(), shl(5, size))
+            mstore(0x40, add(tab, shl(5, size)))
+        }
+        c.tab = tab;
+        c.mask = size - 1;
+    }
+
+    /// @dev The table word for `tag` and its memory address: a hit (w != 0) or the empty word to
+    ///      fill on a miss.
+    function _probe(Cache memory c, uint256 tag) private pure returns (uint256 at, uint256 w) {
+        uint256 tab = c.tab;
+        uint256 mask = c.mask;
+        assembly ("memory-safe") {
+            let i :=
+                and(shr(128, mul(tag, 0x9e3779b97f4a7c15f39cc0605cedc8341082276bf3a27251)), mask)
+            for {} 1 {} {
+                at := add(tab, shl(5, i))
+                w := mload(at)
+                if iszero(w) { break }
+                if eq(and(w, TAG_MASK), tag) { break }
+                i := and(add(i, 1), mask)
+            }
+        }
     }
 
     function _isBlocked(Cache memory c, IAssayConfig config, address a)
@@ -245,13 +278,13 @@ library ChannelDoor {
         view
         returns (bool)
     {
-        for (uint256 i = 0; i < c.n; ++i) {
-            if (c.addr[i] == a) return c.blocked[i];
-        }
+        uint256 tag = uint256(uint160(a)) | (1 << 160);
+        (uint256 at, uint256 w) = _probe(c, tag);
+        if (w != 0) return (w >> 168) == 1;
         bool b = _blockedOf(config, a);
-        c.addr[c.n] = a;
-        c.blocked[c.n] = b;
-        ++c.n;
+        assembly ("memory-safe") {
+            mstore(at, or(tag, shl(168, b)))
+        }
         return b;
     }
 
@@ -260,13 +293,13 @@ library ChannelDoor {
         view
         returns (bool)
     {
-        for (uint256 i = 0; i < c.pn; ++i) {
-            if (c.prov[i] == provider) return c.staked[i];
-        }
+        uint256 tag = uint256(uint160(provider)) | (2 << 160);
+        (uint256 at, uint256 w) = _probe(c, tag);
+        if (w != 0) return (w >> 168) == 1;
         bool ok = _freeBondedOf(x.stake, provider) >= x.minimumStake;
-        c.prov[c.pn] = provider;
-        c.staked[c.pn] = ok;
-        ++c.pn;
+        assembly ("memory-safe") {
+            mstore(at, or(tag, shl(168, ok)))
+        }
         return ok;
     }
 
@@ -377,6 +410,10 @@ library ChannelDoor {
         if (sigs.length != vs.length * 65) revert BatchLengthMismatch();
         _shape(vs.length, fromSettled.length, charges.length);
         Cache memory c = _newCache(vs.length);
+        uint256 fmp;
+        assembly ("memory-safe") {
+            fmp := mload(0x40)
+        }
         for (uint256 i = 0; i < vs.length; ++i) {
             total += _settleOne(
                 s,
@@ -392,6 +429,12 @@ library ChannelDoor {
                 fromSettled[i],
                 charges[i]
             );
+            // Nothing an item allocates outlives it, so its memory is reused. `fmp` is taken after
+            // every allocation that must survive across items (`x`, the table), so a reset
+            // never frees them. Keep it that way when adding per-batch state.
+            assembly ("memory-safe") {
+                mstore(0x40, fmp)
+            }
         }
         s.held += uint128(total);
     }
@@ -496,16 +539,14 @@ library ChannelDoor {
         sl.settled = v.cumulative;
         sl.calls = v.calls;
         s.state[it.key] = pack(sl);
+        if (from == 0) emit ChannelOpened(it.key, it.signer, v.channelId);
         emit ChannelSettled(
             it.key,
             v.payer,
-            it.signer,
             v.provider,
-            v.channelId,
             v.cumulative,
             v.calls,
             uint64(it.charge),
-            uint64(v.cumulative - from - it.charge),
             uint24(it.m),
             it.charge > 0 ? x.takeRateBps : 0
         );

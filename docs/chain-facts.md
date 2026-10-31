@@ -316,6 +316,10 @@ against a version of the escrow three commits older, and stayed on this page aft
 because nothing tied the two together. Neither page is gated by a test, so **re-derive it in the same change that re-measures
 `docs/gas.md`** — the two pages are one measurement.
 
+> **Superseded (2026-10-31, D-30).** Since the hold design a redemption makes no transfer, and since
+> D-30 a `collectHeldBatch` of n items makes one transfer per distinct provider plus one fee
+> transfer (at most n + 1, not 2n). The per-transfer margin below is therefore conservative.
+
 **So 64 is validated, with the caveat named.** Every gas figure in `docs/gas.md` was against
 `MockUSDG`, roughly the cheapest possible ERC-20; the worst case now also has a real-token figure
 beside it (below). Real USDG **on 4663** is presumed to be an upgradeable proxy with a blocklist, with

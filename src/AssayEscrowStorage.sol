@@ -229,6 +229,37 @@ abstract contract AssayEscrowStorage {
         escrows[payer].authNonce += 1;
     }
 
+    /// @dev Multiplier for the in-memory hash tables: the slot is the high bits of the product,
+    ///      so every bit of the address moves it. The multiplier is public, so collisions can
+    ///      still be ground (about one try per slot); that costs probes, bounded by the table
+    ///      size, never a wrong answer.
+    uint256 internal constant SET_HASH = 0x9e3779b97f4a7c15f39cc0605cedc8341082276bf3a27251;
+
+    /// @dev True if `x` is in the open-addressing set `t` (entries `x | 1 << 160`; length a
+    ///      power of two that the caller keeps above the number of entries, so the probe always
+    ///      ends); otherwise inserts it and returns false. A colliding address costs probes,
+    ///      never a wrong answer: an entry matches only its own address.
+    function _seen(uint256[] memory t, address x) internal pure returns (bool hit) {
+        assembly ("memory-safe") {
+            let mask := sub(mload(t), 1)
+            let key := or(x, shl(160, 1))
+            let i := and(shr(128, mul(key, SET_HASH)), mask)
+            for {} 1 {} {
+                let ptr := add(add(t, 0x20), shl(5, i))
+                let e := mload(ptr)
+                if eq(e, key) {
+                    hit := 1
+                    break
+                }
+                if iszero(e) {
+                    mstore(ptr, key)
+                    break
+                }
+                i := and(add(i, 1), mask)
+            }
+        }
+    }
+
     /// @dev Batch shape: non-empty, at most `MAX_REDEEM_BATCH`, equal array lengths.
     function _assertBatch(uint256 n, uint256 m) internal pure {
         if (n == 0) revert EmptyBatch();

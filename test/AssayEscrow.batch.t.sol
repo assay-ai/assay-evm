@@ -909,47 +909,32 @@ contract AssayEscrowBatchTest is Fixture {
         // … and the item-by-item ordering is the collect batch's.
         _collectAll(e2, vs);
 
-        assertEq(obs.transferCount(), 8, "two transfers per item, or the indices below are wrong");
+        // One payout per distinct provider (first-seen order), then one fee payout.
+        assertEq(obs.transferCount(), 5, "one transfer per provider plus one fee transfer");
 
         uint256 total = uint256(amounts[0]) + amounts[1] + amounts[2] + amounts[3];
-        uint256 running;
-        for (uint256 n = 0; n < 4; n++) {
-            running += amounts[n];
-            uint256 t = 2 * n; // item n's FIRST transfer — the provider payout
-
-            assertEq(obs.seenTo(t), providers[n], "transfer 2n is not item n's provider payout");
-            assertEq(obs.seenAmount(t), amounts[n] - _fee(amounts[n]));
-
-            // 1. item n's own effects are ALREADY written when item n is paid; every redemption
-            //    effect landed in the redemption batch, before any payout.
-            BatchObserverUSDG.Seen memory own = obs.seenAt(t, n);
-            assertEq(
-                own.heldStatus,
-                uint8(AssayEscrowStorage.HeldStatus.Collected),
-                "item n not yet Collected at item n's payout"
-            );
-            assertEq(own.seqHigh, 1, "item n's seqHigh not advanced at item n's payout");
-            assertEq(own.balance, FUND - amounts[n], "item n's balance not debited");
-            assertEq(own.totalRedeemed, amounts[n], "item n's totalRedeemed not advanced");
-
-            // 2. and item n+1's are NOT — the loop is n complete collects, not a pass of
-            //    effects followed by a pass of payouts.
-            if (n + 1 < 4) {
-                BatchObserverUSDG.Seen memory next = obs.seenAt(t, n + 1);
-                assertEq(
-                    next.heldStatus,
-                    uint8(AssayEscrowStorage.HeldStatus.Held),
-                    "item n+1 collected before item n was paid"
-                );
+        uint256 fees;
+        for (uint256 t = 0; t < 5; t++) {
+            if (t < 4) {
+                assertEq(obs.seenTo(t), providers[t], "transfer t is not provider t's payout");
+                assertEq(obs.seenAmount(t), amounts[t] - _fee(amounts[t]));
+                fees += _fee(amounts[t]);
+            } else {
+                assertEq(obs.seenTo(t), treasury, "the last transfer is not the fee payout");
+                assertEq(obs.seenAmount(t), fees, "the fee payout is not the batch's fee total");
             }
-
-            // 3. the pooled counter says the same thing in one number: exactly items 0..n have
-            //    left the hold at this instant.
-            assertEq(
-                obs.seenTotalHeld(t),
-                uint128(total - running),
-                "totalHeld at item n's payout is not exactly items 0..n released"
-            );
+            // Every item's effects are written before the FIRST payout: checks and effects for
+            // the whole batch, then the interactions.
+            for (uint256 n = 0; n < 4; n++) {
+                BatchObserverUSDG.Seen memory own = obs.seenAt(t, n);
+                assertEq(
+                    own.heldStatus,
+                    uint8(AssayEscrowStorage.HeldStatus.Collected),
+                    "an item not yet Collected at a payout"
+                );
+                assertEq(own.balance, FUND - amounts[n], "item n's balance not debited");
+            }
+            assertEq(obs.seenTotalHeld(t), 0, "totalHeld not fully released before the payouts");
             assertEq(obs.seenTotalEscrowed(t), uint128(4 * uint256(FUND) - total));
         }
 
@@ -981,7 +966,7 @@ contract AssayEscrowBatchTest is Fixture {
         assertEq(
             _count(
                 src,
-                "        for (uint256 i = 0; i < n; ++i) {\n            _redeem(vs[i], sigs[i], p);\n        }\n"
+                "        for (uint256 i = 0; i < n; ++i) {\n            _redeem(vs[i], sigs[i], p, m);\n        }\n"
             ),
             1,
             "the batch loop is not the exact one-line delegation this test pins"

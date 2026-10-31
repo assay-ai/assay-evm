@@ -1143,7 +1143,7 @@ contract AssayEscrowRedeemTest is Fixture {
         assertEq(
             _count(
                 src,
-                "        address delegate =\n            _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);\n"
+                "        address delegate = _voucherAuthority(\n            v.payer, MessageHashUtils.toTypedDataHash(m.ds, Voucher712.hashVoucher(v)), sig, nowTs\n        );\n"
             ),
             1,
             "_redeem does not call the voucher authority unconditionally on the voucher's digest"

@@ -839,6 +839,10 @@ off.
 
 ## 9. What is measured against a mock, and what that costs
 
+> **Superseded (2026-10-31, D-30).** Since the hold design a redemption makes no transfer, and since
+> D-30 a `collectHeldBatch` of n items makes one transfer per distinct provider plus one fee
+> transfer (at most n + 1, not 2n). The per-transfer margin below is therefore conservative.
+
 Every gas figure in `docs/gas.md` — including the 5,235,730 worst-case 64-item batch — was measured
 against `MockUSDG`, roughly the cheapest possible ERC-20. **Mainnet USDG is presumed to be an
 upgradeable proxy with a blocklist, and there are two transfers per voucher.**

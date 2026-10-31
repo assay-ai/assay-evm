@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.38;
 
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {AssayEscrow} from "../../src/AssayEscrow.sol";
 import {AssayEscrowExtension} from "../../src/AssayEscrowExtension.sol";
 
@@ -29,8 +28,8 @@ contract SilentDomainExtension is AssayEscrowExtension {
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
 
-    function _hashTypedDataV4(bytes32 structHash) internal view override returns (bytes32) {
-        bytes32 wrongSeparator = keccak256(
+    function _domainSeparator() internal view override returns (bytes32) {
+        return keccak256(
             abi.encode(
                 TYPE_HASH,
                 keccak256("Assay Settlement"),
@@ -39,7 +38,6 @@ contract SilentDomainExtension is AssayEscrowExtension {
                 address(this)
             )
         );
-        return MessageHashUtils.toTypedDataHash(wrongSeparator, structHash);
     }
 }
 

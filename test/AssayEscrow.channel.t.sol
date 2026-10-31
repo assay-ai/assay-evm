@@ -311,17 +311,7 @@ contract AssayEscrowChannelTest is Fixture {
 
         vm.expectEmit(true, true, true, true, address(escrow));
         emit ChannelDoor.ChannelSettled(
-            _key(delegate),
-            buyer,
-            delegate,
-            provider,
-            CH,
-            300_000,
-            3,
-            300_000,
-            0,
-            uint24(m),
-            TAKE_RATE_BPS
+            _key(delegate), buyer, provider, 300_000, 3, 300_000, uint24(m), TAKE_RATE_BPS
         );
         _settleD(0, 300_000, 3);
 
@@ -356,17 +346,7 @@ contract AssayEscrowChannelTest is Fixture {
         ChannelVoucher memory v = _cv(CH, 500_000, 5);
         vm.expectEmit(true, true, true, true, address(escrow));
         emit ChannelDoor.ChannelSettled(
-            _key(delegate),
-            buyer,
-            delegate,
-            provider,
-            CH,
-            500_000,
-            5,
-            300_000,
-            200_000,
-            uint24(_maturity()),
-            TAKE_RATE_BPS
+            _key(delegate), buyer, provider, 500_000, 5, 300_000, uint24(_maturity()), TAKE_RATE_BPS
         );
         _settle(v, _sign(delegateKey, v), 0, 300_000);
         assertEq(_slot(delegate).settled, 500_000);
@@ -1683,17 +1663,7 @@ contract AssayEscrowChannelTest is Fixture {
         bytes memory sig = _sign(delegateKey, v);
         vm.expectEmit(true, true, true, true, address(escrow));
         emit ChannelDoor.ChannelSettled(
-            _key(delegate),
-            buyer,
-            delegate,
-            provider,
-            CH,
-            400_000,
-            4,
-            100_000,
-            0,
-            uint24(newest),
-            TAKE_RATE_BPS
+            _key(delegate), buyer, provider, 400_000, 4, 100_000, uint24(newest), TAKE_RATE_BPS
         );
         _settle(v, sig, 300_000, 100_000);
     }
@@ -1702,9 +1672,7 @@ contract AssayEscrowChannelTest is Fixture {
         ChannelVoucher memory v = _cv(CH, 100_000, 1);
         bytes memory sig = _sign(delegateKey, v);
         vm.expectEmit(true, true, true, true, address(escrow));
-        emit ChannelDoor.ChannelSettled(
-            _key(delegate), buyer, delegate, provider, CH, 100_000, 1, 0, 100_000, 0, 0
-        );
+        emit ChannelDoor.ChannelSettled(_key(delegate), buyer, provider, 100_000, 1, 0, 0, 0);
         _settle(v, sig, 0, 0);
     }
 

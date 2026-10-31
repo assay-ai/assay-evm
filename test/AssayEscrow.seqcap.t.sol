@@ -139,7 +139,7 @@ contract AssayEscrowSeqCapTest is Fixture {
         );
         bytes memory h = bytes(src);
         bytes memory n = bytes(
-            "        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();\n        // Jump cap, applied only above the high-water mark; the first operand keeps the\n        // subtraction from underflowing.\n        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {\n            revert VoucherSeqGapTooLarge();\n        }\n"
+            "        HeldPayment storage h = heldPayments[v.payer][v.seq];\n        if (h.status != HeldStatus.None) revert VoucherSeqUsed();\n        // Jump cap, applied only above the high-water mark; the first operand keeps the\n        // subtraction from underflowing.\n        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {\n            revert VoucherSeqGapTooLarge();\n        }\n"
         );
         uint256 found;
         for (uint256 i = 0; i + n.length <= h.length; i++) {

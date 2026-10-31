@@ -51,7 +51,7 @@ contract NoTokenDoorsTest is Test {
         "selfdestruct"
     ];
 
-    function _sites() internal pure returns (Site[11] memory s) {
+    function _sites() internal pure returns (Site[14] memory s) {
         // buyer money: the measured-delta pull, the buyer's own exit, a held voucher's two payouts
         // (redeem into hold: `_redeem` itself moves no token)
         s[0] = Site(
@@ -65,6 +65,17 @@ contract NoTokenDoorsTest is Test {
         );
         s[3] =
             Site("AssayEscrow", "_collectHeld", "if (fee > 0) ASSET.safeTransfer(p.treasury, fee);");
+        // the batch collect's aggregated payouts: per distinct provider, then one fee payout
+        s[11] = Site(
+            "AssayEscrow",
+            "collectHeldBatch",
+            "if (o.owed[j] > 0) ASSET.safeTransfer(o.provs[j], o.owed[j]);"
+        );
+        s[12] = Site(
+            "AssayEscrow",
+            "collectHeldBatch",
+            "if (o.fees > 0) ASSET.safeTransfer(p.treasury, o.fees);"
+        );
         // provider collateral: deposit, the provider's own exit, the executed slash's two payouts
         s[4] = Site(
             "AssayStake",
@@ -105,6 +116,9 @@ contract NoTokenDoorsTest is Test {
             "_staticWord",
             "let ok := staticcall(gas(), target, 0x00, 0x24, 0x00, 0x20)"
         );
+        s[13] = Site(
+            "AssayEscrow", "settleChannels", "let ok := delegatecall(gas(), lib, p, len, 0, 0x20)"
+        );
     }
 
     function test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes() public view {
@@ -116,7 +130,7 @@ contract NoTokenDoorsTest is Test {
             "AssayConfig",
             "libraries/ChannelDoor"
         ];
-        Site[11] memory pinned = _sites();
+        Site[14] memory pinned = _sites();
         uint256 matched;
 
         for (uint256 f = 0; f < files.length; f++) {

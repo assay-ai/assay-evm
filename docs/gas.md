@@ -21,6 +21,10 @@ produced it, so any of it can be re-run and disagreed with.
 
 ## The caveat that comes before every number on this page
 
+> **Superseded (2026-10-31, D-30).** Since the hold design a redemption makes no transfer, and since
+> D-30 a `collectHeldBatch` of n items makes one transfer per distinct provider plus one fee
+> transfer (at most n + 1, not 2n). The per-transfer margin below is therefore conservative.
+
 **These figures are measured against `test/helpers/MockUSDG.sol`. They are not USDG's numbers.**
 
 `MockUSDG.transfer` is two `SSTORE`s and a mapping read. The real USDG **on 4663** is presumed to be
@@ -356,14 +360,20 @@ calls of $0.10 per settlement.
 
 | Channels in the tx | Settle, recurring (per channel) | Settle, new channel (per channel) | Collect (per channel) |
 |---|---|---|---|
-| 1 | 151,422 | 170,439 | 129,334 |
-| 3 | 92,497 | 110,165 | 55,755 |
-| 7 | 78,863 | 95,790 | 38,159 |
-| 14 | 57,075 | 74,231 | 26,931 |
-| 28 | 46,410 | 63,496 | 21,488 |
-| 64 | 40,454 | 57,504 | 18,440 |
+| 1 | 147,150 | 167,897 | 127,651 |
+| 3 | 88,403 | 107,893 | 54,758 |
+| 7 | 72,908 | 91,937 | 36,678 |
+| 14 | 51,492 | 70,377 | 25,691 |
+| 28 | 40,802 | 59,622 | 20,287 |
+| 64 | 34,786 | 53,567 | 17,272 |
 
-**Refund of one item:** 79,295.
+**Refund of one item:** 79,275.
+
+These are the D-30 figures (calldata forward, lookup table, per-item memory reuse, slim
+`ChannelSettled`). Before D-30 (after D-29): recurring 151,422 / 92,497 / 78,863 / 57,075 /
+46,410 / 40,454, new 170,439 / 110,165 / 95,790 / 74,231 / 63,496 / 57,504, collect 129,334 /
+55,755 / 38,159 / 26,931 / 21,488 / 18,440, refund 79,295 — so D-30 saves 2.8% to 14.0% on a
+recurring settle (most at 64 channels) and 1.3% to 6.3% on collect.
 
 Re-measured after the core/extension split (D-29) with G1 (collect no longer reads
 `collectHoldSeconds`) and G2 (the blocklist and stake reads without the ABI encoder): settle
@@ -381,11 +391,21 @@ per-channel targets at 7 channels per transaction are **missed**: settle is 78.9
 about 64 channels per transaction (40.6k and 59.1k). The per-call figure is what the
 production traffic sees, because settlement batches every pending channel at once.
 
-**The per-call door after the upgrade.** `redeemVoucher(Batch)` is answered by the extension
-through the core's `fallback` (D-29), one extra DELEGATECALL per transaction: redeem batch 64
-at 85,762 per item against 85,445 before (+0.4%), batch 1 at 186,956 against 183,531 (+1.9%,
-the hop's ≈3.2k paid once). Collect is in the core and unchanged: batch 64 at 30,596 against
-30,599.
+**The per-call door after the upgrade** (per item; "before" is the live main `8620693` on the
+same fork, measured in the same run):
+
+| Batch | Redeem before | Redeem after | Δ | collectHeld before | collectHeld after | Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 183,505 | 189,138 | +3.1% | 127,312 | 127,226 | −0.1% |
+| 6 | 120,963 | 118,666 | −1.9% | 48,292 | 39,314 | −18.6% |
+| 20 | 94,479 | 88,927 | −5.9% | 34,697 | 21,085 | −39.2% |
+| 64 | 85,446 | 78,789 | −7.8% | 30,599 | 15,474 | −49.4% |
+
+`redeemVoucher(Batch)` is answered by the extension through the core's `fallback` (D-29), one
+extra DELEGATECALL per transaction (≈3.2k paid once), and since D-30 builds its per-call memo
+(≈2k paid once), which is why batch 1 costs more; from about 4 items up the memo pays for
+itself. `collectHeldBatch` pays each provider once and the treasury once (D-30), so its saving
+grows with the batch. Redeem plus collect at batch 64: 116,045 → 94,263 per paid call (−18.8%).
 
 **Per paid call** (replaying the production log of 874 calls on this cost model, with
 settlement when the oldest pending call is 30 minutes old, every pending channel joining, and a
@@ -403,12 +423,14 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
 | `AssayConfig` | 7,405 | 30.1% | 7,636 |
-| `AssayEscrow` (core) | 13,834 | 56.3% | 29,689 |
-| `AssayEscrowExtension` | 14,250 | 58.0% | 14,337 |
+| `AssayEscrow` (core) | 15,133 | 61.6% | 31,682 |
+| `AssayEscrowExtension` | 14,944 | 60.8% | 15,031 |
 | `AssayStake` | 13,759 | 56.0% | 15,192 |
-| `ChannelDoor` (library) | 12,042 | 49.0% | 12,074 |
+| `ChannelDoor` (library) | 12,199 | 49.6% | 12,231 |
 
-Measured 2026-10-31 after the core/extension split (D-29). The escrow was 20,312 before the
+Measured 2026-10-31 after D-30 (D-29 alone: core 13,834, extension 14,250, ChannelDoor 12,042).
+The escrow's creation code is gated at 45,000 bytes (EIP-3860's limit is 49,152). Measured
+2026-10-31 after the core/extension split (D-29). The escrow was 20,312 before the
 channel door and 22,963 with it in one contract; its creation code now carries the extension's. First measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
 (`docs/ci-gates.md` §4 has the history). For D-19 (the dispute upgrade, on the earlier compiler) the figures
 were AssayConfig 7,466, AssayEscrow 17,228 and AssayStake 14,791.

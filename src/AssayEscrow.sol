@@ -237,11 +237,95 @@ contract AssayEscrow is
         external
         nonReentrant
     {
-        _assertBatch(payers.length, seqs.length);
+        uint256 n = payers.length;
+        _assertBatch(n, seqs.length);
         ParamSet memory p = _params();
-        for (uint256 i = 0; i < payers.length; ++i) {
-            _collectHeld(payers[i], seqs[i], p);
+        if (n == 1) return _collectHeld(payers[0], seqs[0], p); // the single-item door's path
+        // One payout per distinct provider and one fee payout per batch, after every item's
+        // checks and effects. Each item's `HeldCollected` is emitted as before; the payouts
+        // move the same totals to the same recipients (a zero total makes no call).
+        Payout memory o = _newPayout(n);
+        for (uint256 i = 0; i < n; ++i) {
+            _takeHeld(payers[i], seqs[i], p, o);
         }
+        totalHeld -= uint128(o.sum); // at most MAX_REDEEM_BATCH uint64 amounts
+        for (uint256 j = 0; j < o.k; ++j) {
+            if (o.owed[j] > 0) ASSET.safeTransfer(o.provs[j], o.owed[j]);
+        }
+        if (o.fees > 0) ASSET.safeTransfer(p.treasury, o.fees);
+    }
+
+    /// @dev A batch collect's running books: `assertActive` passes, provider -> index map,
+    ///      distinct providers in first-seen order with their totals, fee total, held total.
+    struct Payout {
+        uint256[] active;
+        uint256[] slot;
+        address[] provs;
+        uint256[] owed;
+        uint256 k;
+        uint256 fees;
+        uint256 sum;
+    }
+
+    function _newPayout(uint256 n) internal pure returns (Payout memory o) {
+        uint256 cap = 4;
+        while (cap < 4 * n) cap <<= 1;
+        o.active = new uint256[](cap);
+        o.slot = new uint256[](cap >> 1);
+        o.provs = new address[](n);
+        o.owed = new uint256[](n);
+    }
+
+    /// @dev Index of `x` in the provider map `t`, inserting it at `next` when absent.
+    function _indexOf(uint256[] memory t, address x, uint256 next)
+        internal
+        pure
+        returns (uint256 j)
+    {
+        assembly ("memory-safe") {
+            let mask := sub(mload(t), 1)
+            let key := or(x, shl(160, 1))
+            let i := and(shr(128, mul(key, SET_HASH)), mask)
+            for {} 1 {} {
+                let ptr := add(add(t, 0x20), shl(5, i))
+                let e := mload(ptr)
+                if iszero(e) {
+                    mstore(ptr, or(key, shl(168, next)))
+                    j := next
+                    break
+                }
+                if eq(and(e, sub(shl(168, 1), 1)), key) {
+                    j := shr(168, e)
+                    break
+                }
+                i := and(add(i, 1), mask)
+            }
+        }
+    }
+
+    /// @dev One batch item's checks and effects, booked into `o`; no transfer. `assertActive`
+    ///      runs unless the payer, the provider and the zero third all passed it in this call.
+    function _takeHeld(address payer, uint64 seq, ParamSet memory p, Payout memory o) internal {
+        HeldPayment storage h = heldPayments[payer][seq];
+        if (h.status != HeldStatus.Held) revert HeldPaymentNotHeld();
+        uint256 opensAt = uint256(h.collectableAt);
+        if (msg.sender != p.redeemer) opensAt += Constants.HELD_TIMEOUT_SECONDS;
+        if (block.timestamp < opensAt) revert HeldNotYetCollectable();
+        address provider = h.provider;
+        bool known = _seen(o.active, payer);
+        known = _seen(o.active, provider) && known;
+        known = _seen(o.active, address(0)) && known;
+        if (!known) _assertActive(payer, provider, address(0));
+
+        uint64 amount = h.amount;
+        h.status = HeldStatus.Collected;
+        (uint64 fee, uint64 providerAmount) = Fee.splitFee(amount, h.takeRateBps);
+        o.sum += amount;
+        o.fees += fee;
+        uint256 j = _indexOf(o.slot, provider, o.k);
+        if (j == o.k) o.provs[o.k++] = provider;
+        o.owed[j] += providerAmount;
+        emit HeldCollected(payer, seq, provider, providerAmount, fee);
     }
 
     /// @notice Returns a held payment to the buyer's balance in full. Redeemer only.
@@ -374,22 +458,51 @@ contract AssayEscrow is
         uint64[] calldata fromSettled,
         uint64[] calldata charges
     ) external nonReentrant {
-        totalEscrowed -= uint128(
-            ChannelDoor.settle(
-                channels,
-                escrows,
-                delegations,
-                priorEscrowCaps,
-                priorDelegateCaps,
-                CONFIG,
-                STAKE,
-                _domainSeparatorV4(),
-                vs,
-                sigs,
-                fromSettled,
-                charges
-            )
-        );
+        // Forwards this call's own ABI tail to the library verbatim instead of re-encoding it:
+        // the library's head is 8 fixed words (5 storage slots, config, stake, domain separator)
+        // followed by the same 4 offsets, each shifted by those 8 words. Solidity has already
+        // bounds-checked the 4 calldata arguments, and the library decodes and checks them again,
+        // so a non-canonical encoding decodes as what it says or reverts. The target is the
+        // linked `ChannelDoor` (a link-time constant).
+        (vs, sigs, fromSettled, charges);
+        address lib = address(ChannelDoor);
+        bytes4 sel = ChannelDoor.settle.selector;
+        IAssayConfig cfg = CONFIG;
+        IAssayStakeView stk = STAKE;
+        bytes32 ds = _domainSeparatorV4();
+        uint256 total;
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, sel)
+            let h := add(p, 4)
+            mstore(h, channels.slot)
+            mstore(add(h, 0x20), escrows.slot)
+            mstore(add(h, 0x40), delegations.slot)
+            mstore(add(h, 0x60), priorEscrowCaps.slot)
+            mstore(add(h, 0x80), priorDelegateCaps.slot)
+            mstore(add(h, 0xa0), cfg)
+            mstore(add(h, 0xc0), stk)
+            mstore(add(h, 0xe0), ds)
+            for { let k := 0 } lt(k, 4) { k := add(k, 1) } {
+                let o := calldataload(add(4, mul(k, 0x20)))
+                // An offset into the 4-word head would be re-read differently once shifted.
+                // Solidity's own decoding has bounded `o` by the calldata size, so `o + 0x100`
+                // cannot overflow.
+                if lt(o, 0x80) { revert(0, 0) }
+                mstore(add(h, add(0x100, mul(k, 0x20))), add(o, 0x100))
+            }
+            let tail := sub(calldatasize(), 0x84)
+            calldatacopy(add(h, 0x180), 0x84, tail)
+            let len := add(0x184, tail)
+            let ok := delegatecall(gas(), lib, p, len, 0, 0x20)
+            if iszero(ok) {
+                returndatacopy(p, 0, returndatasize())
+                revert(p, returndatasize())
+            }
+            if lt(returndatasize(), 0x20) { revert(0, 0) }
+            total := mload(0)
+        }
+        totalEscrowed -= uint128(total);
     }
 
     /// @notice Pays matured channel buckets to their providers and the fee to the treasury.

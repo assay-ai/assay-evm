@@ -685,6 +685,21 @@ are the channel door's buckets and its set-aside payouts (§20, D-28), read with
 - **Pure waives.** A settlement with charge 0 moves no money and is not blocklist-, stake- or
   cap-gated (it still checks time, authority and `calls`). Its `ChannelSettled` carries
   `maturityHour = 0` and `takeRateBps = 0`; consumers must read those as "no bucket".
+- **Events (D-30).** `ChannelSettled` no longer carries `signer`, `channelId` or `waived`;
+  `ChannelOpened` carries the first two once per key, and the waived part is derived from the
+  key's previous `cumulative`. A reader indexes from the upgrade block that brings the channel
+  door (D-28 and D-30 ship in the same upgrade, so no live key predates `ChannelOpened`; a
+  local or dev chain that ran an earlier P2 build is re-seeded, not backfilled).
+  `check-events.sh` makes any later change to an event visible; event changes ship backend-first.
+- **In-memory caches (D-30).** The redeem memo, the grouped collect and the channel door cache
+  answers inside one call. They are sound because a redemption and a settlement make only view
+  calls and collect pays only after every item's checks, and because config's `assertActive`
+  treats its three addresses alike. A future change that adds a state-changing call to those
+  loops, or a role-specific blocklist check, must revisit the caches. An attacker who grinds
+  colliding addresses into a batch adds probes (bounded by the table size), never a wrong answer.
+- **Grouped per-call payouts (D-30).** A `collectHeldBatch` pays each provider once and the
+  treasury once, after every item's effects. An issuer-frozen provider still reverts the whole
+  batch (as before); the backend isolates it by simulation.
 - **Refunds name a bucket by hour and rate** (`maturityHour << 16 | rate`). Two buckets of one
   channel never share both (I11), so a refund always reaches the bucket that holds the call,
   including two buckets of the same hour after a take-rate change.

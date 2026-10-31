@@ -58,11 +58,48 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
 
     /// @dev The escrow proxy's EIP-712 digest: what OZ EIP712 rebuilds when `address(this)` is
     ///      not the implementation, which under the proxy it never is.
-    function _hashTypedDataV4(bytes32 structHash) internal view virtual returns (bytes32) {
-        bytes32 ds = keccak256(
+    function _hashTypedDataV4(bytes32 structHash) internal view returns (bytes32) {
+        return MessageHashUtils.toTypedDataHash(_domainSeparator(), structHash);
+    }
+
+    function _domainSeparator() internal view virtual returns (bytes32) {
+        return keccak256(
             abi.encode(TYPE_HASH, HASHED_NAME, HASHED_VERSION, block.chainid, address(this))
         );
-        return MessageHashUtils.toTypedDataHash(ds, structHash);
+    }
+
+    /// @dev Per-call memo of answers that cannot change inside one transaction: a redemption
+    ///      makes only view calls (to config and stake) and transfers no token, so nothing can
+    ///      change them mid-call. It holds the domain separator (from `block.chainid` and
+    ///      `address(this)`, never stored), the collect hold, addresses `assertActive` already
+    ///      passed and providers already found at or above the floor. A refusal reverts the
+    ///      whole call, so only passes are cached and every refusal is raised by the same call,
+    ///      in the same order, as before. The pause is therefore checked once per call (by the
+    ///      first item's `assertActive`), which is the same answer within one transaction.
+    ///      Assumes config's `assertActive` treats its three addresses alike (pause, then the
+    ///      blocklist, whatever the role): a config change that adds a role-specific check must
+    ///      key this set by role too. Sizes keep every set above its entries (`active` takes at
+    ///      most 3n, `staked` at most n), so a probe always ends.
+    struct Memo {
+        bytes32 ds;
+        uint64 collectableAt;
+        uint128 sum; // total amount moved into hold; booked once at the end
+        uint256[] active; // open-addressing set, entries `addr | 1 << 160`
+        uint256[] staked;
+    }
+
+    function _newMemo(uint256 n, uint64 nowTs) internal view returns (Memo memory m) {
+        m.ds = _domainSeparator();
+        m.collectableAt = nowTs + CONFIG.collectHoldSeconds();
+        uint256 a = 4;
+        while (a < 4 * n) a <<= 1; // > 3n entries: never full
+        m.active = new uint256[](a);
+        m.staked = new uint256[](a >> 1); // > n entries
+    }
+
+    function _book(Memo memory m) internal {
+        totalEscrowed -= m.sum;
+        totalHeld += m.sum;
     }
 
     // --- per-call voucher door ------------------------------------------------------------
@@ -79,7 +116,9 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
     {
         ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        _redeem(v, sig, p); // the pause is checked in `_redeem`
+        Memo memory m = _newMemo(1, Cast.toUint64(block.timestamp));
+        _redeem(v, sig, p, m); // the pause is checked in `_redeem` (`assertActive`)
+        _book(m);
     }
 
     /// @notice Redeems up to `MAX_REDEEM_BATCH` vouchers atomically. Redeemer only.
@@ -94,21 +133,26 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
     {
         ParamSet memory p = _params();
         if (msg.sender != p.redeemer) revert NotRedeemer();
-        // The pause is checked per item in `_redeem`.
+        // The pause is checked in `_redeem` by the first item's `assertActive` (the memo caches
+        // passes, so once per call; the same answer within one transaction).
 
         uint256 n = vs.length;
         _assertBatch(n, sigs.length);
 
+        Memo memory m = _newMemo(n, Cast.toUint64(block.timestamp));
         for (uint256 i = 0; i < n; ++i) {
-            _redeem(vs[i], sigs[i], p);
+            _redeem(vs[i], sigs[i], p, m);
         }
+        _book(m);
     }
 
     /// @dev The rule set shared by single and batch redemption: amount, window, seq, signature,
     ///      pause and blocklist, caps, stake floor, balance. Seq is checked before the signature.
     ///      Transfers no token; every external read precedes the effects. A refusal leaves the
     ///      seq unused.
-    function _redeem(Voucher calldata v, bytes calldata sig, ParamSet memory p) internal {
+    function _redeem(Voucher calldata v, bytes calldata sig, ParamSet memory p, Memo memory m)
+        internal
+    {
         uint64 nowTs = Cast.toUint64(block.timestamp);
 
         if (v.amount == 0) revert ZeroAmount();
@@ -126,7 +170,8 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
         // Each (payer, seq) redeems at most once, in any order.
         Escrow storage e = escrows[v.payer];
         if (v.seq == 0) revert VoucherSeqZero();
-        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();
+        HeldPayment storage h = heldPayments[v.payer][v.seq];
+        if (h.status != HeldStatus.None) revert VoucherSeqUsed();
         // Jump cap, applied only above the high-water mark; the first operand keeps the
         // subtraction from underflowing.
         if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {
@@ -134,11 +179,18 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
         }
 
         // `address(0)` if the payer signed, else the authorised delegate.
-        address delegate =
-            _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);
+        address delegate = _voucherAuthority(
+            v.payer, MessageHashUtils.toTypedDataHash(m.ds, Voucher712.hashVoucher(v)), sig, nowTs
+        );
 
-        // After recovery, because the signing delegate is only known here.
-        _assertActive(v.payer, v.provider, delegate);
+        // After recovery, because the signing delegate is only known here. Every `_seen` runs
+        // (no short circuit) so all three are recorded once the call below passes.
+        {
+            bool known = _seen(m.active, v.payer);
+            known = _seen(m.active, v.provider) && known;
+            known = _seen(m.active, delegate) && known;
+            if (!known) _assertActive(v.payer, v.provider, delegate);
+        }
 
         // A voucher passes the current caps or, while a hold runs, the held pair, each whole.
         uint256 spent = uint256(Window.decay(e.spentInWindow, e.windowStartedAt, nowTs)) + v.amount;
@@ -169,12 +221,14 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
         }
 
         // Only free bonded stake counts toward the provider's minimum.
-        if (STAKE.freeBondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
+        if (!_seen(m.staked, v.provider) && STAKE.freeBondedOf(v.provider) < p.minimumStake) {
+            revert ProviderBelowMinimumStake();
+        }
 
         if (e.balance < v.amount) revert EscrowInsufficient();
 
-        // The collect hold in force now, frozen into the record.
-        uint64 collectableAt = nowTs + CONFIG.collectHoldSeconds();
+        // The collect hold in force now (read once per call), frozen into the record.
+        uint64 collectableAt = m.collectableAt;
 
         // effects
         if (v.seq > e.seqHigh) e.seqHigh = v.seq;
@@ -184,7 +238,7 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
         // Never moves backwards.
         e.windowStartedAt = nowTs > e.windowStartedAt ? nowTs : e.windowStartedAt;
         e.totalRedeemed += v.amount;
-        totalEscrowed -= v.amount;
+        m.sum += v.amount;
         uint64 delegateSpentAfter;
         if (delegate != address(0)) {
             delegateSpentAfter = Cast.toUint64(delegateSpent);
@@ -193,13 +247,11 @@ contract AssayEscrowExtension is EscrowSlotsReserved, ReentrancyGuard, AssayEscr
         }
 
         // Into hold; `fee` is computed here only for the event.
-        HeldPayment storage h = heldPayments[v.payer][v.seq];
         h.provider = v.provider;
         h.amount = v.amount;
         h.takeRateBps = p.takeRateBps;
         h.status = HeldStatus.Held;
         h.collectableAt = collectableAt;
-        totalHeld += v.amount;
         (uint64 fee,) = Fee.splitFee(v.amount, p.takeRateBps);
 
         emit PaymentHeld(v.payer, v.seq, v.provider, v.amount, collectableAt);
