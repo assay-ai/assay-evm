@@ -116,6 +116,14 @@ OUT="deployments/$CHAIN_ID.json"
 # that check refuses a record still carrying the placeholder.
 [ -e "$OUT" ] && { echo "REFUSED: $OUT already exists. Edit it, or move it aside deliberately."; exit 1; }
 
+# Computed before the heredoc: a failure inside `$(...)` in a heredoc is ignored, and the record
+# would carry an empty surface that every later comparison of the same build then matches.
+for c in AssayConfig AssayStake AssayEscrow; do
+  h=$(abi_hash "$c") || { echo "cannot compute the function surface of $c"; exit 1; }
+  e=$(abi_json_entries "$c") || { echo "cannot list the function surface of $c"; exit 1; }
+  printf -v "ABI_HASH_$c" '%s' "$h"
+  printf -v "ABI_ENTRIES_$c" '%s' "$e"
+done
 cat > "$OUT" <<JSON
 {
   "chainId": $CHAIN_ID,
@@ -132,9 +140,9 @@ cat > "$OUT" <<JSON
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayConfig)",
-      "abiKeccak": "$(abi_hash AssayConfig)",
+      "abiKeccak": "$ABI_HASH_AssayConfig",
       "abiFunctions": [
-$(abi_json_entries AssayConfig)
+$ABI_ENTRIES_AssayConfig
       ],
       "salt": "$(salt Config)",
       "initializerArgs": "0x"
@@ -143,9 +151,9 @@ $(abi_json_entries AssayConfig)
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayStake)",
-      "abiKeccak": "$(abi_hash AssayStake)",
+      "abiKeccak": "$ABI_HASH_AssayStake",
       "abiFunctions": [
-$(abi_json_entries AssayStake)
+$ABI_ENTRIES_AssayStake
       ],
       "salt": "$(salt Stake)",
       "initializerArgs": "0x"
@@ -164,9 +172,9 @@ $(abi_json_entries AssayStake)
         "address": "0x0000000000000000000000000000000000000000",
         "runtimeKeccak": "$(kc AssayEscrowExtension)"
       },
-      "abiKeccak": "$(abi_hash AssayEscrow)",
+      "abiKeccak": "$ABI_HASH_AssayEscrow",
       "abiFunctions": [
-$(abi_json_entries AssayEscrow)
+$ABI_ENTRIES_AssayEscrow
       ],
       "salt": "$(salt Escrow)",
       "initializerArgs": "0x"

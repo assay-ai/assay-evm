@@ -61,16 +61,25 @@ methods_json() {
   fi
 }
 
+# Each helper captures `methods_json` before using it and returns non-zero if it failed: a
+# failure inside a nested `$(...)` used as an argument is otherwise ignored even under
+# `set -euo pipefail`, and the gate would hash an empty surface (re-review finding).
 abi_lines() {
-  methods_json "$1" | jq -r 'to_entries|sort_by(.key)|.[]|"\(.value) \(.key)"'
+  local m
+  m=$(methods_json "$1") || return 1
+  jq -r 'to_entries|sort_by(.key)|.[]|"\(.value) \(.key)"' <<< "$m"
 }
 
 abi_hash() {
-  cast keccak "$(cast from-utf8 "$(abi_lines "$1")")"
+  local l
+  l=$(abi_lines "$1") || return 1
+  [ -n "$l" ] || { echo "empty function surface for $1" >&2; return 1; }
+  cast keccak "$(cast from-utf8 "$l")"
 }
 
 # The same list, indented as JSON array entries for the deployment record.
 abi_json_entries() {
-  methods_json "$1" \
-    | jq -r 'to_entries|sort_by(.key)|map("        \"\(.value) \(.key)\"")|join(",\n")'
+  local m
+  m=$(methods_json "$1") || return 1
+  jq -r 'to_entries|sort_by(.key)|map("        \"\(.value) \(.key)\"")|join(",\n")' <<< "$m"
 }

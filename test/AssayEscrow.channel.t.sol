@@ -477,6 +477,65 @@ contract AssayEscrowChannelTest is Fixture {
         _assertBooks();
     }
 
+    /// Re-review: with the other bucket still PENDING at another rate, a fold is refused, so a
+    /// take rate switched back and forth cannot keep both buckets from ever maturing. Once the
+    /// other bucket matures, the fold is allowed again.
+    function test_buckets_noFoldWhileTheOtherBucketIsPendingAtAnotherRate() public {
+        vm.prank(admin);
+        config.setCollectHold(3 * 3600);
+        _settleD(0, 100_000, 1); // bucket 1 at the default rate
+        ParamSet memory p = config.params();
+        p.takeRateBps = 2_000;
+        vm.prank(admin);
+        config.updateConfig(p);
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3); // bucket 2 at 20%
+        p.takeRateBps = TAKE_RATE_BPS;
+        vm.prank(admin);
+        config.updateConfig(p); // back: bucket 1 is the newest of this rate, bucket 2 pending
+        vm.warp(_now() + 3600);
+        S memory before = _slot(delegate);
+        ChannelVoucher memory v = _cv(CH, 600_000, 6);
+        _expectSkip(0, _key(delegate), 600_000, ChannelDoor.SettleSkip.NoBucket);
+        _settle(v, _sign(delegateKey, v), 300_000, 300_000);
+        S memory s = _slot(delegate);
+        assertEq(s.m1, before.m1, "bucket 1 did not move");
+        assertEq(s.m2, before.m2, "bucket 2 did not move");
+        // both mature at their own fixed hours; collecting frees them and the charge lands
+        vm.warp(before.m2 * 3600);
+        vm.prank(redeemer);
+        escrow.collectChannels(_ref(delegate), _u(0));
+        ChannelVoucher memory w = _cv(CH, 600_000, 6);
+        _settle(w, _sign(delegateKey, w), 300_000, 300_000);
+        assertEq(_slot(delegate).settled, 600_000, "after the fixed maturities it lands");
+        _assertBooks();
+    }
+
+    /// The other bucket at another rate counts as matured from its maturity second on, as it
+    /// does for collecting: at that very second the fold into the pending bucket is allowed.
+    function test_buckets_anOtherRateBucketMaturedThisSecondAllowsTheFold() public {
+        ParamSet memory p = config.params();
+        p.takeRateBps = 2_000;
+        vm.prank(admin);
+        config.updateConfig(p);
+        _settleD(0, 100_000, 1); // bucket 1 at 20%
+        uint256 mB = _slot(delegate).m1;
+        p.takeRateBps = TAKE_RATE_BPS;
+        vm.prank(admin);
+        config.updateConfig(p);
+        vm.warp(_now() + 3600);
+        _settleD(100_000, 300_000, 3); // bucket 2 at the default rate, one hour later
+        assertEq(_slot(delegate).m2, mB + 1);
+        vm.warp(mB * 3600); // bucket 1 matures this second; bucket 2 is pending
+        vm.prank(admin);
+        config.setCollectHold(2 * 3600); // the next charge needs a later hour than bucket 2's
+        _settleD(300_000, 600_000, 6);
+        S memory s = _slot(delegate);
+        assertEq(s.settled, 600_000, "folded");
+        assertEq(s.m2, mB + 2, "into bucket 2, deferred");
+        assertEq(s.m1, mB, "bucket 1 untouched");
+    }
+
     /// A matured bucket held back by `keepHeld` (a dispute) is never folded into either.
     function test_buckets_aKeptMaturedBucketIsNeverDeferred() public {
         _settleD(0, 100_000, 1);

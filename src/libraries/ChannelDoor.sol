@@ -519,7 +519,8 @@ library ChannelDoor {
     ///      moves with it). Without this a matured bucket left uncollected next to a pending one,
     ///      or a hold above one hour, refused every settlement into a new hour until the newest
     ///      voucher expired unsettled. False (the item skips `NoBucket`) when neither bucket has
-    ///      this rate, the newest of it has matured (collect first), or it would overflow. The two
+    ///      this rate, the newest of it has matured (collect first), the other bucket is still
+    ///      pending at another rate (only around a take-rate change), or it would overflow. The two
     ///      buckets stay distinct (I11): the chosen one is the newest of its rate, so its new
     ///      maturity is above the other's whenever the rates match. On `it.m` it leaves the
     ///      maturity the charge landed in.
@@ -533,6 +534,11 @@ library ChannelDoor {
         // Never a matured bucket: its money (a dispute's `keepHeld` included) is payable now and
         // its anyone-can-collect deadline must not move. Collect it first.
         if (mOld * GRID <= nowTs) return false;
+        // Never while the OTHER bucket is pending at another rate: a take rate switched back and
+        // forth would make each bucket the newest of its rate in turn, and folds would keep both
+        // from ever maturing. With this, the other bucket is the same rate (older, its maturity
+        // fixed) or has matured (fixed too), so the folded bucket stops moving once it clears.
+        if ((one ? sl.r2 : sl.r1) != r && (one ? sl.m2 : sl.m1) * GRID > nowTs) return false;
         uint256 h = one ? sl.h1 : sl.h2;
         if (h + it.charge > MAX_BUCKET) return false;
         uint256 mNew = mOld > it.m ? mOld : it.m;

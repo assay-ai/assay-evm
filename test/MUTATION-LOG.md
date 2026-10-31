@@ -2073,3 +2073,14 @@ Round 2, after the tests below were written: all 4 non-equivalent survivors kill
 The shell twin of H1 (`masked_code` in `script/linked-code.sh`) was exercised on an anvil fork:
 the genuine implementation passes, the same code with only the `fallback`'s `EXTENSION` span
 replaced is refused ("immutable … holds different values at its spans").
+
+### After the re-review (rate ping-pong, ABI gate fail-open)
+
+| ID | Mutation | Result |
+|---|---|---|
+| R1 | `_fold` ignores the other bucket's rate and maturity | killed (`test_buckets_noFoldWhileTheOtherBucketIsPendingAtAnotherRate`) |
+| R2 | the other bucket counts as pending at its maturity second | killed after `test_buckets_anOtherRateBucketMaturedThisSecondAllowsTheFold` |
+
+The ABI gate's fail-open (an overlap error swallowed by nested `$(...)`) was reproduced with a
+fake `FORGE` returning one selector for both halves: before the fix `abi_hash` printed keccak("")
+and exited 0; after it, `abi_hash` exits 1 with the overlapping signature named.

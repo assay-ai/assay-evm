@@ -656,6 +656,9 @@ are the channel door's buckets and its set-aside payouts (§20, D-28), read with
   deadline stay where they were. Before the fold, an uncollected matured bucket next to a
   pending one, or a hold above one hour, refused the settlement, and the provider lost the
   unsettled value once the newest voucher expired (review finding H1).
+  A fold is also refused while the other bucket is still pending at another take rate, so a rate
+  switched back and forth (the admin's `updateConfig` has no delay) cannot make each bucket the
+  newest of its rate in turn and keep both from ever maturing.
   **Worst case and who controls it.** Only the redeemer settles. The pending bucket keeps moving
   while the other bucket stays occupied, and the redeemer can keep that one occupied until its
   maturity + 7 days (by not collecting it, or holding it with `keepHeld`). After that anyone can
@@ -666,7 +669,8 @@ are the channel door's buckets and its set-aside payouts (§20, D-28), read with
   `ChannelBucketDeferred`, because a refund by the old name skips `NoSuchBucket` (judge refunds by
   `ChannelRefunded` / `ChannelRefundSkipped`, not by the receipt). A settlement still skips
   `NoBucket` when both buckets hold another take rate (only across a rate change), when the newest
-  bucket of its rate has matured (collect first), or when a bucket would exceed `MAX_BUCKET`.
+  bucket of its rate has matured (collect first), while the other bucket is pending at another
+  rate (around a rate change, until it matures), or when a bucket would exceed `MAX_BUCKET`.
 - **Issuer freeze.** A frozen provider or treasury no longer blocks anyone else: its share goes
   to `unpaid` and `claimUnpaid` pays it once the freeze lifts. While frozen, that money is out
   of reach of refunds. Mainnet USDG can also `decreaseSupplyFromAddress`, which would make the
