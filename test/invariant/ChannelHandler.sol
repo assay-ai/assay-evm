@@ -69,6 +69,10 @@ contract ChannelHandler is Test {
     uint256 public collects;
     /// Refunds that moved money out of the bucket they did not name. Must stay zero.
     uint256 public wrongBucketRefunds;
+    /// Refunds that moved money under an id already applied on that channel (D-31). Must stay
+    /// zero. Ids come from a small set so reuse is common.
+    uint256 public reusedIdRefunds;
+    mapping(uint256 => mapping(bytes32 => bool)) internal idUsed;
     uint256 public rateChanges;
 
     constructor() {
@@ -256,7 +260,7 @@ contract ChannelHandler is Test {
         ++collects;
     }
 
-    function refund(uint256 cSeed, bool second, uint64 amount) external {
+    function refund(uint256 cSeed, bool second, uint64 amount, uint8 idSeed) external {
         uint256 c = cSeed % CHANNELS;
         ChannelDoor.Slot memory before = slotOf(c);
         uint256 m = second ? before.m2 : before.m1;
@@ -268,10 +272,17 @@ contract ChannelHandler is Test {
         ms[0] = uint40((m << 16) | (second ? before.r2 : before.r1));
         uint64[] memory a = new uint64[](1);
         a[0] = uint64(bound(amount, 0, h + 1));
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = keccak256(abi.encode(idSeed % 32));
         vm.prank(REDEEMER);
-        escrow.refundChannels(refs, ms, a);
+        escrow.refundChannels(refs, ms, a, ids);
         ChannelDoor.Slot memory after_ = slotOf(c);
-        ghost[c].refunded += uint64(before.h1 + before.h2 - after_.h1 - after_.h2);
+        uint64 moved = uint64(before.h1 + before.h2 - after_.h1 - after_.h2);
+        ghost[c].refunded += moved;
+        if (moved != 0) {
+            if (idUsed[c][ids[0]]) ++reusedIdRefunds;
+            idUsed[c][ids[0]] = true;
+        }
         // Only the named bucket may move: the other one keeps its amount, hour and rate.
         if (
             second

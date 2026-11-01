@@ -522,13 +522,16 @@ contract AssayEscrow is
     /// @param refs The channels.
     /// @param buckets Per item, the bucket to refund from: `maturityHour << 16 | takeRateBps`.
     /// @param amounts Per item, the amount to refund.
+    /// @param refundIds Per item, an id applied at most once per channel (D-31).
     function refundChannels(
         ChannelRef[] calldata refs,
         uint40[] calldata buckets,
-        uint64[] calldata amounts
+        uint64[] calldata amounts,
+        bytes32[] calldata refundIds
     ) external nonReentrant {
-        totalEscrowed +=
-            uint128(ChannelDoor.refund(channels, escrows, CONFIG, refs, buckets, amounts));
+        totalEscrowed += uint128(
+            ChannelDoor.refund(channels, escrows, CONFIG, refs, buckets, amounts, refundIds)
+        );
     }
 
     /// @notice Pays `to` what a failed payout set aside for it, to `to` only. Anyone may call.

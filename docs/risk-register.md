@@ -703,6 +703,19 @@ are the channel door's buckets and its set-aside payouts (§20, D-28), read with
 - **Refunds name a bucket by hour and rate** (`maturityHour << 16 | rate`). Two buckets of one
   channel never share both (I11), so a refund always reaches the bucket that holds the call,
   including two buckets of the same hour after a take-rate change.
+- **Refunds are idempotent per refund id (D-31, audit F-3).** Every refund item carries a
+  `refundId`; once applied on a channel it is never applied there again, in a retry or as a
+  duplicate in the same batch (skip `AlreadyRefunded`, value 3). The id is scoped per channel
+  (`keccak256(abi.encode(key, refundId))`), and only an applied refund uses it: an item skipped
+  `NoSuchBucket`, `WindowClosed` or `Insufficient` can be retried with the same id. The backend
+  must derive the id from the dispute or intent (one id per intended refund), never per attempt.
+  What it does not bound: a stolen redeemer key can invent fresh ids and refund any pending
+  bucket to its payer within the window (F-4, accepted: the money only goes back to the payer).
+- **A malformed voucher signature skips its item (D-31, audit F-5).** High `s`, a `v` outside
+  {27, 28} or a signature that recovers no address skips `BadSignature` (value 12) with a zero
+  key; the rest of the batch settles. The acceptance rules are those of the per-call door, which
+  still reverts on the same signatures. Only a wrong total length of the concatenated
+  signatures reverts the batch, a calldata-only condition the sender controls.
 - **Library linkage.** The escrow implementation is linked to one `ChannelDoor` deployment, and
   the escrow's money moves through that code. The escrow codehash pins the library address
   (it is written into the bytecode); `UpgradeByOwner.s.sol` also requires `CHANNEL_DOOR` and

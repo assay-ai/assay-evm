@@ -487,7 +487,9 @@ contract GasChannelsTest is MainnetBase {
         ms[0] = uint40((((w >> 128) & 0xFFFFFF) << 16) | ((w >> 152) & 0xFFFF));
         uint64[] memory a = new uint64[](1);
         a[0] = PRICE;
-        uint256 g = _send(REDEEMER, abi.encodeCall(AssayEscrow.refundChannels, (refs, ms, a)));
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = keccak256("fork-refund-1");
+        uint256 g = _send(REDEEMER, abi.encodeCall(AssayEscrow.refundChannels, (refs, ms, a, ids)));
         console2.log("AFTER channel refund, one item: tx gas", g);
     }
 }

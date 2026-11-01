@@ -275,6 +275,14 @@ contract AssayEscrowChannelTest is Fixture {
         r[0] = ChannelRef(buyer, signer, provider, CH);
     }
 
+    uint256 internal ridNonce;
+
+    /// A fresh refund id per call (D-31): these tests exercise the bucket rules, not the id.
+    function _rid() internal returns (bytes32[] memory r) {
+        r = new bytes32[](1);
+        r[0] = keccak256(abi.encode("rid", ++ridNonce));
+    }
+
     /// A bucket's name for a refund: `maturityHour << 16 | rate`.
     function _bid(uint256 m, uint256 r) internal pure returns (uint40[] memory b) {
         b = new uint40[](1);
@@ -599,11 +607,11 @@ contract AssayEscrowChannelTest is Fixture {
 
         uint128 bal = escrow.escrowOf(buyer).balance;
         vm.prank(redeemer);
-        escrow.refundChannels(_ref(delegate), _bid(m1 + 1, TAKE_RATE_BPS), _u(500_000));
+        escrow.refundChannels(_ref(delegate), _bid(m1 + 1, TAKE_RATE_BPS), _u(500_000), _rid());
         assertEq(escrow.escrowOf(buyer).balance, bal, "the old name refunds nothing");
 
         vm.prank(redeemer);
-        escrow.refundChannels(_ref(delegate), _bid(m1 + 2, TAKE_RATE_BPS), _u(500_000));
+        escrow.refundChannels(_ref(delegate), _bid(m1 + 2, TAKE_RATE_BPS), _u(500_000), _rid());
         assertEq(escrow.escrowOf(buyer).balance, bal + 500_000);
         assertEq(_slot(delegate).h2, 0);
         _assertBooks();
@@ -792,17 +800,21 @@ contract AssayEscrowChannelTest is Fixture {
         assertEq(_slot(delegate).calls, (1 << 24) - 1);
     }
 
-    function test_revert_malformedSignatures() public {
+    /// A malformed signature is the buyer's bytes: it skips `BadSignature` with a zero key and
+    /// changes nothing (D-31; it reverted the batch before).
+    function test_skip_malformedSignatures_badSignature() public {
         ChannelVoucher memory v = _cv(CH, 100_000, 1);
         bytes memory sig = _sign(delegateKey, v);
         vm.startPrank(redeemer);
-        vm.expectRevert(MalleableSignature.selector);
+        _expectSkip(0, bytes32(0), 100_000, ChannelDoor.SettleSkip.BadSignature);
         escrow.settleChannels(_one(v), VoucherSigner.malleate(sig), _u(0), _u(100_000));
         bytes memory badV = abi.encodePacked(sig);
         badV[64] = bytes1(uint8(29));
-        vm.expectRevert(BadSignatureV.selector);
+        _expectSkip(0, bytes32(0), 100_000, ChannelDoor.SettleSkip.BadSignature);
         escrow.settleChannels(_one(v), badV, _u(0), _u(100_000));
         vm.stopPrank();
+        assertEq(_slot(delegate).settled, 0);
+        assertEq(_held(), 0);
     }
 
     // ---------------------------------------------------------------------- settle: skips
@@ -1227,7 +1239,7 @@ contract AssayEscrowChannelTest is Fixture {
         config.setPaused(true);
         uint128 escrowedBefore = escrow.totalEscrowed();
         vm.prank(redeemer);
-        escrow.refundChannels(_ref(delegate), ms, _u(100_000));
+        escrow.refundChannels(_ref(delegate), ms, _u(100_000), _rid());
         AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 500e6 - 200_000);
         assertEq(e.totalRedeemed, 200_000);
@@ -1252,24 +1264,24 @@ contract AssayEscrowChannelTest is Fixture {
             emit ChannelDoor.ChannelRefundSkipped(
                 _key(delegate), wrong[k], 1, uint8(ChannelDoor.RefundSkip.NoSuchBucket)
             );
-            escrow.refundChannels(_ref(delegate), w, _u(1));
+            escrow.refundChannels(_ref(delegate), w, _u(1), _rid());
         }
         uint40[] memory ms = _bid(m, TAKE_RATE_BPS);
         vm.expectEmit(true, false, false, true, address(escrow));
         emit ChannelDoor.ChannelRefundSkipped(
             _key(delegate), right, 300_001, uint8(ChannelDoor.RefundSkip.Insufficient)
         );
-        escrow.refundChannels(_ref(delegate), ms, _u(300_001));
-        escrow.refundChannels(_ref(delegate), ms, _u(0)); // zero: a no-op
+        escrow.refundChannels(_ref(delegate), ms, _u(300_001), _rid());
+        escrow.refundChannels(_ref(delegate), ms, _u(0), _rid()); // zero: a no-op
         // the last instant of the window still refunds
         vm.warp(m * 3600 + Constants.HELD_TIMEOUT_SECONDS - 1);
-        escrow.refundChannels(_ref(delegate), ms, _u(1));
+        escrow.refundChannels(_ref(delegate), ms, _u(1), _rid());
         vm.warp(m * 3600 + Constants.HELD_TIMEOUT_SECONDS);
         vm.expectEmit(true, false, false, true, address(escrow));
         emit ChannelDoor.ChannelRefundSkipped(
             _key(delegate), right, 1, uint8(ChannelDoor.RefundSkip.WindowClosed)
         );
-        escrow.refundChannels(_ref(delegate), ms, _u(1));
+        escrow.refundChannels(_ref(delegate), ms, _u(1), _rid());
         vm.stopPrank();
         assertEq(_held(), 300_000 - 1);
     }
@@ -1285,7 +1297,7 @@ contract AssayEscrowChannelTest is Fixture {
         S memory s = _slot(delegate);
         assertEq(s.m1, s.m2);
         vm.prank(redeemer);
-        escrow.refundChannels(_ref(delegate), _bid(s.m2, 2_000), _u(150_000));
+        escrow.refundChannels(_ref(delegate), _bid(s.m2, 2_000), _u(150_000), _rid());
         s = _slot(delegate);
         assertEq(s.h1, 100_000, "the 10% bucket is untouched");
         assertEq(s.h2, 150_000, "the 20% bucket gave the refund");
@@ -1296,14 +1308,14 @@ contract AssayEscrowChannelTest is Fixture {
         _settleD(0, 300_000, 3);
         uint40[] memory ms = _bid(_slot(delegate).m1, TAKE_RATE_BPS);
         vm.expectRevert(NotRedeemer.selector);
-        escrow.refundChannels(_ref(delegate), ms, _u(1));
+        escrow.refundChannels(_ref(delegate), ms, _u(1), _rid());
     }
 
     function test_refund_thenCollect_paysOnlyTheRest() public {
         _settleD(0, 300_000, 3);
         uint256 m = _slot(delegate).m1;
         vm.prank(redeemer);
-        escrow.refundChannels(_ref(delegate), _bid(m, TAKE_RATE_BPS), _u(100_000));
+        escrow.refundChannels(_ref(delegate), _bid(m, TAKE_RATE_BPS), _u(100_000), _rid());
         vm.warp(m * 3600);
         uint256 pb = usdg.balanceOf(provider);
         vm.prank(redeemer);
@@ -1814,17 +1826,17 @@ contract AssayEscrowChannelTest is Fixture {
         _settleD(100_000, 300_000, 3);
         uint256 b = _slot(delegate).m2;
         vm.startPrank(redeemer);
-        escrow.refundChannels(_ref(delegate), _bid(b, TAKE_RATE_BPS), _u(200_000));
+        escrow.refundChannels(_ref(delegate), _bid(b, TAKE_RATE_BPS), _u(200_000), _rid());
         S memory s = _slot(delegate);
         assertEq(s.h2 + s.m2 + s.r2, 0, "second bucket refunded whole");
-        escrow.refundChannels(_ref(delegate), _bid(a, TAKE_RATE_BPS), _u(100_000));
+        escrow.refundChannels(_ref(delegate), _bid(a, TAKE_RATE_BPS), _u(100_000), _rid());
         s = _slot(delegate);
         assertEq(s.h1 + s.m1 + s.r1, 0, "first bucket refunded whole");
         vm.expectEmit(true, false, false, true, address(escrow));
         emit ChannelDoor.ChannelRefundSkipped(
             _key(delegate), 0, 1, uint8(ChannelDoor.RefundSkip.NoSuchBucket)
         );
-        escrow.refundChannels(_ref(delegate), _bid(0, 0), _u(1));
+        escrow.refundChannels(_ref(delegate), _bid(0, 0), _u(1), _rid());
         vm.stopPrank();
         assertEq(_held(), 0);
         assertEq(escrow.escrowOf(buyer).balance, 500e6);

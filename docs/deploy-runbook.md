@@ -585,6 +585,25 @@ re-judged under the replacement key.**
 An upgrade is the normal repair and a redeploy the exception (D-1). Both are here; the redeploy
 half is the last paragraph.
 
+**The channel-payment upgrade (D-28/D-29/D-31) has a cross-repository order.** This section is
+the contract half only. The full rollout is in the deploy repository's runbook 06 (round-2
+channels rollout), and channel incidents are in its runbook 07. In short:
+
+1. merge this branch to `main` first: the backend's error and event pin test reads `main`;
+2. the backend is deployed with BOTH the old and the new escrow implementation accepted
+   (`EVM_DEPLOYMENTS.previousEscrowImplementations`) and channels off, so its reconciler passes
+   on either side of the upgrade and withdrawals never freeze;
+3. the owner upgrades the proxy from the Ledger (this section);
+4. the post-checks below, plus a clean backend reconciliation run;
+5. the old implementation is dropped from the backend record;
+6. the SDK with the channel APIs is published, then the MCP is bumped to it;
+7. channels are enabled per chain (`EVM_CHANNELS_LIVE_CHAINS`), dev first.
+
+Once the first channel settle has landed, the backend image is never rolled back past the channel
+release: flag off, drain, then a forward fix. Keep `collectHoldSeconds` at 3,600: above about
+3,900 s a take-rate change can strand a channel's last voucher (final review L-1), and the
+backend stops offering channels above 3,600 s.
+
 ### Who does what (D-17)
 
 1. **The DEPLOYER** (a hot key with no role) deploys the new implementation(s):

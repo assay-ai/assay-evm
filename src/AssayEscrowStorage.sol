@@ -118,12 +118,12 @@ abstract contract AssayEscrowStorage {
     uint128 public totalHeld;
 
     /// @dev Channel state, the `unpaid` ledger of deferred transfers, their total and the total
-    ///      held in channel buckets. Three slots. Channel holds are NOT in `totalHeld`, which
+    ///      held in channel buckets, and the used refund ids (D-31). Four slots. Channel holds are NOT in `totalHeld`, which
     ///      keeps counting the per-call door only.
     ChannelDoor.Store internal channels;
 
     /// @dev Reserved storage: a new field goes above and shrinks this by the slots it uses.
-    uint256[42] private __gap;
+    uint256[41] private __gap;
 
     // --- events (one declaration; emitted from the proxy address by either contract) --------
 

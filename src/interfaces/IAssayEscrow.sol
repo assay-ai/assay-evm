@@ -82,7 +82,8 @@ interface IAssayEscrow {
     function refundChannels(
         ChannelRef[] calldata refs,
         uint40[] calldata buckets,
-        uint64[] calldata amounts
+        uint64[] calldata amounts,
+        bytes32[] calldata refundIds
     ) external;
     function claimUnpaid(address to) external;
 

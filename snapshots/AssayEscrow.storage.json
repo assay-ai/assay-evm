@@ -25,23 +25,23 @@
       "type": "t_uint256"
     },
     {
-      "astId": 9645,
+      "astId": 9649,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "CONFIG",
       "offset": 0,
       "slot": "3",
-      "type": "t_contract(IAssayConfig)11445"
+      "type": "t_contract(IAssayConfig)11449"
     },
     {
-      "astId": 9649,
+      "astId": 9653,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "STAKE",
       "offset": 0,
       "slot": "4",
-      "type": "t_contract(IAssayStakeView)11457"
+      "type": "t_contract(IAssayStakeView)11461"
     },
     {
-      "astId": 9653,
+      "astId": 9657,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "ASSET",
       "offset": 0,
@@ -49,15 +49,15 @@
       "type": "t_contract(IERC20)947"
     },
     {
-      "astId": 9659,
+      "astId": 9663,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "escrows",
       "offset": 0,
       "slot": "6",
-      "type": "t_mapping(t_address,t_struct(Escrow)9625_storage)"
+      "type": "t_mapping(t_address,t_struct(Escrow)9629_storage)"
     },
     {
-      "astId": 9662,
+      "astId": 9666,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "totalEscrowed",
       "offset": 0,
@@ -65,15 +65,15 @@
       "type": "t_uint128"
     },
     {
-      "astId": 9670,
+      "astId": 9674,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "delegations",
       "offset": 0,
       "slot": "8",
-      "type": "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)9641_storage))"
+      "type": "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)9645_storage))"
     },
     {
-      "astId": 9676,
+      "astId": 9680,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "delegateList",
       "offset": 0,
@@ -81,31 +81,31 @@
       "type": "t_mapping(t_address,t_array(t_address)dyn_storage)"
     },
     {
-      "astId": 9690,
+      "astId": 9694,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "priorEscrowCaps",
       "offset": 0,
       "slot": "10",
-      "type": "t_mapping(t_address,t_struct(PriorCaps)9684_storage)"
+      "type": "t_mapping(t_address,t_struct(PriorCaps)9688_storage)"
     },
     {
-      "astId": 9698,
+      "astId": 9702,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "priorDelegateCaps",
       "offset": 0,
       "slot": "11",
-      "type": "t_mapping(t_address,t_mapping(t_address,t_struct(PriorCaps)9684_storage))"
+      "type": "t_mapping(t_address,t_mapping(t_address,t_struct(PriorCaps)9688_storage))"
     },
     {
-      "astId": 9725,
+      "astId": 9729,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "heldPayments",
       "offset": 0,
       "slot": "12",
-      "type": "t_mapping(t_address,t_mapping(t_uint64,t_struct(HeldPayment)9717_storage))"
+      "type": "t_mapping(t_address,t_mapping(t_uint64,t_struct(HeldPayment)9721_storage))"
     },
     {
-      "astId": 9728,
+      "astId": 9732,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "totalHeld",
       "offset": 0,
@@ -113,20 +113,20 @@
       "type": "t_uint128"
     },
     {
-      "astId": 9732,
+      "astId": 9736,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "channels",
       "offset": 0,
       "slot": "14",
-      "type": "t_struct(Store)11574_storage"
+      "type": "t_struct(Store)11583_storage"
     },
     {
-      "astId": 9737,
+      "astId": 9741,
       "contract": "src/AssayEscrow.sol:AssayEscrow",
       "label": "__gap",
       "offset": 0,
-      "slot": "17",
-      "type": "t_array(t_uint256)42_storage"
+      "slot": "18",
+      "type": "t_array(t_uint256)41_storage"
     }
   ],
   "types": {
@@ -141,10 +141,10 @@
       "numberOfBytes": "32",
       "base": "t_address"
     },
-    "t_array(t_uint256)42_storage": {
+    "t_array(t_uint256)41_storage": {
       "encoding": "inplace",
-      "label": "uint256[42]",
-      "numberOfBytes": "1344",
+      "label": "uint256[41]",
+      "numberOfBytes": "1312",
       "base": "t_uint256"
     },
     "t_bool": {
@@ -157,12 +157,12 @@
       "label": "bytes32",
       "numberOfBytes": "32"
     },
-    "t_contract(IAssayConfig)11445": {
+    "t_contract(IAssayConfig)11449": {
       "encoding": "inplace",
       "label": "contract IAssayConfig",
       "numberOfBytes": "20"
     },
-    "t_contract(IAssayStakeView)11457": {
+    "t_contract(IAssayStakeView)11461": {
       "encoding": "inplace",
       "label": "contract IAssayStakeView",
       "numberOfBytes": "20"
@@ -172,7 +172,7 @@
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_enum(HeldStatus)9704": {
+    "t_enum(HeldStatus)9708": {
       "encoding": "inplace",
       "label": "enum AssayEscrowStorage.HeldStatus",
       "numberOfBytes": "1"
@@ -184,47 +184,47 @@
       "numberOfBytes": "32",
       "value": "t_array(t_address)dyn_storage"
     },
-    "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)9641_storage))": {
+    "t_mapping(t_address,t_mapping(t_address,t_struct(Delegation)9645_storage))": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => mapping(address => struct AssayEscrowStorage.Delegation))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_address,t_struct(Delegation)9641_storage)"
+      "value": "t_mapping(t_address,t_struct(Delegation)9645_storage)"
     },
-    "t_mapping(t_address,t_mapping(t_address,t_struct(PriorCaps)9684_storage))": {
+    "t_mapping(t_address,t_mapping(t_address,t_struct(PriorCaps)9688_storage))": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => mapping(address => struct AssayEscrowStorage.PriorCaps))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_address,t_struct(PriorCaps)9684_storage)"
+      "value": "t_mapping(t_address,t_struct(PriorCaps)9688_storage)"
     },
-    "t_mapping(t_address,t_mapping(t_uint64,t_struct(HeldPayment)9717_storage))": {
+    "t_mapping(t_address,t_mapping(t_uint64,t_struct(HeldPayment)9721_storage))": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => mapping(uint64 => struct AssayEscrowStorage.HeldPayment))",
       "numberOfBytes": "32",
-      "value": "t_mapping(t_uint64,t_struct(HeldPayment)9717_storage)"
+      "value": "t_mapping(t_uint64,t_struct(HeldPayment)9721_storage)"
     },
-    "t_mapping(t_address,t_struct(Delegation)9641_storage)": {
+    "t_mapping(t_address,t_struct(Delegation)9645_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct AssayEscrowStorage.Delegation)",
       "numberOfBytes": "32",
-      "value": "t_struct(Delegation)9641_storage"
+      "value": "t_struct(Delegation)9645_storage"
     },
-    "t_mapping(t_address,t_struct(Escrow)9625_storage)": {
+    "t_mapping(t_address,t_struct(Escrow)9629_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct AssayEscrowStorage.Escrow)",
       "numberOfBytes": "32",
-      "value": "t_struct(Escrow)9625_storage"
+      "value": "t_struct(Escrow)9629_storage"
     },
-    "t_mapping(t_address,t_struct(PriorCaps)9684_storage)": {
+    "t_mapping(t_address,t_struct(PriorCaps)9688_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct AssayEscrowStorage.PriorCaps)",
       "numberOfBytes": "32",
-      "value": "t_struct(PriorCaps)9684_storage"
+      "value": "t_struct(PriorCaps)9688_storage"
     },
     "t_mapping(t_address,t_uint128)": {
       "encoding": "mapping",
@@ -233,6 +233,13 @@
       "numberOfBytes": "32",
       "value": "t_uint128"
     },
+    "t_mapping(t_bytes32,t_bool)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => bool)",
+      "numberOfBytes": "32",
+      "value": "t_bool"
+    },
     "t_mapping(t_bytes32,t_uint256)": {
       "encoding": "mapping",
       "key": "t_bytes32",
@@ -240,25 +247,25 @@
       "numberOfBytes": "32",
       "value": "t_uint256"
     },
-    "t_mapping(t_uint64,t_struct(HeldPayment)9717_storage)": {
+    "t_mapping(t_uint64,t_struct(HeldPayment)9721_storage)": {
       "encoding": "mapping",
       "key": "t_uint64",
       "label": "mapping(uint64 => struct AssayEscrowStorage.HeldPayment)",
       "numberOfBytes": "32",
-      "value": "t_struct(HeldPayment)9717_storage"
+      "value": "t_struct(HeldPayment)9721_storage"
     },
     "t_string_storage": {
       "encoding": "bytes",
       "label": "string",
       "numberOfBytes": "32"
     },
-    "t_struct(Delegation)9641_storage": {
+    "t_struct(Delegation)9645_storage": {
       "encoding": "inplace",
       "label": "struct AssayEscrowStorage.Delegation",
       "numberOfBytes": "64",
       "members": [
         {
-          "astId": 9628,
+          "astId": 9632,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "maxVoucherAmount",
           "offset": 0,
@@ -266,7 +273,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9630,
+          "astId": 9634,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "maxPerWindow",
           "offset": 8,
@@ -274,7 +281,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9632,
+          "astId": 9636,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "spentInWindow",
           "offset": 16,
@@ -282,7 +289,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9634,
+          "astId": 9638,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "windowStartedAt",
           "offset": 24,
@@ -290,7 +297,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9636,
+          "astId": 9640,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "validUntil",
           "offset": 0,
@@ -298,7 +305,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9638,
+          "astId": 9642,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "listPosition",
           "offset": 8,
@@ -306,7 +313,7 @@
           "type": "t_uint32"
         },
         {
-          "astId": 9640,
+          "astId": 9644,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "revoked",
           "offset": 12,
@@ -315,13 +322,13 @@
         }
       ]
     },
-    "t_struct(Escrow)9625_storage": {
+    "t_struct(Escrow)9629_storage": {
       "encoding": "inplace",
       "label": "struct AssayEscrowStorage.Escrow",
       "numberOfBytes": "128",
       "members": [
         {
-          "astId": 9602,
+          "astId": 9606,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "balance",
           "offset": 0,
@@ -329,7 +336,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 9604,
+          "astId": 9608,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "seqHigh",
           "offset": 16,
@@ -337,7 +344,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9606,
+          "astId": 9610,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "authNonce",
           "offset": 24,
@@ -345,7 +352,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9608,
+          "astId": 9612,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "maxVoucherAmount",
           "offset": 0,
@@ -353,7 +360,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9610,
+          "astId": 9614,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "maxPerWindow",
           "offset": 8,
@@ -361,7 +368,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9612,
+          "astId": 9616,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "spentInWindow",
           "offset": 16,
@@ -369,7 +376,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9614,
+          "astId": 9618,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "windowStartedAt",
           "offset": 24,
@@ -377,7 +384,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9616,
+          "astId": 9620,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "withdrawRequested",
           "offset": 0,
@@ -385,7 +392,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9618,
+          "astId": 9622,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "withdrawAvailableAt",
           "offset": 8,
@@ -393,7 +400,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9620,
+          "astId": 9624,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "totalRedeemed",
           "offset": 16,
@@ -401,7 +408,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 9622,
+          "astId": 9626,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "totalWithdrawn",
           "offset": 0,
@@ -409,7 +416,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 9624,
+          "astId": 9628,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "totalFunded",
           "offset": 16,
@@ -418,13 +425,13 @@
         }
       ]
     },
-    "t_struct(HeldPayment)9717_storage": {
+    "t_struct(HeldPayment)9721_storage": {
       "encoding": "inplace",
       "label": "struct AssayEscrowStorage.HeldPayment",
       "numberOfBytes": "64",
       "members": [
         {
-          "astId": 9707,
+          "astId": 9711,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "provider",
           "offset": 0,
@@ -432,7 +439,7 @@
           "type": "t_address"
         },
         {
-          "astId": 9709,
+          "astId": 9713,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "amount",
           "offset": 20,
@@ -440,7 +447,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9711,
+          "astId": 9715,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "takeRateBps",
           "offset": 28,
@@ -448,15 +455,15 @@
           "type": "t_uint16"
         },
         {
-          "astId": 9714,
+          "astId": 9718,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "status",
           "offset": 30,
           "slot": "0",
-          "type": "t_enum(HeldStatus)9704"
+          "type": "t_enum(HeldStatus)9708"
         },
         {
-          "astId": 9716,
+          "astId": 9720,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "collectableAt",
           "offset": 0,
@@ -465,13 +472,13 @@
         }
       ]
     },
-    "t_struct(PriorCaps)9684_storage": {
+    "t_struct(PriorCaps)9688_storage": {
       "encoding": "inplace",
       "label": "struct AssayEscrowStorage.PriorCaps",
       "numberOfBytes": "32",
       "members": [
         {
-          "astId": 9679,
+          "astId": 9683,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "maxVoucherAmount",
           "offset": 0,
@@ -479,7 +486,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9681,
+          "astId": 9685,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "maxPerWindow",
           "offset": 8,
@@ -487,7 +494,7 @@
           "type": "t_uint64"
         },
         {
-          "astId": 9683,
+          "astId": 9687,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "until",
           "offset": 16,
@@ -496,13 +503,13 @@
         }
       ]
     },
-    "t_struct(Store)11574_storage": {
+    "t_struct(Store)11583_storage": {
       "encoding": "inplace",
       "label": "struct ChannelDoor.Store",
-      "numberOfBytes": "96",
+      "numberOfBytes": "128",
       "members": [
         {
-          "astId": 11565,
+          "astId": 11569,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "state",
           "offset": 0,
@@ -510,7 +517,7 @@
           "type": "t_mapping(t_bytes32,t_uint256)"
         },
         {
-          "astId": 11569,
+          "astId": 11573,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "unpaid",
           "offset": 0,
@@ -518,7 +525,7 @@
           "type": "t_mapping(t_address,t_uint128)"
         },
         {
-          "astId": 11571,
+          "astId": 11575,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "totalUnpaid",
           "offset": 0,
@@ -526,12 +533,20 @@
           "type": "t_uint128"
         },
         {
-          "astId": 11573,
+          "astId": 11577,
           "contract": "src/AssayEscrow.sol:AssayEscrow",
           "label": "held",
           "offset": 16,
           "slot": "2",
           "type": "t_uint128"
+        },
+        {
+          "astId": 11582,
+          "contract": "src/AssayEscrow.sol:AssayEscrow",
+          "label": "refunded",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_mapping(t_bytes32,t_bool)"
         }
       ]
     },

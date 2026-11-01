@@ -79,6 +79,11 @@ contract ChannelInvariantsTest is Test {
         assertEq(h.wrongBucketRefunds(), 0);
     }
 
+    /// D-31: a refund id applied on a channel never moves money there again.
+    function invariant_aRefundIdAppliesOncePerChannel() public view {
+        assertEq(h.reusedIdRefunds(), 0);
+    }
+
     /// I10/I11: an empty bucket carries no maturity or rate; a non-empty one has both buckets'
     /// maturities distinct or their rates distinct.
     function invariant_I11_bucketShape() public view {

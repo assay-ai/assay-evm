@@ -50,6 +50,9 @@ library ChannelDoor {
         mapping(address => uint128) unpaid;
         uint128 totalUnpaid;
         uint128 held; // sum of every channel bucket
+        /// @dev Refund ids already applied, keyed `keccak256(abi.encode(key, refundId))` so an
+        ///      id is scoped to one channel. Written only when a refund is applied (D-31).
+        mapping(bytes32 => bool) refunded;
     }
 
     /// @dev One channel's slot, unpacked.
@@ -89,7 +92,8 @@ library ChannelDoor {
         DelegateWindow,
         Stake,
         Balance,
-        NoBucket
+        NoBucket,
+        BadSignature
     }
 
     /// @notice Why a collect item was skipped. Append-only.
@@ -101,7 +105,8 @@ library ChannelDoor {
     enum RefundSkip {
         NoSuchBucket,
         Insufficient,
-        WindowClosed
+        WindowClosed,
+        AlreadyRefunded
     }
 
     /// @notice Emitted when a channel settles: `charge` moves into hold and the rest of the step
@@ -137,8 +142,10 @@ library ChannelDoor {
     );
     /// @notice Emitted for a collect item left untouched (a party is blocked).
     event ChannelCollectSkipped(bytes32 indexed key, uint8 reason);
-    /// @notice Emitted per bucket refunded to the payer's balance.
-    event ChannelRefunded(bytes32 indexed key, address indexed payer, uint40 bucket, uint64 amount);
+    /// @notice Emitted per bucket refunded to the payer's balance; `refundId` is the item's id.
+    event ChannelRefunded(
+        bytes32 indexed key, address indexed payer, uint40 bucket, uint64 amount, bytes32 refundId
+    );
     /// @notice Emitted when a payout transfer failed and the amount was set aside for `to`.
     event TransferDeferred(address indexed to, uint128 amount);
     /// @notice Emitted when an amount set aside for `to` was paid to it.
@@ -172,10 +179,10 @@ library ChannelDoor {
     }
 
     /// @dev Batch shape: 1..`MAX_REDEEM_BATCH` items, every array the same length.
-    function _shape(uint256 n, uint256 a, uint256 b2) private pure {
+    function _shape(uint256 n, uint256 a, uint256 b2, uint256 c2) private pure {
         if (n == 0) revert EmptyBatch();
         if (n > Constants.MAX_REDEEM_BATCH) revert BatchTooLarge();
-        if (a != n || b2 != n) revert BatchLengthMismatch();
+        if (a != n || b2 != n || c2 != n) revert BatchLengthMismatch();
     }
 
     // --- packing --------------------------------------------------------------------------
@@ -408,7 +415,7 @@ library ChannelDoor {
         if (msg.sender != redeemer) revert NotRedeemer();
         // One 65-byte signature per voucher, concatenated.
         if (sigs.length != vs.length * 65) revert BatchLengthMismatch();
-        _shape(vs.length, fromSettled.length, charges.length);
+        _shape(vs.length, fromSettled.length, charges.length, charges.length);
         Cache memory c = _newCache(vs.length);
         uint256 fmp;
         assembly ("memory-safe") {
@@ -481,7 +488,12 @@ library ChannelDoor {
         }
 
         Item memory it;
-        it.signer = Sig.recover(digestOf(v, x.domainSeparator), sig); // malformed: reverts
+        // A malformed signature is the buyer's bytes, not the sender's: skip, never revert.
+        (it.signer,) = Sig.tryRecover(digestOf(v, x.domainSeparator), sig);
+        if (it.signer == address(0)) {
+            _skip(i, v, bytes32(0), SettleSkip.BadSignature);
+            return 0;
+        }
         it.key = keyOf(v.payer, it.signer, v.provider, v.channelId);
         Slot memory sl = unpack(s.state[it.key]);
 
@@ -700,7 +712,7 @@ library ChannelDoor {
     ) external {
         (Ctx memory x, address redeemer) =
             _ctx(config, IAssayStakeView(address(0)), asset, 0, false);
-        _shape(refs.length, keepHeld.length, keepHeld.length);
+        _shape(refs.length, keepHeld.length, keepHeld.length, keepHeld.length);
         bool byRedeemer = msg.sender == redeemer;
         Payout memory out;
         out.to = new address[](refs.length);
@@ -825,20 +837,24 @@ library ChannelDoor {
     /// @notice Returns held channel money to the payer's balance, from the named bucket, while
     ///         it is inside its refund window. A bucket is named by `maturityHour << 16 | rate`:
     ///         two buckets of one channel never share both (I11). Returns the total.
+    /// @dev Each item carries a `refundId`; an id applied once on a channel is never applied
+    ///      again there (skip `AlreadyRefunded`), in a later call or later in the same batch. An
+    ///      item skipped for any other reason leaves its id unused, so it can be retried (D-31).
     function refund(
         Store storage s,
         mapping(address => AssayEscrowStorage.Escrow) storage escrows,
         IAssayConfig config,
         ChannelRef[] calldata refs,
         uint40[] calldata buckets,
-        uint64[] calldata amounts
+        uint64[] calldata amounts,
+        bytes32[] calldata refundIds
     ) external returns (uint256 total) {
         // Not pause-gated: it moves no token.
         if (msg.sender != config.params().redeemer) revert NotRedeemer();
-        _shape(refs.length, buckets.length, amounts.length);
+        _shape(refs.length, buckets.length, amounts.length, refundIds.length);
         uint256 nowTs = block.timestamp;
         for (uint256 i = 0; i < refs.length; ++i) {
-            total += _refundOne(s, escrows, refs[i], buckets[i], amounts[i], nowTs);
+            total += _refundOne(s, escrows, refs[i], buckets[i], amounts[i], refundIds[i], nowTs);
         }
         s.held -= uint128(total);
     }
@@ -849,10 +865,18 @@ library ChannelDoor {
         ChannelRef calldata ref,
         uint256 bucket,
         uint256 amount,
+        bytes32 refundId,
         uint256 nowTs
     ) private returns (uint256) {
         if (amount == 0) return 0;
         bytes32 key = keyOf(ref.payer, ref.signer, ref.provider, ref.channelId);
+        bytes32 used = keccak256(abi.encode(key, refundId));
+        if (s.refunded[used]) {
+            emit ChannelRefundSkipped(
+                key, uint40(bucket), uint64(amount), uint8(RefundSkip.AlreadyRefunded)
+            );
+            return 0;
+        }
         Slot memory sl = unpack(s.state[key]);
         uint256 m = bucket >> 16;
         uint256 r = bucket & 0xFFFF;
@@ -884,10 +908,11 @@ library ChannelDoor {
             if (sl.h2 == 0) (sl.m2, sl.r2) = (0, 0);
         }
         s.state[key] = pack(sl);
+        s.refunded[used] = true;
         AssayEscrowStorage.Escrow storage e = escrows[ref.payer];
         e.balance += uint128(amount);
         e.totalRedeemed -= uint128(amount);
-        emit ChannelRefunded(key, ref.payer, uint40(bucket), uint64(amount));
+        emit ChannelRefunded(key, ref.payer, uint40(bucket), uint64(amount), refundId);
         return amount;
     }
 }

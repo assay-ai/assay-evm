@@ -369,6 +369,12 @@ calls of $0.10 per settlement.
 
 **Refund of one item:** 79,275.
 
+**D-31 (refund ids, non-reverting voucher signatures), same fork and method, 2026-11-01:**
+refund of one item 103,763 (+24,488: one cold zero-to-non-zero SSTORE and one cold SLOAD for the
+used-id mark, plus the `refundIds` calldata); recurring settle per channel 147,285 / 88,505 /
+73,005 / 51,575 / 40,898 / 34,876 at 1 / 3 / 7 / 14 / 28 / 64 (+83 to +135 per item, the
+non-reverting recovery's extra branch); collect unchanged within 30 gas.
+
 These are the D-30 figures (calldata forward, lookup table, per-item memory reuse, slim
 `ChannelSettled`). Before D-30 (after D-29): recurring 151,422 / 92,497 / 78,863 / 57,075 /
 46,410 / 40,454, new 170,439 / 110,165 / 95,790 / 74,231 / 63,496 / 57,504, collect 129,334 /
