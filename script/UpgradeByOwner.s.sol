@@ -73,10 +73,11 @@ contract UpgradeByOwner is ChannelDoorLink {
         _chain();
         vm.startBroadcast();
         if (vm.envOr("UPGRADE_CONFIG", false)) {
-            console2.log("IMPL_CONFIG=", address(new AssayConfig()));
+            // From its own artifact, for the reason in Deploy.s.sol.
+            console2.log("IMPL_CONFIG=", _deployArtifact("AssayConfig.sol:AssayConfig"));
         }
         if (vm.envOr("UPGRADE_STAKE", false)) {
-            console2.log("IMPL_STAKE=", address(new AssayStake()));
+            console2.log("IMPL_STAKE=", _deployArtifact("AssayStake.sol:AssayStake"));
         }
         if (vm.envOr("UPGRADE_ESCROW", false)) {
             address impl = address(new AssayEscrow());

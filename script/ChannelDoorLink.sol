@@ -48,6 +48,17 @@ abstract contract ChannelDoorLink is Script {
         }
     }
 
+    /// Deploys `artifact`'s creation code as built in `out/` (a plain CREATE, broadcast like
+    /// `new`). Used for a contract whose bytecode must be its OWN artifact's rather than whatever
+    /// this script's compilation unit produced for it.
+    function _deployArtifact(string memory artifact) internal returns (address addr) {
+        bytes memory code = vm.getCode(artifact);
+        assembly ("memory-safe") {
+            addr := create(0, add(code, 0x20), mload(code))
+        }
+        if (addr == address(0)) revert NotThisBuild(address(0), artifact);
+    }
+
     function _slice(bytes memory b, uint256 start, uint256 len)
         internal
         pure

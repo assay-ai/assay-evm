@@ -301,4 +301,16 @@ for c in AssayEscrow AssayStake; do
   [ "$(lc "$g")" = "$(lc "$w")" ] || fail "$c DOMAIN_SEPARATOR ($g != $w)"
 done
 
+# Per-contract compiler settings (W3-B): when the record carries them, each must equal what the
+# artifact this script compared the code with was built with. A record from before the field
+# exists is accepted unchanged; the bytecode comparison above already binds the build.
+for path in AssayConfig AssayStake AssayEscrow "AssayEscrow.libraries.ChannelDoor:ChannelDoor" "AssayEscrow.extension:AssayEscrowExtension"; do
+  key=${path%%:*}; c=${path##*:}; [ "$key" = "$path" ] && c=$key
+  want=$(jq -c ".contracts.\"${key//./\".\"}\".compiler // empty" "$REC")
+  [ -n "$want" ] || continue
+  art=$(artifact_for "${key%%.*}"); art="$(dirname "$(dirname "$art")")/$c.sol/$c.json"
+  got=$(jq -c '.metadata.settings | {optimizerRuns: .optimizer.runs, viaIr: (.viaIR // false), evmVersion}' "$art")
+  [ "$(jq -S . <<< "$got")" = "$(jq -S . <<< "$want")" ] || fail "$c compiler settings ($got != record $want)"
+done
+
 echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, libraries, extension, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"

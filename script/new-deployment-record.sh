@@ -65,6 +65,15 @@ CFG=$($FORGE config --json)
 . "$HERE/script/linked-code.sh"
 kc() { runtime_keccak "$1"; }
 
+# The compiler settings each artifact was ACTUALLY built with, read from its own metadata. The
+# top-level `settings` is the default profile; a contract built under another profile (for
+# example the escrow family at higher optimizer runs, SPEC-W3 W3-B) differs from it, and an
+# explorer verification needs the per-contract figure. `verify-deployment.sh` compares these.
+compiler_of() { # <contract> -> {"optimizerRuns":…,"viaIr":…,"evmVersion":…}
+  jq -ce '.metadata.settings | {optimizerRuns: .optimizer.runs, viaIr: (.viaIR // false), evmVersion}' \
+    "out/$1.sol/$1.json"
+}
+
 # The function surface, recorded per contract so that an upgrade cannot change it silently.
 # `script/abi-surface.sh` carries the argument for why this is here and what it cannot see.
 # shellcheck source=script/abi-surface.sh
@@ -124,6 +133,10 @@ for c in AssayConfig AssayStake AssayEscrow; do
   printf -v "ABI_HASH_$c" '%s' "$h"
   printf -v "ABI_ENTRIES_$c" '%s' "$e"
 done
+for c in AssayConfig AssayStake AssayEscrow AssayEscrowExtension ChannelDoor; do
+  k=$(compiler_of "$c") || { echo "cannot read the compiler settings of $c"; exit 1; }
+  printf -v "COMPILER_$c" '%s' "$k"
+done
 cat > "$OUT" <<JSON
 {
   "chainId": $CHAIN_ID,
@@ -140,6 +153,7 @@ cat > "$OUT" <<JSON
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayConfig)",
+      "compiler": $COMPILER_AssayConfig,
       "abiKeccak": "$ABI_HASH_AssayConfig",
       "abiFunctions": [
 $ABI_ENTRIES_AssayConfig
@@ -151,6 +165,7 @@ $ABI_ENTRIES_AssayConfig
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayStake)",
+      "compiler": $COMPILER_AssayStake,
       "abiKeccak": "$ABI_HASH_AssayStake",
       "abiFunctions": [
 $ABI_ENTRIES_AssayStake
@@ -162,15 +177,18 @@ $ABI_ENTRIES_AssayStake
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayEscrow)",
+      "compiler": $COMPILER_AssayEscrow,
       "libraries": {
         "ChannelDoor": {
           "address": "0x0000000000000000000000000000000000000000",
-          "runtimeKeccak": "$(kc ChannelDoor)"
+          "runtimeKeccak": "$(kc ChannelDoor)",
+          "compiler": $COMPILER_ChannelDoor
         }
       },
       "extension": {
         "address": "0x0000000000000000000000000000000000000000",
-        "runtimeKeccak": "$(kc AssayEscrowExtension)"
+        "runtimeKeccak": "$(kc AssayEscrowExtension)",
+        "compiler": $COMPILER_AssayEscrowExtension
       },
       "abiKeccak": "$ABI_HASH_AssayEscrow",
       "abiFunctions": [

@@ -98,7 +98,12 @@ contract Deploy is ChannelDoorLink {
 
         vm.startBroadcast();
 
-        address configImpl = address(new AssayConfig());
+        // Config and Stake are deployed from their OWN artifacts, not `new`: a `new` here embeds
+        // whatever this script's compilation unit built them with, and a profile that raises the
+        // optimizer runs for the escrow family (it spreads to every importer, this script
+        // included) would then ship Config/Stake bytecode that differs from their recorded
+        // artifacts (SPEC-W3 W3-B). At one profile the bytes are identical either way.
+        address configImpl = _deployArtifact("AssayConfig.sol:AssayConfig");
         AssayConfig config = AssayConfig(
             address(
                 new ERC1967Proxy{salt: _salt("Config")}(
@@ -107,7 +112,7 @@ contract Deploy is ChannelDoorLink {
             )
         );
 
-        address stakeImpl = address(new AssayStake());
+        address stakeImpl = _deployArtifact("AssayStake.sol:AssayStake");
         AssayStake stake = AssayStake(
             address(
                 new ERC1967Proxy{salt: _salt("Stake")}(

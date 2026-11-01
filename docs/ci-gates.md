@@ -353,7 +353,10 @@ excluded tests are: `testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor`,
 `test_noProviderAddressIsExemptFromTheSignatureGuard`,
 `test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes`,
 `test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment`,
-`test_theCapSitsBesideTheUsedSeqCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole` and
+`test_theCapSitsBesideTheUsedSeqCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole`,
+`test_theSurfaceIsTheCorePlusTheExtensionAndEqualsTheInterface`,
+`test_theCoreAndTheExtensionShareOneStorageLayout` (D-29; added 2026-10-31 after a check from a
+checkout at another path showed their gas follows it) and
 `test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`, plus every `invariant_*` run. Regenerate with
 `./script/check-snapshot.sh --write`. The sections below were written before this exclusion, and
 quote the plain `forge snapshot --check`.
