@@ -1982,3 +1982,135 @@ mutates the clamp that this replaced; its named test is now
 | FS1 | `freeBondedOf`: `free = b > pending ? b - pending : 0` | → `free = b` (back to `bondedOf`) | `test_F_M1_aProviderWhoseStakeIsReservedBelowTheMinimumIsNotPaid`, `test_freeBondedOfIsBondedMinusPendingSlash` | **DIES**: `602 passed; 2 failed` — `[FAIL: assertion failed: 200000000 != 100000000]` and `[FAIL: assertion failed: 100000000 != 99000000]` |
 | FS2 | `proposeSlash`: `if (reserved > free) revert NothingToSlash();` | → `if (reserved > free) reserved = Cast.toUint64(free);` (the old clamp) | `test_F_L1_aShortFreeBalanceRefusesTheJudgementAndBurnsNothing`, `test_aReservationTheFreeBalanceCannotCoverIsRefusedNotCut`, `test_L1_aReservationTooSmallToSplitIsRefusedAndBurnsNothing`, `test_F_M1_…` | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected` / `PenaltyTooSmallToSplit() != NothingToSlash()` |
 | FS3 | same | line deleted | the same four | **DIES**: `600 passed; 4 failed` — `next call did not revert as expected`. Without it `pendingSlash` can exceed `atRisk` |
+
+### Channel door (D-28, spec P2 v3.1), 2026-10-31
+
+97 mutations of `src/libraries/ChannelDoor.sol` and the channel wrappers of `AssayEscrow.sol`,
+one at a time, each run against `test/AssayEscrow.channel*` and `NoTokenDoors.t.sol`, and a
+survivor also against `ChannelInvariantsTest`. **First round: 60 killed, 37 survived (62%).**
+The survivors were all boundaries (`>` against `>=`), the cached blocklist and stake answers,
+the bucket capacity, the window decay, the held pair's own window, the second bucket's
+zeroing and ordering, provider aggregation, the payer blocklist on collect, a `false` token
+return, the collect re-entry guard, the claim's zero no-op, whole-bucket refunds, the
+`unpack` mask at an odd maturity, the pure-waive event and the collect batch shape. The
+`test_edge_*` tests in `AssayEscrow.channel.t.sol` were written for them. **Second round, on
+the same 37: 37 killed.**
+
+| # | Mutation | Killed by |
+|---|---|---|
+| M02 | lifetime `>` → `>=` | `test_edge_lifetimeExactlyTheMaximum_settles` |
+| M09 | not-yet-valid `>` → `>=` | `test_edge_issuedAtExactlyTheSkewAhead_settles` |
+| M10 | expired `>` → `>=` | `test_edge_lastInstantOfTheGrace_settles` |
+| M12 | base check moved after authority | `test_edge_baseIsCheckedBeforeAuthority` |
+| M14 | base `!=` → `>` | `test_edge_baseAheadOfTheSettled_isABaseMismatch` |
+| M15 | `validUntil` `>` → `>=` | `test_edge_delegationOnItsLastSecond_signs` |
+| M16 | revocation grace `<=` → `<` | `test_edge_revokedDelegateOnTheLastSecondOfTheGrace_signs` |
+| M18 | `validUntil == 0` term dropped | `test_edge_noDelegationAtTimeZero_hasNoAuthority` |
+| M24 | held `until` `<=` → `<` | `test_edge_heldPairOnItsLastSecond_isHonoured` |
+| M26 | held pair checked against the current window | `test_edge_heldPairUsesItsOwnWindow` |
+| M28 | held window not checked | `test_edge_heldPairWindowBinds` |
+| M30, M53 | escrow window without decay (gate; debit) | `test_edge_escrowWindowDecays_andTheCounterRestarts` |
+| M31 | delegate window without decay | `test_edge_delegateWindowDecays_andTheCounterRestarts` |
+| M32 | balance `<` → `<=` | `test_edge_balanceExactlyTheCharge_settles` |
+| M34 | stake and balance order swapped | `test_edge_stakeIsReportedBeforeBalance` |
+| M35, M36, M37 | cache hit answers wrong / stores wrong | `test_edge_cachedBlocklistAndStake_answerTheSecondItemToo` |
+| M42, M43, M44 | bucket capacity checks dropped / `>` → `>=` | `test_edge_bucketCapacity` |
+| M60, M67 | emptied 2nd bucket keeps m/r; always bucket 1 first | `test_edge_collect_oldestFirstWhenTheSecondBucketIsOlder` |
+| M62 | provider aggregation overwrites | `test_edge_collect_aggregatesOneProviderAcrossChannels` |
+| M65 | payer blocklist dropped on collect | `test_edge_collect_blockedPayer_isSkipped` |
+| M70 | transfer return data ignored | `test_edge_payoutReadsAFalseReturn` |
+| M73 | claim zero no-op dropped | `test_edge_claimWithNothingSetAside_emitsNothing` |
+| M77, M78, M81, M82 | refund `>` → `>=`; empty bucket matched; emptied buckets keep m/r | `test_edge_refund_wholeBuckets` |
+| M87 | `collectChannels` without `nonReentrant` | `test_edge_collect_refusesReentry` |
+| M93 | `unpack` h1 mask one bit wide | `test_edge_unpack_matchesAtBothMaturityParities` |
+| M94 | rate emitted on a pure waive | `test_edge_pureWaive_carriesNoRateNorMaturity` |
+| M97 | collect shape check loosened | `test_edge_collect_batchShape` |
+| M72 | claim: state written after the transfer | only `NoTokenDoors.t.sol` (the pinned transfer line moved). **Behaviourally equivalent**: `claimUnpaid` is `nonReentrant` at the escrow, so no re-entry can observe the order; the order is kept as defence in depth. |
+
+## D-29 split, H1 fold, G1/G2 (2026-10-31)
+
+25 targeted mutants of the new code, each run against the suites that own it (a scratch copy,
+`forge test --match-path`). Round 1: 18 killed, 5 survived, 1 equivalent, 1 not compilable.
+Round 2, after the tests below were written: all 4 non-equivalent survivors killed.
+
+| ID | Mutation | Round 1 | Killed by (round 2) |
+|---|---|---|---|
+| F1 | `_fold` picks the OLDER bucket of the rate | killed | |
+| F2 | `_fold` ignores the rate (folds across rates) | killed | |
+| F3 | `_fold` overflow bound `MAX_BUCKET + 1` | survived | `test_edge_foldCapacity` |
+| F4 | `_fold` maturity = the charge's (may move earlier) | killed | |
+| F5 | `_fold` maturity = the bucket's (never deferred) | killed | |
+| F6 | no `ChannelBucketDeferred` | killed | |
+| F7 | `it.m` not set to the bucket's maturity | survived | `test_edge_foldReportsTheBucketsMaturity` |
+| F8 | never fold (old behaviour) | killed | |
+| G1 | `blocked` accepts a word of 2 | killed | |
+| G2 | `blocked` always false | killed | |
+| G3 | `freeBondedOf` word not bounded to uint64 | killed | |
+| G4 | no `returndatasize < 32` check | **equivalent** | a short answer leaves the selector and argument bytes in the scratch word, so the word is always above 1 and above `uint64` and the call still reverts empty; the check stays as the stated rule |
+| G5 | a failing read reverts empty instead of bubbling | killed | |
+| G6 | settle uses hold 0 | killed | |
+| X1 | the extension's direct-call guard never fires | killed | |
+| X2 | the extension's separator uses its own address | killed | |
+| X3 | `EIP712_VERSION` "3" (both halves move together) | survived | `test_theDomainIsAssaySettlementVersionTwo` |
+| X4 | `revokeDelegateBySig` without `nonReentrant` | survived | `test_everyExtensionDoorIsGuarded` |
+| C1 | `fallback` returns on a failed DELEGATECALL | killed | |
+| C2 | `fallback` forwards only 4 bytes | killed | |
+| C3 | `fallback` payable | not compilable | (solc requires a `receive` beside a payable fallback; not a reachable state) |
+| T1 | `_assertExtension` skips the nonce-1 check | killed | |
+| T2 | skips the codehash pin | killed | |
+| T3 | skips the build comparison | killed | |
+| T4 | skips the guard's by-value check | killed | |
+
+### After the second review (H-1, S1)
+
+| ID | Mutation | Result |
+|---|---|---|
+| S1 | `_fold` may fold into a matured bucket | killed (`test_buckets_foldNeverReachesAMaturedBucket`) |
+| S1b | the matured test at `<` instead of `<=` | killed after the test was pinned to the maturity second |
+| H1 | `_assertBuilt` no longer requires one value per immutable | killed (`test_refusesAFallbackTargetThatDiffersFromTheGetter`) |
+| P1 | `run()` drops the extension-door probe | survived: `run()` has no unit harness; it is exercised by the fork rehearsal, which reaches the probe and passes |
+
+The shell twin of H1 (`masked_code` in `script/linked-code.sh`) was exercised on an anvil fork:
+the genuine implementation passes, the same code with only the `fallback`'s `EXTENSION` span
+replaced is refused ("immutable … holds different values at its spans").
+
+### After the re-review (rate ping-pong, ABI gate fail-open)
+
+| ID | Mutation | Result |
+|---|---|---|
+| R1 | `_fold` ignores the other bucket's rate and maturity | killed (`test_buckets_noFoldWhileTheOtherBucketIsPendingAtAnotherRate`) |
+| R2 | the other bucket counts as pending at its maturity second | killed after `test_buckets_anOtherRateBucketMaturedThisSecondAllowsTheFold` |
+
+The ABI gate's fail-open (an overlap error swallowed by nested `$(...)`) was reproduced with a
+fake `FORGE` returning one selector for both halves: before the fix `abi_hash` printed keccak("")
+and exited 0; after it, `abi_hash` exits 1 with the overlapping signature named.
+
+## D-30: per-call memo, grouped payouts, calldata forward, lookup table (2026-10-31)
+
+Run on a copy of the tree, one mutant at a time, against the suites named per row.
+
+| ID | Mutation | Result |
+|---|---|---|
+| M1 | redeem never calls `assertActive` once the memo is consulted | killed (`test_wrongState_theBatchIsClosedWhilePaused`, the C1 collision tests) |
+| M2 | `_seen` reports a hit on an empty slot | killed |
+| M3 | `_seen` matches any occupied slot (no key compare) | killed (`test_C1_collidingBlockedDelegateIsStillRefused`, `test_C1_collidingUnstakedProviderIsStillRefused`) |
+| M4 | redeem never books `totalHeld` | killed (`test_fullestSetsRedeemAndCollect`, fuzz) |
+| M5 | the memo's active set sized `n` instead of `4n` (fills, probe never ends) | killed (out of gas: `test_fullestSetsRedeemAndCollect`, `test_collidingBuyersCostBoundedGas`) |
+| M6 | the stake-floor cache inverted | killed (`test_wrongState_anUnderStakedProviderIsNotPaid`) |
+| M7 | `collectableAt` without the hold | killed (`test_collect_refusedBeforeCollectableAt`, the `PaymentHeld` emit test) |
+| M8 | grouped payout books every provider at index 0 | killed (`testFuzz_C4_batchEqualsItemByItem`) |
+| M9 | the provider map compares the whole word (never finds an entry above index 0) | survived the first run (totals stay equal, payouts split); killed after `test_C4_aRecurringProviderIsPaidInOneTransfer` |
+| M10 | grouped collect never lowers `totalHeld` | killed |
+| M11 | grouped collect drops the fee transfer | killed |
+| M12 | grouped collect skips `assertActive` | killed (`test_C4_blockedPayerMidBatchFreezesTheBatch`) |
+| M13 | `settleChannels` without the `o < 0x80` offset guard | **equivalent**: the library's own decoder refuses a shifted head offset (it reads a length of 0x160 or more), so the call still reverts empty; the guard stays as defence in depth (`test_E1_headOffsetAcceptedBySolidityHitsTheGuard` passes either way) |
+| M14 | offsets shifted by 0xe0 instead of 0x100 | killed |
+| M15 | the door's table ignores the entry kind (blocklist and stake answers alias) | killed |
+| M16 | `ChannelOpened` on every settlement | killed (`test_E5_openedOncePerKey_evenWhenFirstItemSkipsThenSettles`, `test_E5_twoItemsSameNewKeyOneBatch`) |
+| M17 | the door's table sized `n` instead of `8n` | killed (out of gas: `test_E4_fullyCollidingProvidersStayExact`) |
+| M18 | `SET_HASH` changed by one bit | killed (`test_setHashMatchesTheSources`) |
+| M19 | a one-item `collectHeldBatch` takes the grouped path | **equivalent**: one item gives the same checks, effects, event and the same two transfers; the single-item path is kept for its gas |
+| M20 | `settleChannels` without the short-return-data check | **equivalent**: the linked library always returns one word; the check stays for a library that does not |
+
+The free-pointer capture moved before the table allocation was also run (by the final security
+review) and is killed by five channel tests.

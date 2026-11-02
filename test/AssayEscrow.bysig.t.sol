@@ -4,6 +4,7 @@ pragma solidity 0.8.38;
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
 
@@ -468,7 +469,7 @@ contract AssayEscrowBySigTest is Fixture {
     /// do not, and the way that silently stops being true is somebody adding a read of the asset.
     function test_theFourDoorsMakeNoExternalCallAtAll() public {
         InertAsset inert = new InertAsset();
-        AssayEscrow e2 = _deployEscrow(address(inert));
+        IAssayEscrow e2 = _deployEscrow(address(inert));
 
         vm.prank(buyer);
         e2.setLimits(1_000_000, 5_000_000);

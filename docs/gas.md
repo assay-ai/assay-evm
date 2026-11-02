@@ -21,6 +21,10 @@ produced it, so any of it can be re-run and disagreed with.
 
 ## The caveat that comes before every number on this page
 
+> **Superseded (2026-10-31, D-30).** Since the hold design a redemption makes no transfer, and since
+> D-30 a `collectHeldBatch` of n items makes one transfer per distinct provider plus one fee
+> transfer (at most n + 1, not 2n). The per-transfer margin below is therefore conservative.
+
 **These figures are measured against `test/helpers/MockUSDG.sol`. They are not USDG's numbers.**
 
 `MockUSDG.transfer` is two `SSTORE`s and a mapping read. The real USDG **on 4663** is presumed to be
@@ -340,6 +344,84 @@ check); the redemption figures above predate it, and `.gas-snapshot` carries the
 Measured on the snapshot: `test_measure_samePayerBatchOfSixtyFour` 1 947 260 → 2 127 637 (about
 +2 800 gas per voucher), `test_measure_samePayerBatchOfOne` 192 481 → 201 372.
 
+## The channel door (D-28), measured on a fork of mainnet 4663
+
+Measured 2026-10-31 on a fork of Robinhood mainnet: the live Escrow proxy upgraded in the fork
+to this implementation, real USDG, the two real providers (their stake and balances) and the
+real treasury. **One measured transaction per test function, with every preparation in
+`setUp`**, because forge runs a test function as one transaction and a second call inside it
+finds the first one's slots warm. Tx gas = 21,000 + calldata + measured execution. The same
+method reproduced the mainnet receipts of 2026-10-30 within about 1%. Source:
+`test/fork/ChannelMainnet.fork.t.sol` (`MAINNET_RPC` set). This is a fork observation, not a
+snapshot row.
+
+**Shape:** 7 payers in round-robin, provider A for one channel in four, delegate-signed, 10
+calls of $0.10 per settlement.
+
+| Channels in the tx | Settle, recurring (per channel) | Settle, new channel (per channel) | Collect (per channel) |
+|---|---|---|---|
+| 1 | 147,150 | 167,897 | 127,651 |
+| 3 | 88,403 | 107,893 | 54,758 |
+| 7 | 72,908 | 91,937 | 36,678 |
+| 14 | 51,492 | 70,377 | 25,691 |
+| 28 | 40,802 | 59,622 | 20,287 |
+| 64 | 34,786 | 53,567 | 17,272 |
+
+**Refund of one item:** 79,275.
+
+**D-31 (refund ids, non-reverting voucher signatures), same fork and method, 2026-11-01:**
+refund of one item 103,763 (+24,488: one cold zero-to-non-zero SSTORE and one cold SLOAD for the
+used-id mark, plus the `refundIds` calldata); recurring settle per channel 147,285 / 88,505 /
+73,005 / 51,575 / 40,898 / 34,876 at 1 / 3 / 7 / 14 / 28 / 64 (+83 to +135 per item, the
+non-reverting recovery's extra branch); collect unchanged within 30 gas.
+
+These are the D-30 figures (calldata forward, lookup table, per-item memory reuse, slim
+`ChannelSettled`). Before D-30 (after D-29): recurring 151,422 / 92,497 / 78,863 / 57,075 /
+46,410 / 40,454, new 170,439 / 110,165 / 95,790 / 74,231 / 63,496 / 57,504, collect 129,334 /
+55,755 / 38,159 / 26,931 / 21,488 / 18,440, refund 79,295 — so D-30 saves 2.8% to 14.0% on a
+recurring settle (most at 64 channels) and 1.3% to 6.3% on collect.
+
+Re-measured after the core/extension split (D-29) with G1 (collect no longer reads
+`collectHoldSeconds`) and G2 (the blocklist and stake reads without the ABI encoder): settle
+−0.2% to −1%, collect −0.5% to −3.3% against the first D-28 measurement (152,603 / 79,611 /
+40,544 settle and 133,763 / 39,077 / 18,541 collect at 1 / 7 / 64 channels; refund 79,472). The
+channel doors stay in the core, so the split adds no hop to them.
+
+**Cost model** (per settle tx): ≈ 85k + 67.5k per payer's first channel + 35.8k per further
+channel of that payer + 17k per channel opened. Collect tx ≈ 160k + 16k per channel from about
+7 channels up (it fits the table within 2% from 7 to 64; one channel alone is 134k).
+
+**Against the spec's targets.** The per-call target (≤ 20k gas per paid call) is met. The
+per-channel targets at 7 channels per transaction are **missed**: settle is 78.9k against
+≤ 45k, and settle plus its share of collect is 117.0k against ≤ 70k. They are met only from
+about 64 channels per transaction (40.6k and 59.1k). The per-call figure is what the
+production traffic sees, because settlement batches every pending channel at once.
+
+**The per-call door after the upgrade** (per item; "before" is the live main `8620693` on the
+same fork, measured in the same run):
+
+| Batch | Redeem before | Redeem after | Δ | collectHeld before | collectHeld after | Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 183,505 | 189,138 | +3.1% | 127,312 | 127,226 | −0.1% |
+| 6 | 120,963 | 118,666 | −1.9% | 48,292 | 39,314 | −18.6% |
+| 20 | 94,479 | 88,927 | −5.9% | 34,697 | 21,085 | −39.2% |
+| 64 | 85,446 | 78,789 | −7.8% | 30,599 | 15,474 | −49.4% |
+
+`redeemVoucher(Batch)` is answered by the extension through the core's `fallback` (D-29), one
+extra DELEGATECALL per transaction (≈3.2k paid once), and since D-30 builds its per-call memo
+(≈2k paid once), which is why batch 1 costs more; from about 4 items up the memo pays for
+itself. `collectHeldBatch` pays each provider once and the treasury once (D-30), so its saving
+grows with the batch. **Provider mix:** these rows use two providers (`ChannelMainnet.fork.t.sol`,
+one item in four to provider A). With many distinct providers only the fee transfers merge, so the
+collect gain is much smaller; plan capacity on the provider count, not on the −49% figure. Redeem plus collect at batch 64: 116,045 → 94,263 per paid call (−18.8%).
+
+**Per paid call** (replaying the production log of 874 calls on this cost model, with
+settlement when the oldest pending call is 30 minutes old, every pending channel joining, and a
+separate hourly collect): about 16.8k gas with the first D-28 build, about 16.6k after D-29 and
+G1/G2 (scaled by the measured settle and collect changes), against about 121k for the per-call door with full
+batches and about 196k on 2026-10-30's real receipts. At 15 minutes about 22k, at 60 minutes
+about 13k.
+
 ## Contract sizes (EIP-170)
 
 Measured by `script/check-sizes.sh`, with CBOR metadata enabled (about 54 bytes of each runtime
@@ -349,10 +431,15 @@ the `ERC1967Proxy` in front of each implementation is ~50 bytes and irrelevant t
 | Contract | runtime bytes | % of the 24,576 limit | creation bytes |
 |---|---:|---:|---:|
 | `AssayConfig` | 7,405 | 30.1% | 7,636 |
-| `AssayEscrow` | 20,312 | 82.6% | 21,745 |
+| `AssayEscrow` (core) | 15,133 | 61.6% | 31,682 |
+| `AssayEscrowExtension` | 14,944 | 60.8% | 15,031 |
 | `AssayStake` | 13,759 | 56.0% | 15,192 |
+| `ChannelDoor` (library) | 12,199 | 49.6% | 12,231 |
 
-Measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
+Measured 2026-10-31 after D-30 (D-29 alone: core 13,834, extension 14,250, ChannelDoor 12,042).
+The escrow's creation code is gated at 45,000 bytes (EIP-3860's limit is 49,152). Measured
+2026-10-31 after the core/extension split (D-29). The escrow was 20,312 before the
+channel door and 22,963 with it in one contract; its creation code now carries the extension's. First measured 2026-10-24 (solc 0.8.38, `via_ir`, 200 runs), after D-26 and the shared call sites
 (`docs/ci-gates.md` §4 has the history). For D-19 (the dispute upgrade, on the earlier compiler) the figures
 were AssayConfig 7,466, AssayEscrow 17,228 and AssayStake 14,791.
 
@@ -361,6 +448,6 @@ leaving room for an auditor's remediation round and for the append a
 future upgrade adds. If a contract ever goes over it, **the gate does not move** — the contract
 splits, and the reason is recorded in the pull request that does it.
 
-The creation column is information only. EIP-3860 bounds initcode at 49,152 bytes and nothing here
-is within a factor of three of it. The two columns differ by 1,433 bytes on both money contracts:
+The creation column is information only, except for the escrow: EIP-3860 bounds initcode at
+49,152 bytes, and the escrow's (29,689) carries its extension's, so `check-sizes.sh` gates it. The two columns differ by 1,433 bytes on both money contracts:
 constructor code plus the EIP-712 ShortString immutables, which are returned as part of neither.

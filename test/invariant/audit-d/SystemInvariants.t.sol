@@ -5,6 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {SystemHandler} from "./SystemHandler.sol";
 import {AssayConfig} from "../../../src/AssayConfig.sol";
 import {AssayEscrow} from "../../../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../../../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../../../src/interfaces/IAssayEscrow.sol";
 import {AssayStake} from "../../../src/AssayStake.sol";
 import {SlashStatus} from "../../../src/Types.sol";
 import {MockUSDG} from "../../helpers/MockUSDG.sol";
@@ -24,7 +26,7 @@ import {Constants} from "../../../src/Constants.sol";
 contract SystemInvariantsTest is Test {
     SystemHandler internal h;
     AssayConfig internal config;
-    AssayEscrow internal escrow;
+    IAssayEscrow internal escrow;
     AssayStake internal stake;
     MockUSDG internal usdg;
 
@@ -155,7 +157,7 @@ contract SystemInvariantsTest is Test {
     function invariant_escrowConservation() public view {
         uint256 sum;
         for (uint256 i = 0; i < 3; i++) {
-            AssayEscrow.Escrow memory e = escrow.escrowOf(h.buyers(i));
+            AssayEscrowStorage.Escrow memory e = escrow.escrowOf(h.buyers(i));
             sum += e.balance;
             assertEq(
                 e.totalFunded,

@@ -22,10 +22,14 @@ CEILING=23000
 HARD=24576
 rc=0
 $FORGE build >/dev/null
-for c in AssayConfig AssayEscrow AssayStake; do
+# ChannelDoor is the escrow's external library: deployed on its own, so bounded on its own.
+# AssayEscrowExtension is reached by the escrow's fallback (D-29): deployed on its own, bounded on
+# its own. The escrow's CREATION code carries the extension's (its constructor creates it), so
+# that one is held under EIP-3860's 49,152-byte initcode limit below.
+for c in AssayConfig AssayEscrow AssayEscrowExtension AssayStake ChannelDoor; do
   runtime=$($FORGE inspect "$c" deployedBytecode | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
   creation=$($FORGE inspect "$c" bytecode        | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
-  printf '%-12s runtime %6d bytes  (%5.1f%% of the %d hard limit)   creation %6d\n' \
+  printf '%-20s runtime %6d bytes  (%5.1f%% of the %d hard limit)   creation %6d\n' \
     "$c" "$runtime" "$(echo "$runtime $HARD" | awk '{print $1*100/$2}')" "$HARD" "$creation"
   if [ "$runtime" -gt "$CEILING" ]; then
     echo "  OVER the $CEILING-byte gate (EIP-170 hard limit is $HARD)"
@@ -33,5 +37,15 @@ for c in AssayConfig AssayEscrow AssayStake; do
     rc=1
   fi
 done
+INITCODE=49152
+# The escrow's creation code is core + extension, so it grows with both halves. The gate fires at
+# 45,000 for the same reason the runtime gate fires at 23,000: before the hard limit does.
+INIT_CEILING=45000
+escrowInit=$($FORGE inspect AssayEscrow bytecode | tr -d '\n' | sed 's/^0x//' | wc -c | awk '{print int($1/2)}')
+printf '%-20s creation %6d bytes (gate %d, EIP-3860 limit %d)\n' AssayEscrow "$escrowInit" "$INIT_CEILING" "$INITCODE"
+if [ "$escrowInit" -gt "$INIT_CEILING" ]; then
+  echo "AssayEscrow creation code is $escrowInit bytes, over the $INIT_CEILING-byte gate (EIP-3860 limit $INITCODE; it carries the extension's)"
+  rc=1
+fi
 [ $rc -eq 0 ] && echo "sizes OK"
 exit $rc

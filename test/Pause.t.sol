@@ -4,6 +4,7 @@ pragma solidity 0.8.38;
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {AssayStake} from "../src/AssayStake.sol";
 import {AssayConfig as AssayConfig_} from "../src/AssayConfig.sol";
 import {AssayEscrowV2} from "./helpers/AssayEscrowV2.sol";
@@ -23,7 +24,7 @@ import "../src/Errors.sol";
 /// | Function | Pause closes it? |
 /// |---|---|
 /// | `AssayEscrow.deposit` / `depositFor` | **yes** |
-/// | `AssayEscrow.redeemVoucher` / `redeemVoucherBatch` | **yes** |
+/// | `IAssayEscrow.redeemVoucher` / `redeemVoucherBatch` | **yes** |
 /// | `AssayEscrow.withdraw` / `requestWithdraw` / `requestWithdrawBySig` | **yes** (since the dispute upgrade) |
 /// | `AssayEscrow.setLimits` / `setLimitsBySig` | **yes** (since the dispute upgrade) |
 /// | `AssayEscrow.authorizeDelegate` / `authorizeDelegateBySig` | **yes** (since the dispute upgrade) |

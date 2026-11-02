@@ -1,6 +1,6 @@
 # The CI gate set, and what each one cannot see
 
-**Ten** commands — count the block below rather than trusting this line. It said "seven" while the
+**Twelve** commands — count the block below rather than trusting this line. It said "seven" while the
 block listed eight once already, which is the same class of rot as everything else on this page.
 (The numbered sections run to §10 and do NOT map one-to-one onto the commands: §3 covers **two** —
 the per-commit layout gate and the branch-level one, which answer different questions — and §9 is
@@ -34,6 +34,8 @@ rm -rf out cache && forge build    #   (see check-layout.sh's header: a partial 
 forge test                         # 7
 ./script/check-snapshot.sh         # 8   — forge snapshot --check; see §8 (fork suite and path-dependent tests excluded)
 ./script/check-fork-isolation.sh   # 9   — the fork suite stays out of 7 and 8
+./script/check-events.sh           # 11  — the event surface (D-30)
+./script/check-paris.sh            # 12  — portability probe: compiles for paris, never deployed (local; not in ci.yml)
 ```
 
 ---
@@ -143,7 +145,10 @@ would make the gate compare against the wrong commit.
 
 ## 4. `./script/check-sizes.sh`
 
-EIP-170, per implementation, gated at 23,000 of the 24,576 hard limit. Measured 2026-10-24 (solc
+Also gates the escrow's **creation** code at 45,000 bytes (EIP-3860's limit is 49,152): it carries
+the extension's creation code, so it grows with both halves.
+
+EIP-170, per implementation, per external library (`ChannelDoor`, D-28) and for the escrow's extension (`AssayEscrowExtension`, D-29), gated at 23,000 of the 24,576 hard limit; the escrow's creation code, which carries the extension's, is held under EIP-3860's 49,152. Measured 2026-10-24 (solc
 0.8.38, `via_ir`, 200 runs): AssayConfig 7,405 · AssayEscrow 20,312 · AssayStake 13,759 (runtime
 bytes, CBOR metadata included). Down from 22,598 and 15,159 by routing each repeated external call
 to Config (the reads `params` and `paused`, the reverting checks `assertActive` and
@@ -160,7 +165,7 @@ with `MaxCodeSize = 98,304` (measured with `eth_estimateGas`: 98,305 is refused 
 deploy target has room to spare. The gate stays below 24,576 on purpose: that is still the limit on
 Ethereum, Arbitrum One, Base, Optimism and most EVM chains, and the default in forge and anvil, so
 these contracts stay deployable elsewhere and testable with default tooling. An upgrade that would
-cross 23,000 splits AssayEscrow (first candidate: move the read-only views into a separate lens).
+cross 23,000 splits AssayEscrow (first candidate: move the read-only views into a separate lens). That split is D-29 (2026-10-31): a core and an extension behind its `fallback`, sharing one storage base; the core went from 22,963 to 13,834 bytes.
 
 It measures **`deployedBytecode`**, not `bytecode`. Creation bytecode is the wrong number: EIP-170 bounds runtime only, and the two differ by 1,433 bytes on both
 money contracts here. Creation size is printed **beside** the runtime one as information, which is
@@ -204,6 +209,12 @@ door nobody reviewed. They separate because `implementationRuntimeKeccak` is rew
 operator as part of every upgrade — so it confirms the deployed code matches the **new** source,
 never that the new source's shape matches the old. `script/abi-surface.sh` carries the argument and
 the limits; `docs/deploy-runbook.md` §7 carries the checklist item.
+
+**Linked libraries (D-28).** `AssayEscrow` links `ChannelDoor`, so its build carries link
+placeholders. The escrow is hashed with its link spans zeroed, and each library it links is
+compared on its own against `.contracts.<C>.libraries.<L>.runtimeKeccak`: a change to the
+library is drift of the contract that DELEGATECALLs into it. `script/linked-code.sh` holds the
+helpers; `verify-deployment.sh` check 3b compares each live link span with the recorded address.
 
 **A defect this gate had until 2026-09-09, worth recording because of its shape.** The bytecode
 comparison was written `got=$($FORGE inspect "$c" deployedBytecode | cast keccak)`. That pipe form
@@ -342,7 +353,10 @@ excluded tests are: `testFuzz_onlyTheNamedBuyersOwnKeyAuthorisesEitherDoor`,
 `test_noProviderAddressIsExemptFromTheSignatureGuard`,
 `test_theOnlyTokenMovingLinesAreThePinnedUserAuthorisedOnes`,
 `test_theOwnerGatesOnlyTheUpgradeAndTheAdminAppointment`,
-`test_theCapSitsBesideTheUsedSeqCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole` and
+`test_theCapSitsBesideTheUsedSeqCheckInTheSource`, `test_theDeployScriptLeavesTheDeployerNoRole`,
+`test_theSurfaceIsTheCorePlusTheExtensionAndEqualsTheInterface`,
+`test_theCoreAndTheExtensionShareOneStorageLayout` (D-29; added 2026-10-31 after a check from a
+checkout at another path showed their gas follows it) and
 `test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor`, plus every `invariant_*` run. Regenerate with
 `./script/check-snapshot.sh --write`. The sections below were written before this exclusion, and
 quote the plain `forge snapshot --check`.
@@ -583,3 +597,20 @@ audited: it checks that `test/fork/` stays offline, not that the rest of the sui
 
 And it says nothing about whether the fork tests are any good. It is an isolation gate. What the
 fork suite proves, and what it explicitly does not, is `docs/chain-facts.md` §1a and §1b.
+
+## 11. `./script/check-events.sh` — the event surface
+
+The ABI-surface gate (inside gate 6) covers functions only. Logs are decoded by topic hash, so a
+changed event signature silently blinds every reader of the old one. This gate compares the event
+surface of `AssayEscrow` (core ∪ extension ∪ the linked `ChannelDoor`, whose events are not in the
+escrow's own ABI), `AssayConfig` and `AssayStake` with `snapshots/events/*.events.txt`.
+`--update` rewrites the snapshots and belongs in the same commit as the intended change, together
+with the backend note (event changes ship backend-first). **Blind spot:** it sees signatures, not
+meaning — reusing an event with the same types for something else passes.
+
+## 12. `./script/check-paris.sh` — portability probe
+
+Builds the same sources with `evm_version = paris` (no PUSH0) into `out-paris/` and applies the
+runtime size gate. It never produces deployed bytecode; production is the default `shanghai`
+profile. **Blind spot:** it proves compilation and size only, not behaviour on another chain
+(gas schedule, precompiles, sequencer timing); those need that chain's own fork tests.

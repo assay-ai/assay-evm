@@ -48,3 +48,10 @@ shrink_run_limit      = 5000
 # defaults to 120. Setting it here makes `forge fmt --check` agree with the code that is already
 # written, so it can be a CI gate.
 line_length = 100
+
+# Portability probe only (`script/check-paris.sh`): a pre-Shanghai EVM has no PUSH0. Never used to
+# build a deployment; production is the default profile above.
+[profile.paris]
+evm_version = "paris"
+out         = "out-paris"
+cache_path  = "cache-paris"

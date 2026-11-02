@@ -4,6 +4,7 @@ pragma solidity 0.8.38;
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
 import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -141,7 +142,7 @@ contract AssayEscrowDelegateTest is Fixture {
         vm.prank(buyer);
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, until);
 
-        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrowStorage.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertEq(d.maxVoucherAmount, D_PER_CALL);
         assertEq(d.maxPerWindow, D_PER_WINDOW);
         assertEq(d.validUntil, until);
@@ -416,7 +417,7 @@ contract AssayEscrowDelegateTest is Fixture {
         escrow.authorizeDelegate(delegate, D_PER_CALL, D_PER_WINDOW, _until());
         vm.stopPrank();
 
-        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrowStorage.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertFalse(d.revoked);
         assertEq(d.spentInWindow, D_PER_CALL, "re-authorising handed out fresh capacity");
 
@@ -488,13 +489,13 @@ contract AssayEscrowDelegateTest is Fixture {
         emit DelegateVoucherRedeemed(buyer, delegate, 1, 250_000, 250_000);
         _redeem(v, _signed(DELEGATE_KEY, v));
 
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 10_000_000 - 250_000);
         assertEq(e.seqHigh, 1);
         assertEq(e.spentInWindow, 250_000);
         assertEq(usdg.balanceOf(provider), 225_000);
         assertEq(usdg.balanceOf(treasury), 25_000);
-        AssayEscrow.Delegation memory d = escrow.delegationOf(buyer, delegate);
+        AssayEscrowStorage.Delegation memory d = escrow.delegationOf(buyer, delegate);
         assertEq(d.spentInWindow, 250_000);
         assertEq(d.windowStartedAt, block.timestamp);
     }
@@ -711,7 +712,7 @@ contract AssayEscrowDelegateTest is Fixture {
         escrow.authorizeDelegate(accomplice, 1, 1, _until());
         vm.stopPrank();
 
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, 10_000_000);
         assertEq(e.maxPerWindow, ESCROW_PER_WINDOW);
         assertEq(e.withdrawRequested, 0);

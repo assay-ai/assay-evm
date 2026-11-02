@@ -31,17 +31,55 @@
 
 # "<selector> <signature>" per line, sorted by signature. jq's sort is byte-wise on the key, so
 # the order is a property of the surface and not of the order solc happened to emit it in.
+#
+# `AssayEscrow` answers through its `fallback` with `AssayEscrowExtension` as well (D-29), so its
+# surface is the UNION of the two: a function added to the extension is a new door on the proxy
+# exactly as one added to the core is. The getters both inherit from the storage base appear
+# once.
+# The core and the extension may share only the storage base's five public getters (the core
+# answers them); any other shared selector would leave an extension door unreachable, so the
+# union is refused (review L-3).
+ESCROW_SHARED_GETTERS='["ASSET()","CONFIG()","STAKE()","totalEscrowed()","totalHeld()"]'
+
+methods_json() {
+  if [ "$1" = "AssayEscrow" ]; then
+    local overlap
+    overlap=$(jq -rs --argjson ok "$ESCROW_SHARED_GETTERS" \
+      '[(.[0] | to_entries[]) as $e | (.[1] | to_entries[]) | select(.value == $e.value) | .key]
+        | unique - $ok | .[]' \
+      <("${FORGE:-forge}" inspect AssayEscrowExtension methodIdentifiers --json) \
+      <("${FORGE:-forge}" inspect AssayEscrow methodIdentifiers --json))
+    if [ -n "$overlap" ]; then
+      echo "AssayEscrow core and extension share a selector: $overlap" >&2
+      return 1
+    fi
+    jq -s '.[0] + .[1]' \
+      <("${FORGE:-forge}" inspect AssayEscrowExtension methodIdentifiers --json) \
+      <("${FORGE:-forge}" inspect AssayEscrow methodIdentifiers --json)
+  else
+    "${FORGE:-forge}" inspect "$1" methodIdentifiers --json
+  fi
+}
+
+# Each helper captures `methods_json` before using it and returns non-zero if it failed: a
+# failure inside a nested `$(...)` used as an argument is otherwise ignored even under
+# `set -euo pipefail`, and the gate would hash an empty surface (re-review finding).
 abi_lines() {
-  "${FORGE:-forge}" inspect "$1" methodIdentifiers --json \
-    | jq -r 'to_entries|sort_by(.key)|.[]|"\(.value) \(.key)"'
+  local m
+  m=$(methods_json "$1") || return 1
+  jq -r 'to_entries|sort_by(.key)|.[]|"\(.value) \(.key)"' <<< "$m"
 }
 
 abi_hash() {
-  cast keccak "$(cast from-utf8 "$(abi_lines "$1")")"
+  local l
+  l=$(abi_lines "$1") || return 1
+  [ -n "$l" ] || { echo "empty function surface for $1" >&2; return 1; }
+  cast keccak "$(cast from-utf8 "$l")"
 }
 
 # The same list, indented as JSON array entries for the deployment record.
 abi_json_entries() {
-  "${FORGE:-forge}" inspect "$1" methodIdentifiers --json \
-    | jq -r 'to_entries|sort_by(.key)|map("        \"\(.value) \(.key)\"")|join(",\n")'
+  local m
+  m=$(methods_json "$1") || return 1
+  jq -r 'to_entries|sort_by(.key)|map("        \"\(.value) \(.key)\"")|join(",\n")' <<< "$m"
 }

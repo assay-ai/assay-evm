@@ -61,7 +61,18 @@ $FORGE build >/dev/null
 # The compiler settings come from foundry.toml as forge resolves it, never from a literal here: a
 # hardcoded block said `bytecodeHash: "none"` on 46630 while the build used "ipfs".
 CFG=$($FORGE config --json)
-kc() { cast keccak "$($FORGE inspect "$1" deployedBytecode | tr -d '\n')"; }
+# shellcheck source=script/linked-code.sh
+. "$HERE/script/linked-code.sh"
+kc() { runtime_keccak "$1"; }
+
+# The compiler settings each artifact was ACTUALLY built with, read from its own metadata. The
+# top-level `settings` is the default profile; a contract built under another profile (for
+# example the escrow family at higher optimizer runs, SPEC-W3 W3-B) differs from it, and an
+# explorer verification needs the per-contract figure. `verify-deployment.sh` compares these.
+compiler_of() { # <contract> -> {"optimizerRuns":…,"viaIr":…,"evmVersion":…}
+  jq -ce '.metadata.settings | {optimizerRuns: .optimizer.runs, viaIr: (.viaIR // false), evmVersion}' \
+    "out/$1.sol/$1.json"
+}
 
 # The function surface, recorded per contract so that an upgrade cannot change it silently.
 # `script/abi-surface.sh` carries the argument for why this is here and what it cannot see.
@@ -114,6 +125,18 @@ OUT="deployments/$CHAIN_ID.json"
 # that check refuses a record still carrying the placeholder.
 [ -e "$OUT" ] && { echo "REFUSED: $OUT already exists. Edit it, or move it aside deliberately."; exit 1; }
 
+# Computed before the heredoc: a failure inside `$(...)` in a heredoc is ignored, and the record
+# would carry an empty surface that every later comparison of the same build then matches.
+for c in AssayConfig AssayStake AssayEscrow; do
+  h=$(abi_hash "$c") || { echo "cannot compute the function surface of $c"; exit 1; }
+  e=$(abi_json_entries "$c") || { echo "cannot list the function surface of $c"; exit 1; }
+  printf -v "ABI_HASH_$c" '%s' "$h"
+  printf -v "ABI_ENTRIES_$c" '%s' "$e"
+done
+for c in AssayConfig AssayStake AssayEscrow AssayEscrowExtension ChannelDoor; do
+  k=$(compiler_of "$c") || { echo "cannot read the compiler settings of $c"; exit 1; }
+  printf -v "COMPILER_$c" '%s' "$k"
+done
 cat > "$OUT" <<JSON
 {
   "chainId": $CHAIN_ID,
@@ -130,9 +153,10 @@ cat > "$OUT" <<JSON
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayConfig)",
-      "abiKeccak": "$(abi_hash AssayConfig)",
+      "compiler": $COMPILER_AssayConfig,
+      "abiKeccak": "$ABI_HASH_AssayConfig",
       "abiFunctions": [
-$(abi_json_entries AssayConfig)
+$ABI_ENTRIES_AssayConfig
       ],
       "salt": "$(salt Config)",
       "initializerArgs": "0x"
@@ -141,9 +165,10 @@ $(abi_json_entries AssayConfig)
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayStake)",
-      "abiKeccak": "$(abi_hash AssayStake)",
+      "compiler": $COMPILER_AssayStake,
+      "abiKeccak": "$ABI_HASH_AssayStake",
       "abiFunctions": [
-$(abi_json_entries AssayStake)
+$ABI_ENTRIES_AssayStake
       ],
       "salt": "$(salt Stake)",
       "initializerArgs": "0x"
@@ -152,9 +177,22 @@ $(abi_json_entries AssayStake)
       "proxy": "0x0000000000000000000000000000000000000000",
       "implementation": "0x0000000000000000000000000000000000000000",
       "implementationRuntimeKeccak": "$(kc AssayEscrow)",
-      "abiKeccak": "$(abi_hash AssayEscrow)",
+      "compiler": $COMPILER_AssayEscrow,
+      "libraries": {
+        "ChannelDoor": {
+          "address": "0x0000000000000000000000000000000000000000",
+          "runtimeKeccak": "$(kc ChannelDoor)",
+          "compiler": $COMPILER_ChannelDoor
+        }
+      },
+      "extension": {
+        "address": "0x0000000000000000000000000000000000000000",
+        "runtimeKeccak": "$(kc AssayEscrowExtension)",
+        "compiler": $COMPILER_AssayEscrowExtension
+      },
+      "abiKeccak": "$ABI_HASH_AssayEscrow",
       "abiFunctions": [
-$(abi_json_entries AssayEscrow)
+$ABI_ENTRIES_AssayEscrow
       ],
       "salt": "$(salt Escrow)",
       "initializerArgs": "0x"
@@ -168,6 +206,6 @@ $(abi_json_entries AssayEscrow)
 }
 JSON
 echo "wrote $OUT (status: pending-deploy)"
-echo "Fill the six addresses, the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
+echo "Fill the six addresses, the ChannelDoor library and AssayEscrowExtension addresses (Deploy.s.sol prints both), the owner, the admin, the DEPLOYER (the deploy transaction's \`from\`) and the"
 echo "two domain separators from Deploy.s.sol's output,"
 echo "flip .status to \"deployed\", then: ./script/verify-deployment.sh $CHAIN_ID $RPC"

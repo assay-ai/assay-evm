@@ -8,7 +8,8 @@ import {
     RequestWithdraw,
     AuthorizeDelegate,
     RevokeDelegate,
-    ParamSet
+    ParamSet,
+    ChannelVoucher
 } from "../src/Types.sol";
 
 /// Probes that exist so the compiler will describe the EIP-712 structs back to us.
@@ -73,5 +74,11 @@ contract RevokeDelegateAbiProbe {
 contract ParamSetAbiProbe {
     function probe(ParamSet calldata p) external pure returns (uint256) {
         return p.minimumStake;
+    }
+}
+
+contract ChannelVoucherAbiProbe {
+    function probe(ChannelVoucher calldata v) external pure returns (uint256) {
+        return v.cumulative;
     }
 }

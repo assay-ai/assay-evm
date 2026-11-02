@@ -11,13 +11,13 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {IAssayConfig} from "./interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "./interfaces/IAssayStakeView.sol";
 import {IERC20Decimals} from "./interfaces/IERC20Decimals.sol";
-import {Voucher712} from "./libraries/Voucher712.sol";
-import {Sig} from "./libraries/Sig.sol";
-import {Window} from "./libraries/Window.sol";
 import {Fee} from "./libraries/Fee.sol";
 import {Cast} from "./libraries/Cast.sol";
 import {Constants} from "./Constants.sol";
-import {Voucher, ParamSet} from "./Types.sol";
+import {ParamSet, ChannelVoucher, ChannelRef} from "./Types.sol";
+import {ChannelDoor} from "./libraries/ChannelDoor.sol";
+import {AssayEscrowStorage} from "./AssayEscrowStorage.sol";
+import {AssayEscrowExtension} from "./AssayEscrowExtension.sol";
 import "./Errors.sol";
 
 /// @title AssayEscrow
@@ -28,138 +28,40 @@ import "./Errors.sol";
 ///      call. The proxy is the EIP-712 `verifyingContract`: an upgrade keeps vouchers valid, a
 ///      redeploy voids them. No role can move a token to an address of its choosing: a held
 ///      payment pays the voucher's provider and Config's treasury, or returns to the buyer.
-///      Solvency is `totalEscrowed + totalHeld`, never `balanceOf`. The plain OZ EIP712 and
+///      Solvency is `totalEscrowed + totalHeld` plus the channel door's held and set-aside
+///      totals (`channelBooks`), never `balanceOf`. The plain OZ EIP712 and
 ///      ReentrancyGuard are proxy-safe (separator rebuilt per address, zero slot = not entered).
-contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard {
+///
+///      This contract is the CORE: every door that moves money, every exit and brake a buyer
+///      needs without the platform (deposit, withdraw, caps, delegate grant and revocation), the
+///      channel door and the upgrade authority. Every other selector (the per-call voucher door,
+///      the relayed BySig decisions, `effectiveCapsOf`) is answered by `EXTENSION`, which
+///      `fallback` reaches by DELEGATECALL in this storage (D-29).
+contract AssayEscrow is
+    Initializable,
+    UUPSUpgradeable,
+    EIP712,
+    ReentrancyGuard,
+    AssayEscrowStorage
+{
     using SafeERC20 for IERC20;
 
-    /// @dev One buyer's account, packed into exactly four slots; do not reorder. Amounts are in
-    ///      USDG base units (6 decimals), times in unix seconds.
-    struct Escrow {
-        uint128 balance; // slot 0
-        uint64 seqHigh; // highest seq redeemed; anchor of the seq gap cap
-        uint64 authNonce; // shared nonce of every payer decision
-        uint64 maxVoucherAmount; // slot 1; 0 refuses every voucher
-        uint64 maxPerWindow; // 0 refuses every voucher
-        uint64 spentInWindow;
-        uint64 windowStartedAt;
-        uint64 withdrawRequested; // slot 2
-        uint64 withdrawAvailableAt;
-        uint128 totalRedeemed;
-        uint128 totalWithdrawn; // slot 3
-        uint128 totalFunded; // lifetime deposits; never decreases
-    }
-
-    /// @dev A payer's grant to a delegate key to sign vouchers on the payer's escrow, within the
-    ///      delegate's own caps in addition to the escrow's. `validUntil == 0` means never
-    ///      authorised. Window counters survive revocation, so a re-grant adds no capacity.
-    struct Delegation {
-        uint64 maxVoucherAmount; // slot 0
-        uint64 maxPerWindow;
-        uint64 spentInWindow;
-        uint64 windowStartedAt;
-        uint64 validUntil; // slot 1
-        uint32 listPosition; // 1-based index in `delegateList[payer]`; 0 when unlisted
-        bool revoked; // the grant still signs for `TIGHTEN_DELAY` after revocation
-    }
-
-    /// @notice Protocol configuration: roles, parameters, pause and blocklist. Set once.
-    IAssayConfig public CONFIG;
-    /// @notice Provider stake contract, read for the minimum-stake check. Set once.
-    IAssayStakeView public STAKE;
-    /// @notice Settlement token (6 decimals). Set once.
-    IERC20 public ASSET;
-
-    /// @dev buyer => escrow; read through `escrowOf`.
-    mapping(address => Escrow) internal escrows;
-
-    /// @notice Sum of all buyer balances, in base units.
-    uint128 public totalEscrowed;
-
-    /// @dev payer => delegate => grant.
-    mapping(address => mapping(address => Delegation)) internal delegations;
-
-    /// @dev payer => listed delegates (authorised, not revoked); at most `MAX_DELEGATES_PER_PAYER`.
-    mapping(address => address[]) internal delegateList;
-
-    /// @dev Caps in force before a payer lowered them, honoured until `until` so a voucher valid at
-    ///      that time stays redeemable for `TIGHTEN_DELAY`. Each pair is checked whole.
-    struct PriorCaps {
-        uint64 maxVoucherAmount;
-        uint64 maxPerWindow;
-        uint64 until;
-    }
-
-    /// @dev payer => escrow caps held after the last lowering.
-    mapping(address => PriorCaps) internal priorEscrowCaps;
-
-    /// @dev payer => delegate => caps held after the last lowering or revocation. For a revoked
-    ///      grant `until` is also the end of its grace.
-    mapping(address => mapping(address => PriorCaps)) internal priorDelegateCaps;
-
-    /// @dev Held payment state. `Held` moves exactly once, to `Collected` or `Refunded`.
-    ///      Append-only.
-    enum HeldStatus {
-        None,
-        Held,
-        Collected,
-        Refunded
-    }
-
-    /// @dev `takeRateBps` and `collectableAt` are frozen at redemption; the treasury is read at
-    ///      collect time.
-    struct HeldPayment {
-        address provider; // slot 0
-        uint64 amount;
-        uint16 takeRateBps;
-        HeldStatus status;
-        uint64 collectableAt; // slot 1
-    }
-
-    /// @dev payer => seq => held payment. A record other than `None` marks the seq redeemed.
-    ///      Records are never deleted, so each seq redeems at most once per payer, in any order.
-    mapping(address => mapping(uint64 => HeldPayment)) internal heldPayments;
-
-    /// @notice Sum of all `Held` amounts: money out of buyer balances but not yet paid out.
-    uint128 public totalHeld;
-
-    /// @notice Emitted when a redemption lands in hold until `collectableAt`.
-    event PaymentHeld(
-        address indexed payer,
-        uint64 indexed seq,
-        address indexed provider,
-        uint64 amount,
-        uint64 collectableAt
-    );
-
-    /// @notice Emitted when a held payment is paid to the provider and the treasury.
-    event HeldCollected(
-        address indexed payer,
-        uint64 indexed seq,
-        address indexed provider,
-        uint64 providerAmount,
-        uint64 fee
-    );
-
-    /// @notice Emitted when a held payment returns to the buyer's balance in full.
-    event HeldRefunded(address indexed payer, uint64 indexed seq, uint64 amount);
-
-    /// @notice Emitted when caps are held until `until`; `delegate` is zero for the escrow's caps.
-    event CapsHeld(
-        address indexed payer,
-        address indexed delegate,
-        uint64 maxVoucherAmount,
-        uint64 maxPerWindow,
-        uint64 until
-    );
-
-    /// @notice Emitted when `funder` deposits `amount` into `buyer`'s escrow.
-    event Deposited(address indexed buyer, address indexed funder, uint64 amount, uint128 balance);
+    /// @notice The extension this implementation forwards unknown selectors to. Created by the
+    ///         constructor, so it is bound to this implementation for its whole life.
+    address public immutable EXTENSION;
 
     /// @dev The EIP-712 name and version must never change across implementations, or every
     ///      outstanding voucher dies. The implementation itself can never be initialised.
-    constructor() EIP712("Assay Settlement", "2") {
+    constructor() EIP712(EIP712_NAME, EIP712_VERSION) {
         _disableInitializers();
+        EXTENSION = _newExtension();
+    }
+
+    /// @dev The extension this implementation is bound to, created here so its code comes from
+    ///      this implementation's own creation code. Virtual only so a test build can bind a
+    ///      deliberately wrong extension (`test/helpers/AssayEscrowSilentDomainV2.sol`).
+    function _newExtension() internal virtual returns (address) {
+        return address(new AssayEscrowExtension());
     }
 
     /// @notice Initialises the proxy. Callable once.
@@ -189,21 +91,20 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         if (msg.sender != CONFIG.owner()) revert NotOwner();
     }
 
-    // --- shared call sites (one per external read, for bytecode size) ----------------------
-
-    /// @dev The single `CONFIG.params` call site.
-    function _params() internal view returns (ParamSet memory) {
-        return CONFIG.params();
-    }
-
-    /// @dev Pause and blocklist check of every gated door.
-    function _assertActive(address a, address b, address c) internal view {
-        CONFIG.assertActive(a, b, c);
-    }
-
-    /// @dev Consumes `authNonce` on a direct payer decision, voiding any pending signature.
-    function _bumpAuthNonce(address payer) internal {
-        escrows[payer].authNonce += 1;
+    /// @dev Every selector this contract does not have runs in `EXTENSION`, in this storage,
+    ///      with the caller's `msg.sender`; its return data or revert data comes back verbatim.
+    ///      Not payable (a call with value reverts, as before) and not `nonReentrant` (each
+    ///      extension door takes the shared guard itself).
+    fallback() external {
+        address ext = EXTENSION;
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            calldatacopy(p, 0, calldatasize())
+            let ok := delegatecall(gas(), ext, p, calldatasize(), 0, 0)
+            returndatacopy(p, 0, returndatasize())
+            if iszero(ok) { revert(p, returndatasize()) }
+            return(p, returndatasize())
+        }
     }
 
     /// @dev Used only as the two halves of `_pullExact`'s balance delta.
@@ -268,55 +169,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         emit Deposited(buyer, msg.sender, amount, e.balance);
     }
 
-    /// @notice Emitted when a voucher is redeemed into hold. `fee` uses the applied
-    ///         `takeRateBps`; `spentInWindow` is the escrow's counter after this redemption.
-    event VoucherRedeemed(
-        address indexed payer,
-        address indexed provider,
-        bytes32 requestHash,
-        bytes32 resourceHash,
-        uint64 amount,
-        uint64 fee,
-        uint64 seq,
-        uint16 takeRateBps,
-        uint64 spentInWindow
-    );
-
-    /// @notice Emitted when a buyer sets its per-voucher and per-window caps.
-    event EscrowLimitsSet(address indexed buyer, uint64 maxVoucherAmount, uint64 maxPerWindow);
-
-    /// @notice Redeems a signed voucher into hold. Redeemer only.
-    /// @dev The payer's (or its delegate's) signature is the whole authority over the money; the
-    ///      redeemer only decides when. `params` is read once so every check uses one set.
-    /// @param v The voucher.
-    /// @param sig Signature by the payer or an authorised delegate.
-    function redeemVoucher(Voucher calldata v, bytes calldata sig) external nonReentrant {
-        ParamSet memory p = _params();
-        if (msg.sender != p.redeemer) revert NotRedeemer();
-        _redeem(v, sig, p); // the pause is checked in `_redeem`
-    }
-
-    /// @notice Redeems up to `MAX_REDEEM_BATCH` vouchers atomically. Redeemer only.
-    /// @dev One bad voucher reverts the whole batch. Each item runs the same `_redeem` rules
-    ///      against one `params` read.
-    /// @param vs The vouchers.
-    /// @param sigs One signature per voucher.
-    function redeemVoucherBatch(Voucher[] calldata vs, bytes[] calldata sigs)
-        external
-        nonReentrant
-    {
-        ParamSet memory p = _params();
-        if (msg.sender != p.redeemer) revert NotRedeemer();
-        // The pause is checked per item in `_redeem`.
-
-        uint256 n = vs.length;
-        _assertBatch(n, sigs.length);
-
-        for (uint256 i = 0; i < n; ++i) {
-            _redeem(vs[i], sigs[i], p);
-        }
-    }
-
     /// @notice Sets the caller's caps. A zero cap refuses every voucher.
     /// @dev Pause- and blocklist-gated. Consumes `authNonce`. A lowering binds already-valid
     ///      vouchers only after `TIGHTEN_DELAY`.
@@ -328,57 +180,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         _setLimits(msg.sender, maxVoucherAmount, maxPerWindow);
     }
 
-    /// @dev Reverts on a no-op. Holds the previous caps for `TIGHTEN_DELAY` if either is lowered.
-    function _setLimits(address buyer, uint64 maxVoucherAmount, uint64 maxPerWindow) internal {
-        Escrow storage e = escrows[buyer];
-        if (e.maxVoucherAmount == maxVoucherAmount && e.maxPerWindow == maxPerWindow) {
-            revert EscrowLimitsUnchanged();
-        }
-        _holdIfLowered(
-            priorEscrowCaps[buyer],
-            buyer,
-            address(0),
-            e.maxVoucherAmount,
-            e.maxPerWindow,
-            maxVoucherAmount,
-            maxPerWindow,
-            Cast.toUint64(block.timestamp) + Constants.TIGHTEN_DELAY_SECONDS
-        );
-        e.maxVoucherAmount = maxVoucherAmount;
-        e.maxPerWindow = maxPerWindow;
-        emit EscrowLimitsSet(buyer, maxVoucherAmount, maxPerWindow);
-    }
-
-    /// @notice Emitted when a buyer requests a withdrawal maturing at `availableAt` (0 cancels).
-    event WithdrawRequested(address indexed buyer, uint64 amount, uint64 availableAt);
-
-    /// @notice Relayed `setLimits`, authorised by the buyer's EIP-712 signature.
-    /// @dev Lets a buyer without gas lower a cap. Pause- and blocklist-gated.
-    /// @param buyer The buyer whose caps are set.
-    /// @param maxVoucherAmount Maximum amount per voucher, in base units.
-    /// @param maxPerWindow Maximum total per rolling window, in base units.
-    /// @param nonce The buyer's current `authNonce`.
-    /// @param deadline Last valid timestamp of the signature.
-    /// @param sig The buyer's signature.
-    function setLimitsBySig(
-        address buyer,
-        uint64 maxVoucherAmount,
-        uint64 maxPerWindow,
-        uint64 nonce,
-        uint64 deadline,
-        bytes calldata sig
-    ) external nonReentrant {
-        _assertActive(buyer, address(0), address(0));
-        _consumeAuth(
-            buyer,
-            Voucher712.hashSetLimits(buyer, maxVoucherAmount, maxPerWindow, nonce, deadline),
-            nonce,
-            deadline,
-            sig
-        );
-        _setLimits(buyer, maxVoucherAmount, maxPerWindow);
-    }
-
     /// @notice Starts the caller's withdrawal clock of `WITHDRAW_DELAY_SECONDS`; 0 cancels.
     /// @dev Moves no money and does not block redemption: the delay outlives every voucher signed
     ///      before the request. Pause- and blocklist-gated. Consumes `authNonce`.
@@ -388,45 +189,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         _bumpAuthNonce(msg.sender);
         _requestWithdraw(msg.sender, amount);
     }
-
-    /// @notice Relayed `requestWithdraw`, authorised by the buyer's EIP-712 signature.
-    /// @param buyer The buyer whose clock starts.
-    /// @param amount Amount requested, in base units; 0 cancels.
-    /// @param nonce The buyer's current `authNonce`.
-    /// @param deadline Last valid timestamp of the signature.
-    /// @param sig The buyer's signature.
-    function requestWithdrawBySig(
-        address buyer,
-        uint64 amount,
-        uint64 nonce,
-        uint64 deadline,
-        bytes calldata sig
-    ) external nonReentrant {
-        _assertActive(buyer, address(0), address(0));
-        _consumeAuth(
-            buyer,
-            Voucher712.hashRequestWithdraw(buyer, amount, nonce, deadline),
-            nonce,
-            deadline,
-            sig
-        );
-        _requestWithdraw(buyer, amount);
-    }
-
-    /// @dev Records the request for the authorised `buyer`, never the caller of a relayed door.
-    ///      Not bounded by the balance. Only vouchers signed before the request are guaranteed to
-    ///      expire before it matures.
-    function _requestWithdraw(address buyer, uint64 amount) internal {
-        Escrow storage e = escrows[buyer];
-        uint64 availableAt =
-            amount == 0 ? 0 : Cast.toUint64(block.timestamp) + Constants.WITHDRAW_DELAY_SECONDS;
-        e.withdrawRequested = amount;
-        e.withdrawAvailableAt = availableAt;
-        emit WithdrawRequested(buyer, amount, availableAt);
-    }
-
-    /// @notice Emitted on withdrawal; `amount` is below `requested` if redemptions landed since.
-    event EscrowWithdrawn(address indexed buyer, uint64 requested, uint64 amount);
 
     /// @notice Pays the caller `min(requested, balance)` once its request has matured.
     /// @dev Pays only `msg.sender` and has no relayed form, by design. Pause- and blocklist-gated;
@@ -457,145 +219,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         emit EscrowWithdrawn(msg.sender, requested, amount);
     }
 
-    /// @dev Verifies and consumes a relayed payer authorisation: deadline, nonce, then signature.
-    ///      One `authNonce` serves every payer decision, so signatures at the same nonce are
-    ///      alternatives; each kind has its own typehash, so none is valid at another door.
-    function _consumeAuth(
-        address buyer,
-        bytes32 structHash,
-        uint64 nonce,
-        uint64 deadline,
-        bytes calldata sig
-    ) internal {
-        if (buyer == address(0)) revert ZeroAddress();
-        if (block.timestamp > deadline) revert SignatureExpired();
-        // Bounds how far ahead a deadline may be; the shared nonce kills a withheld signature.
-        if (deadline > block.timestamp + Constants.MAX_SIGNATURE_LIFETIME_SECONDS) {
-            revert SignatureDeadlineTooFar();
-        }
-
-        Escrow storage e = escrows[buyer];
-        if (nonce != e.authNonce) revert BadNonce();
-        if (Sig.recover(_hashTypedDataV4(structHash), sig) != buyer) revert SignerIsNotBuyer();
-
-        e.authNonce = nonce + 1;
-    }
-
-    /// @dev The rule set shared by single and batch redemption: amount, window, seq, signature,
-    ///      pause and blocklist, caps, stake floor, balance. Seq is checked before the signature.
-    ///      Transfers no token; every external read precedes the effects. A refusal leaves the
-    ///      seq unused.
-    function _redeem(Voucher calldata v, bytes calldata sig, ParamSet memory p) internal {
-        uint64 nowTs = Cast.toUint64(block.timestamp);
-
-        if (v.amount == 0) revert ZeroAmount();
-
-        // Order matters: the lifetime and skew bounds keep `expiresAt + grace` from overflowing.
-        if (v.expiresAt <= v.issuedAt) revert InvalidVoucherWindow();
-        if (v.expiresAt - v.issuedAt > Constants.VOUCHER_MAX_LIFETIME_SECONDS) {
-            revert VoucherLifetimeTooLong();
-        }
-        if (v.issuedAt > nowTs + Constants.CLOCK_SKEW_TOLERANCE_SECONDS) {
-            revert VoucherNotYetValid();
-        }
-        if (nowTs > v.expiresAt + Constants.REDEEM_GRACE_SECONDS) revert VoucherExpired();
-
-        // Each (payer, seq) redeems at most once, in any order.
-        Escrow storage e = escrows[v.payer];
-        if (v.seq == 0) revert VoucherSeqZero();
-        if (heldPayments[v.payer][v.seq].status != HeldStatus.None) revert VoucherSeqUsed();
-        // Jump cap, applied only above the high-water mark; the first operand keeps the
-        // subtraction from underflowing.
-        if (v.seq > e.seqHigh && v.seq - e.seqHigh > Constants.MAX_SEQ_GAP) {
-            revert VoucherSeqGapTooLarge();
-        }
-
-        // `address(0)` if the payer signed, else the authorised delegate.
-        address delegate =
-            _voucherAuthority(v.payer, _hashTypedDataV4(Voucher712.hashVoucher(v)), sig, nowTs);
-
-        // After recovery, because the signing delegate is only known here.
-        _assertActive(v.payer, v.provider, delegate);
-
-        // A voucher passes the current caps or, while a hold runs, the held pair, each whole.
-        uint256 spent = uint256(Window.decay(e.spentInWindow, e.windowStartedAt, nowTs)) + v.amount;
-        if (v.amount > e.maxVoucherAmount || spent > e.maxPerWindow) {
-            uint256 why =
-                _heldRefusal(priorEscrowCaps[v.payer], v.amount, spent, e.maxVoucherAmount, nowTs);
-            if (why == 1) revert VoucherExceedsPerCallLimit();
-            if (why == 2) revert EscrowWindowLimitExceeded();
-        }
-
-        // A delegate-signed voucher must also fit the delegate's own caps.
-        Delegation storage d = delegations[v.payer][delegate];
-        uint256 delegateSpent;
-        if (delegate != address(0)) {
-            delegateSpent =
-                uint256(Window.decay(d.spentInWindow, d.windowStartedAt, nowTs)) + v.amount;
-            if (v.amount > d.maxVoucherAmount || delegateSpent > d.maxPerWindow) {
-                uint256 why = _heldRefusal(
-                    priorDelegateCaps[v.payer][delegate],
-                    v.amount,
-                    delegateSpent,
-                    d.maxVoucherAmount,
-                    nowTs
-                );
-                if (why == 1) revert DelegateVoucherExceedsPerCallLimit();
-                if (why == 2) revert DelegateWindowLimitExceeded();
-            }
-        }
-
-        // Only free bonded stake counts toward the provider's minimum.
-        if (STAKE.freeBondedOf(v.provider) < p.minimumStake) revert ProviderBelowMinimumStake();
-
-        if (e.balance < v.amount) revert EscrowInsufficient();
-
-        // The collect hold in force now, frozen into the record.
-        uint64 collectableAt = nowTs + CONFIG.collectHoldSeconds();
-
-        // effects
-        if (v.seq > e.seqHigh) e.seqHigh = v.seq;
-        e.balance -= v.amount;
-        uint64 spentAfter = Cast.toUint64(spent);
-        e.spentInWindow = spentAfter;
-        // Never moves backwards.
-        e.windowStartedAt = nowTs > e.windowStartedAt ? nowTs : e.windowStartedAt;
-        e.totalRedeemed += v.amount;
-        totalEscrowed -= v.amount;
-        uint64 delegateSpentAfter;
-        if (delegate != address(0)) {
-            delegateSpentAfter = Cast.toUint64(delegateSpent);
-            d.spentInWindow = delegateSpentAfter;
-            d.windowStartedAt = nowTs > d.windowStartedAt ? nowTs : d.windowStartedAt;
-        }
-
-        // Into hold; `fee` is computed here only for the event.
-        HeldPayment storage h = heldPayments[v.payer][v.seq];
-        h.provider = v.provider;
-        h.amount = v.amount;
-        h.takeRateBps = p.takeRateBps;
-        h.status = HeldStatus.Held;
-        h.collectableAt = collectableAt;
-        totalHeld += v.amount;
-        (uint64 fee,) = Fee.splitFee(v.amount, p.takeRateBps);
-
-        emit PaymentHeld(v.payer, v.seq, v.provider, v.amount, collectableAt);
-        emit VoucherRedeemed(
-            v.payer,
-            v.provider,
-            v.requestHash,
-            v.resourceHash,
-            v.amount,
-            fee,
-            v.seq,
-            p.takeRateBps,
-            spentAfter
-        );
-        if (delegate != address(0)) {
-            emit DelegateVoucherRedeemed(v.payer, delegate, v.seq, v.amount, delegateSpentAfter);
-        }
-    }
-
     // --- redeem into hold ---------------------------------------------------------------
 
     /// @notice Pays a held payment to its provider and the fee to the treasury, at the frozen rate.
@@ -614,11 +237,95 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         external
         nonReentrant
     {
-        _assertBatch(payers.length, seqs.length);
+        uint256 n = payers.length;
+        _assertBatch(n, seqs.length);
         ParamSet memory p = _params();
-        for (uint256 i = 0; i < payers.length; ++i) {
-            _collectHeld(payers[i], seqs[i], p);
+        if (n == 1) return _collectHeld(payers[0], seqs[0], p); // the single-item door's path
+        // One payout per distinct provider and one fee payout per batch, after every item's
+        // checks and effects. Each item's `HeldCollected` is emitted as before; the payouts
+        // move the same totals to the same recipients (a zero total makes no call).
+        Payout memory o = _newPayout(n);
+        for (uint256 i = 0; i < n; ++i) {
+            _takeHeld(payers[i], seqs[i], p, o);
         }
+        totalHeld -= uint128(o.sum); // at most MAX_REDEEM_BATCH uint64 amounts
+        for (uint256 j = 0; j < o.k; ++j) {
+            if (o.owed[j] > 0) ASSET.safeTransfer(o.provs[j], o.owed[j]);
+        }
+        if (o.fees > 0) ASSET.safeTransfer(p.treasury, o.fees);
+    }
+
+    /// @dev A batch collect's running books: `assertActive` passes, provider -> index map,
+    ///      distinct providers in first-seen order with their totals, fee total, held total.
+    struct Payout {
+        uint256[] active;
+        uint256[] slot;
+        address[] provs;
+        uint256[] owed;
+        uint256 k;
+        uint256 fees;
+        uint256 sum;
+    }
+
+    function _newPayout(uint256 n) internal pure returns (Payout memory o) {
+        uint256 cap = 4;
+        while (cap < 4 * n) cap <<= 1;
+        o.active = new uint256[](cap);
+        o.slot = new uint256[](cap >> 1);
+        o.provs = new address[](n);
+        o.owed = new uint256[](n);
+    }
+
+    /// @dev Index of `x` in the provider map `t`, inserting it at `next` when absent.
+    function _indexOf(uint256[] memory t, address x, uint256 next)
+        internal
+        pure
+        returns (uint256 j)
+    {
+        assembly ("memory-safe") {
+            let mask := sub(mload(t), 1)
+            let key := or(x, shl(160, 1))
+            let i := and(shr(128, mul(key, SET_HASH)), mask)
+            for {} 1 {} {
+                let ptr := add(add(t, 0x20), shl(5, i))
+                let e := mload(ptr)
+                if iszero(e) {
+                    mstore(ptr, or(key, shl(168, next)))
+                    j := next
+                    break
+                }
+                if eq(and(e, sub(shl(168, 1), 1)), key) {
+                    j := shr(168, e)
+                    break
+                }
+                i := and(add(i, 1), mask)
+            }
+        }
+    }
+
+    /// @dev One batch item's checks and effects, booked into `o`; no transfer. `assertActive`
+    ///      runs unless the payer, the provider and the zero third all passed it in this call.
+    function _takeHeld(address payer, uint64 seq, ParamSet memory p, Payout memory o) internal {
+        HeldPayment storage h = heldPayments[payer][seq];
+        if (h.status != HeldStatus.Held) revert HeldPaymentNotHeld();
+        uint256 opensAt = uint256(h.collectableAt);
+        if (msg.sender != p.redeemer) opensAt += Constants.HELD_TIMEOUT_SECONDS;
+        if (block.timestamp < opensAt) revert HeldNotYetCollectable();
+        address provider = h.provider;
+        bool known = _seen(o.active, payer);
+        known = _seen(o.active, provider) && known;
+        known = _seen(o.active, address(0)) && known;
+        if (!known) _assertActive(payer, provider, address(0));
+
+        uint64 amount = h.amount;
+        h.status = HeldStatus.Collected;
+        (uint64 fee, uint64 providerAmount) = Fee.splitFee(amount, h.takeRateBps);
+        o.sum += amount;
+        o.fees += fee;
+        uint256 j = _indexOf(o.slot, provider, o.k);
+        if (j == o.k) o.provs[o.k++] = provider;
+        o.owed[j] += providerAmount;
+        emit HeldCollected(payer, seq, provider, providerAmount, fee);
     }
 
     /// @notice Returns a held payment to the buyer's balance in full. Redeemer only.
@@ -643,13 +350,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         for (uint256 i = 0; i < payers.length; ++i) {
             _refundHeld(payers[i], seqs[i]);
         }
-    }
-
-    /// @dev Batch shape: non-empty, at most `MAX_REDEEM_BATCH`, equal array lengths.
-    function _assertBatch(uint256 n, uint256 m) internal pure {
-        if (n == 0) revert EmptyBatch();
-        if (n > Constants.MAX_REDEEM_BATCH) revert BatchTooLarge();
-        if (m != n) revert BatchLengthMismatch();
     }
 
     /// @dev Marks a `Held` record collected, then pays out. Effects precede the transfers.
@@ -693,57 +393,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
 
     // --- voucher delegation ------------------------------------------------------------------
 
-    /// @dev Returns `address(0)` if `payer` signed, or the signer if it is a delegate that can
-    ///      sign now (a revoked one during its grace). Otherwise reverts with `DelegateIsRevoked`,
-    ///      `DelegateIsExpired` or `SignerIsNotPayer`. Strict recovery; no EIP-1271.
-    function _voucherAuthority(address payer, bytes32 digest, bytes calldata sig, uint64 nowTs)
-        internal
-        view
-        returns (address)
-    {
-        address signer = Sig.recover(digest, sig);
-        if (signer == payer) return address(0);
-
-        Delegation storage d = delegations[payer][signer];
-        if (d.validUntil != 0) {
-            if (!_canSign(d, priorDelegateCaps[payer][signer], nowTs)) {
-                if (d.revoked) revert DelegateIsRevoked();
-                revert DelegateIsExpired();
-            }
-            return signer;
-        }
-        revert SignerIsNotPayer();
-    }
-
-    /// @notice Emitted when a payer grants a new delegate.
-    event DelegateAuthorized(
-        address indexed payer,
-        address indexed delegate,
-        uint64 maxVoucherAmount,
-        uint64 maxPerWindow,
-        uint64 validUntil
-    );
-    /// @notice Emitted when a standing grant's caps or `validUntil` change.
-    event DelegateUpdated(
-        address indexed payer,
-        address indexed delegate,
-        uint64 maxVoucherAmount,
-        uint64 maxPerWindow,
-        uint64 validUntil
-    );
-    /// @notice Emitted when a payer revokes a delegate.
-    event DelegateRevoked(address indexed payer, address indexed delegate);
-
-    /// @notice Emitted beside `VoucherRedeemed` when a delegate signed the voucher;
-    ///         `spentInWindow` is the delegate's counter after this redemption.
-    event DelegateVoucherRedeemed(
-        address indexed payer,
-        address indexed delegate,
-        uint64 seq,
-        uint64 amount,
-        uint64 spentInWindow
-    );
-
     /// @notice Returns a payer's grant to a delegate.
     /// @param payer The payer.
     /// @param delegate The delegate.
@@ -761,116 +410,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
     /// @return The delegate addresses.
     function delegatesOf(address payer) external view returns (address[] memory) {
         return delegateList[payer];
-    }
-
-    /// @notice Upper bound of the caps redemption applies now: the escrow's and `delegate`'s
-    ///         (zero if it cannot sign now).
-    /// @dev Necessary, not sufficient: a voucher must also fit one pair (current or held)
-    ///      whole. The current caps are in `escrowOf` and `delegationOf`.
-    /// @param payer The payer.
-    /// @param delegate The delegate, or zero.
-    /// @return maxVoucherAmount Escrow per-voucher cap.
-    /// @return maxPerWindow Escrow per-window cap.
-    /// @return delegateMaxVoucherAmount Delegate per-voucher cap.
-    /// @return delegateMaxPerWindow Delegate per-window cap.
-    function effectiveCapsOf(address payer, address delegate)
-        external
-        view
-        returns (
-            uint64 maxVoucherAmount,
-            uint64 maxPerWindow,
-            uint64 delegateMaxVoucherAmount,
-            uint64 delegateMaxPerWindow
-        )
-    {
-        uint64 nowTs = Cast.toUint64(block.timestamp);
-        Escrow storage e = escrows[payer];
-        (maxVoucherAmount, maxPerWindow) =
-            _effectiveCaps(e.maxVoucherAmount, e.maxPerWindow, priorEscrowCaps[payer], nowTs);
-        Delegation storage d = delegations[payer][delegate];
-        PriorCaps storage prior = priorDelegateCaps[payer][delegate];
-        if (d.validUntil != 0 && _canSign(d, prior, nowTs)) {
-            (delegateMaxVoucherAmount, delegateMaxPerWindow) =
-                _effectiveCaps(d.maxVoucherAmount, d.maxPerWindow, prior, nowTs);
-        }
-    }
-
-    /// @dev Whether a written grant can sign now: not past `validUntil` and, if revoked, not past
-    ///      its grace (`prior.until`).
-    function _canSign(Delegation storage d, PriorCaps storage prior, uint64 nowTs)
-        internal
-        view
-        returns (bool)
-    {
-        if (nowTs > d.validUntil) return false;
-        return !d.revoked || nowTs <= prior.until;
-    }
-
-    /// @dev Field-wise maximum of the current caps and a running hold.
-    function _effectiveCaps(uint64 curV, uint64 curW, PriorCaps storage p, uint64 nowTs)
-        internal
-        view
-        returns (uint64 capV, uint64 capW)
-    {
-        capV = curV;
-        capW = curW;
-        if (nowTs <= p.until) {
-            if (p.maxVoucherAmount > capV) capV = p.maxVoucherAmount;
-            if (p.maxPerWindow > capW) capW = p.maxPerWindow;
-        }
-    }
-
-    /// @dev For a voucher the current caps refused: 0 if the running held pair allows it whole,
-    ///      1 if no pair allows its amount, 2 if one does but not its window total.
-    function _heldRefusal(
-        PriorCaps storage p,
-        uint256 amount,
-        uint256 spent,
-        uint64 curV,
-        uint64 nowTs
-    ) internal view returns (uint256) {
-        if (nowTs <= p.until && amount <= p.maxVoucherAmount) {
-            return spent <= p.maxPerWindow ? 0 : 2;
-        }
-        return amount > curV ? 1 : 2;
-    }
-
-    /// @dev Holds the current caps until `until` if either is lowered; a raise applies at once.
-    function _holdIfLowered(
-        PriorCaps storage p,
-        address payer,
-        address delegate,
-        uint64 curV,
-        uint64 curW,
-        uint64 newV,
-        uint64 newW,
-        uint64 until
-    ) internal {
-        if (newV >= curV && newW >= curW) return;
-        _hold(p, payer, delegate, curV, curW, until);
-    }
-
-    /// @dev Writes a hold, merged field-wise with any running one, and emits `CapsHeld`.
-    function _hold(
-        PriorCaps storage p,
-        address payer,
-        address delegate,
-        uint64 curV,
-        uint64 curW,
-        uint64 until
-    ) internal {
-        (uint64 capV, uint64 capW) = _effectiveCaps(curV, curW, p, Cast.toUint64(block.timestamp));
-        p.maxVoucherAmount = capV;
-        p.maxPerWindow = capW;
-        p.until = until;
-        emit CapsHeld(payer, delegate, capV, capW, until);
-    }
-
-    /// @dev End of a delegate hold: `now + TIGHTEN_DELAY`, capped at the grant's prior
-    ///      `validUntil` so a lapsed grant's caps cannot return.
-    function _delegateHoldEnd(uint64 validUntil, uint64 nowTs) internal pure returns (uint64) {
-        uint64 end = nowTs + Constants.TIGHTEN_DELAY_SECONDS;
-        return validUntil < end ? validUntil : end;
     }
 
     /// @notice Lets `delegate` sign vouchers on the caller's escrow within caps until `validUntil`.
@@ -892,38 +431,6 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         _authorizeDelegate(msg.sender, delegate, maxVoucherAmount, maxPerWindow, validUntil);
     }
 
-    /// @notice Relayed `authorizeDelegate`, authorised by the payer's EIP-712 signature.
-    /// @param payer The payer granting the delegate.
-    /// @param delegate The delegate key.
-    /// @param maxVoucherAmount Maximum amount per voucher, in base units.
-    /// @param maxPerWindow Maximum total per rolling window, in base units.
-    /// @param validUntil Expiry; at least `now + TIGHTEN_DELAY`.
-    /// @param nonce The payer's current `authNonce`.
-    /// @param deadline Last valid timestamp of the signature.
-    /// @param sig The payer's signature.
-    function authorizeDelegateBySig(
-        address payer,
-        address delegate,
-        uint64 maxVoucherAmount,
-        uint64 maxPerWindow,
-        uint64 validUntil,
-        uint64 nonce,
-        uint64 deadline,
-        bytes calldata sig
-    ) external nonReentrant {
-        _assertActive(payer, delegate, address(0));
-        _consumeAuth(
-            payer,
-            Voucher712.hashAuthorizeDelegate(
-                payer, delegate, maxVoucherAmount, maxPerWindow, validUntil, nonce, deadline
-            ),
-            nonce,
-            deadline,
-            sig
-        );
-        _authorizeDelegate(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
-    }
-
     /// @notice Revokes `delegate`. Vouchers it already signed stay redeemable for
     ///         `TIGHTEN_DELAY`, never past `validUntil`.
     /// @dev Consumes `authNonce`. Never pause- or blocklist-gated.
@@ -933,126 +440,114 @@ contract AssayEscrow is Initializable, UUPSUpgradeable, EIP712, ReentrancyGuard 
         _revokeDelegate(msg.sender, delegate);
     }
 
-    /// @notice Relayed `revokeDelegate`, authorised by the payer's EIP-712 signature. Never
-    ///         pause- or blocklist-gated.
-    /// @param payer The payer revoking the delegate.
-    /// @param delegate The delegate to revoke.
-    /// @param nonce The payer's current `authNonce`.
-    /// @param deadline Last valid timestamp of the signature.
-    /// @param sig The payer's signature.
-    function revokeDelegateBySig(
-        address payer,
-        address delegate,
-        uint64 nonce,
-        uint64 deadline,
-        bytes calldata sig
+    // --- channel door (cumulative vouchers; logic in the `ChannelDoor` library) -----------
+
+    /// @notice Settles channel vouchers into hold. Redeemer only; pause-gated.
+    /// @dev An item charges at most `cumulative - fromSettled[i]`, and only if its channel's
+    ///      settled value is exactly `fromSettled[i]`. An item that state or time refuses is
+    ///      skipped with an event, never reverting the batch. Settlement never pays out. The
+    ///      caller, pause and batch checks run in `ChannelDoor.settle`.
+    /// @param vs The vouchers.
+    /// @param sigs The signatures, 65 bytes each, concatenated in voucher order; each by the
+    ///        payer or an authorised delegate.
+    /// @param fromSettled Per item, the settled value the redeemer expects the channel to have.
+    /// @param charges Per item, what moves into hold; the rest of the delta is waived.
+    function settleChannels(
+        ChannelVoucher[] calldata vs,
+        bytes calldata sigs,
+        uint64[] calldata fromSettled,
+        uint64[] calldata charges
     ) external nonReentrant {
-        _consumeAuth(
-            payer,
-            Voucher712.hashRevokeDelegate(payer, delegate, nonce, deadline),
-            nonce,
-            deadline,
-            sig
+        // Forwards this call's own ABI tail to the library verbatim instead of re-encoding it:
+        // the library's head is 8 fixed words (5 storage slots, config, stake, domain separator)
+        // followed by the same 4 offsets, each shifted by those 8 words. Solidity has already
+        // bounds-checked the 4 calldata arguments, and the library decodes and checks them again,
+        // so a non-canonical encoding decodes as what it says or reverts. The target is the
+        // linked `ChannelDoor` (a link-time constant).
+        (vs, sigs, fromSettled, charges);
+        address lib = address(ChannelDoor);
+        bytes4 sel = ChannelDoor.settle.selector;
+        IAssayConfig cfg = CONFIG;
+        IAssayStakeView stk = STAKE;
+        bytes32 ds = _domainSeparatorV4();
+        uint256 total;
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, sel)
+            let h := add(p, 4)
+            mstore(h, channels.slot)
+            mstore(add(h, 0x20), escrows.slot)
+            mstore(add(h, 0x40), delegations.slot)
+            mstore(add(h, 0x60), priorEscrowCaps.slot)
+            mstore(add(h, 0x80), priorDelegateCaps.slot)
+            mstore(add(h, 0xa0), cfg)
+            mstore(add(h, 0xc0), stk)
+            mstore(add(h, 0xe0), ds)
+            for { let k := 0 } lt(k, 4) { k := add(k, 1) } {
+                let o := calldataload(add(4, mul(k, 0x20)))
+                // An offset into the 4-word head would be re-read differently once shifted.
+                // Solidity's own decoding has bounded `o` by the calldata size, so `o + 0x100`
+                // cannot overflow.
+                if lt(o, 0x80) { revert(0, 0) }
+                mstore(add(h, add(0x100, mul(k, 0x20))), add(o, 0x100))
+            }
+            let tail := sub(calldatasize(), 0x84)
+            calldatacopy(add(h, 0x180), 0x84, tail)
+            let len := add(0x184, tail)
+            let ok := delegatecall(gas(), lib, p, len, 0, 0x20)
+            if iszero(ok) {
+                returndatacopy(p, 0, returndatasize())
+                revert(p, returndatasize())
+            }
+            if lt(returndatasize(), 0x20) { revert(0, 0) }
+            total := mload(0)
+        }
+        totalEscrowed -= uint128(total);
+    }
+
+    /// @notice Pays matured channel buckets to their providers and the fee to the treasury.
+    /// @dev The redeemer may collect from maturity and leave an amount held per channel;
+    ///      anyone else from maturity + `HELD_TIMEOUT_SECONDS`, leaving nothing. Pause-gated.
+    ///      A failed transfer is set aside in `unpaid` for that recipient alone.
+    /// @param refs The channels.
+    /// @param keepHeld Per channel, the matured amount to keep held (redeemer only).
+    function collectChannels(ChannelRef[] calldata refs, uint64[] calldata keepHeld)
+        external
+        nonReentrant
+    {
+        ChannelDoor.collect(channels, CONFIG, ASSET, refs, keepHeld);
+    }
+
+    /// @notice Returns held channel money to payers' balances. Redeemer only; not pause-gated.
+    /// @param refs The channels.
+    /// @param buckets Per item, the bucket to refund from: `maturityHour << 16 | takeRateBps`.
+    /// @param amounts Per item, the amount to refund.
+    /// @param refundIds Per item, an id applied at most once per channel (D-31).
+    function refundChannels(
+        ChannelRef[] calldata refs,
+        uint40[] calldata buckets,
+        uint64[] calldata amounts,
+        bytes32[] calldata refundIds
+    ) external nonReentrant {
+        totalEscrowed += uint128(
+            ChannelDoor.refund(channels, escrows, CONFIG, refs, buckets, amounts, refundIds)
         );
-        _revokeDelegate(payer, delegate);
     }
 
-    /// @dev Validates and writes a grant. Caps must be non-zero and within the escrow's.
-    function _authorizeDelegate(
-        address payer,
-        address delegate,
-        uint64 maxVoucherAmount,
-        uint64 maxPerWindow,
-        uint64 validUntil
-    ) internal {
-        if (delegate == address(0)) revert ZeroAddress();
-        if (delegate == payer) revert DelegateIsPayer();
-        if (maxVoucherAmount == 0 || maxPerWindow == 0 || maxVoucherAmount > maxPerWindow) {
-            revert DelegateCapsInvalid();
-        }
-        Escrow storage e = escrows[payer];
-        if (maxVoucherAmount > e.maxVoucherAmount || maxPerWindow > e.maxPerWindow) {
-            revert DelegateCapsExceedEscrowLimits();
-        }
-        uint64 nowTs = Cast.toUint64(block.timestamp);
-        if (
-            validUntil < nowTs + Constants.TIGHTEN_DELAY_SECONDS
-                || validUntil - nowTs > Constants.MAX_DELEGATION_LIFETIME_SECONDS
-        ) revert DelegateValidUntilInvalid();
-
-        Delegation storage d = delegations[payer][delegate];
-        if (
-            d.listPosition != 0 && d.maxVoucherAmount == maxVoucherAmount
-                && d.maxPerWindow == maxPerWindow && d.validUntil == validUntil
-        ) revert DelegationUnchanged();
-        // Only a grant that can still sign gets a hold; otherwise a lowering re-grant would
-        // revive the stored caps of a grant revoked and past its grace.
-        PriorCaps storage prior = priorDelegateCaps[payer][delegate];
-        if (d.validUntil != 0 && _canSign(d, prior, nowTs)) {
-            _holdIfLowered(
-                prior,
-                payer,
-                delegate,
-                d.maxVoucherAmount,
-                d.maxPerWindow,
-                maxVoucherAmount,
-                maxPerWindow,
-                _delegateHoldEnd(d.validUntil, nowTs)
-            );
-        }
-
-        bool isNew = d.listPosition == 0;
-        if (isNew) {
-            address[] storage list = delegateList[payer];
-            if (list.length >= Constants.MAX_DELEGATES_PER_PAYER) revert TooManyDelegates();
-            list.push(delegate);
-            // Bounded by `MAX_DELEGATES_PER_PAYER`.
-            d.listPosition = uint32(list.length);
-        }
-        d.maxVoucherAmount = maxVoucherAmount;
-        d.maxPerWindow = maxPerWindow;
-        d.validUntil = validUntil;
-        d.revoked = false;
-        if (isNew) {
-            emit DelegateAuthorized(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
-        } else {
-            emit DelegateUpdated(payer, delegate, maxVoucherAmount, maxPerWindow, validUntil);
-        }
+    /// @notice Pays `to` what a failed payout set aside for it, to `to` only. Anyone may call.
+    /// @dev Pause- and blocklist-gated; a zero balance is a no-op.
+    function claimUnpaid(address to) external nonReentrant {
+        ChannelDoor.claimUnpaid(channels, CONFIG, ASSET, to);
     }
 
-    /// @dev Unlists the grant, marks it revoked and holds its caps for the grace period.
-    function _revokeDelegate(address payer, address delegate) internal {
-        Delegation storage d = delegations[payer][delegate];
-        uint256 pos = d.listPosition;
-        if (pos == 0) revert DelegateNotActive();
-
-        // Swap-and-pop, keeping every moved entry's position true.
-        address[] storage list = delegateList[payer];
-        uint256 last = list.length;
-        if (pos != last) {
-            address moved = list[last - 1];
-            list[pos - 1] = moved;
-            delegations[payer][moved].listPosition = uint32(pos);
-        }
-        list.pop();
-
-        d.listPosition = 0;
-        d.revoked = true;
-        // The grace, read by `_canSign`; a lapsed grant signs nothing and gets no hold.
-        uint64 nowTs = Cast.toUint64(block.timestamp);
-        if (nowTs <= d.validUntil) {
-            _hold(
-                priorDelegateCaps[payer][delegate],
-                payer,
-                delegate,
-                d.maxVoucherAmount,
-                d.maxPerWindow,
-                _delegateHoldEnd(d.validUntil, nowTs)
-            );
-        }
-        emit DelegateRevoked(payer, delegate);
+    /// @notice A channel's packed slot (decode with `ChannelDoor.unpack`; key from
+    ///         `ChannelDoor.keyOf`), what failed payouts set aside for `to`, the total set
+    ///         aside, and the total held in channel buckets.
+    function channelBooks(bytes32 key, address to)
+        external
+        view
+        returns (uint256 state, uint128 unpaid, uint128 totalUnpaid, uint128 held)
+    {
+        return (channels.state[key], channels.unpaid[to], channels.totalUnpaid, channels.held);
     }
-
-    /// @dev Reserved storage: a new field goes above and shrinks this by the slots it uses.
-    uint256[45] private __gap;
 }

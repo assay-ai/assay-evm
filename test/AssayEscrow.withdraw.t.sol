@@ -6,6 +6,8 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Fixture} from "./helpers/Fixture.sol";
 import {VoucherSigner} from "./helpers/VoucherSigner.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {Voucher} from "../src/Types.sol";
 import {Constants} from "../src/Constants.sol";
 import "../src/Errors.sol";
@@ -67,13 +69,13 @@ contract WithdrawObserverUSDG {
         if (armed) {
             armed = false;
             observed = true;
-            AssayEscrow.Escrow memory e = AssayEscrow(escrow).escrowOf(observedBuyer);
+            AssayEscrowStorage.Escrow memory e = IAssayEscrow(escrow).escrowOf(observedBuyer);
             seenBalance = e.balance;
             seenWithdrawRequested = e.withdrawRequested;
             seenWithdrawAvailableAt = e.withdrawAvailableAt;
             seenTotalWithdrawn = e.totalWithdrawn;
             seenTotalFunded = e.totalFunded;
-            seenTotalEscrowed = AssayEscrow(escrow).totalEscrowed();
+            seenTotalEscrowed = IAssayEscrow(escrow).totalEscrowed();
         }
         return true;
     }
@@ -510,7 +512,7 @@ contract AssayEscrowWithdrawTest is Fixture {
     /// substitute for the other.
     function test_wrongState_aReentrantAssetCannotRecurseIntoWithdraw() public {
         WithdrawReentrantUSDG evil = new WithdrawReentrantUSDG();
-        AssayEscrow e2 = _deployEscrow(address(evil));
+        IAssayEscrow e2 = _deployEscrow(address(evil));
 
         evil.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -538,7 +540,7 @@ contract AssayEscrowWithdrawTest is Fixture {
     /// the outer call succeeds, and its storage survives to be asserted.
     function test_everyEffectIsWrittenBeforeTheWithdrawalTransfer() public {
         WithdrawObserverUSDG obs = new WithdrawObserverUSDG();
-        AssayEscrow e2 = _deployEscrow(address(obs));
+        IAssayEscrow e2 = _deployEscrow(address(obs));
 
         obs.mint(buyer, 10_000_000);
         vm.startPrank(buyer);
@@ -575,7 +577,13 @@ contract AssayEscrowWithdrawTest is Fixture {
     /// artifact rather than out of the source, so a function added through an inherited contract
     /// is caught too. A deliberate addition is a red test that asks the editor to say so here.
     function test_theExitPaysMsgSenderAndTheAbiHasNoOtherWithdrawDoor() public view {
-        string memory src = vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol"));
+        // The proxy answers with the core and, through its `fallback`, the extension (D-29): both
+        // sources, and the union of both surfaces, are what this pins.
+        string memory src = string.concat(
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrow.sol")),
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowExtension.sol")),
+            vm.readFile(string.concat(vm.projectRoot(), "/src/AssayEscrowStorage.sol"))
+        );
         assertEq(
             _count(src, "        ASSET.safeTransfer(msg.sender, amount);\n"),
             1,
@@ -592,15 +600,23 @@ contract AssayEscrowWithdrawTest is Fixture {
         // added one more view, `effectiveCapsOf`. Redeem into hold added six: two views (`held`,
         // `totalHeld`) and collect/refund in single and batch form — both pay out only a record a
         // signed voucher created, to that voucher's provider and the treasury, or back to the
-        // buyer's own balance.
-        string[34] memory expected = [
+        // buyer's own balance. The channel door added five: settle (moves signed money into hold,
+        // no transfer), collect (pays a bucket only to the channel's provider and the Config
+        // treasury, set aside for that same address if the transfer fails), refund (back to the
+        // payer's own balance), `claimUnpaid` (pays what was set aside, to that address only) and
+        // one view (`channelBooks`). The core/extension split (D-29) added one view, `EXTENSION`.
+        string[40] memory expected = [
             "ASSET()",
             "CONFIG()",
             "DOMAIN_SEPARATOR()",
+            "EXTENSION()",
             "STAKE()",
             "UPGRADE_INTERFACE_VERSION()",
             "authorizeDelegate(address,uint64,uint64,uint64)",
             "authorizeDelegateBySig(address,address,uint64,uint64,uint64,uint64,uint64,bytes)",
+            "channelBooks(bytes32,address)",
+            "claimUnpaid(address)",
+            "collectChannels((address,address,address,bytes32)[],uint64[])",
             "collectHeld(address,uint64)",
             "collectHeldBatch(address[],uint64[])",
             "delegatesOf(address)",
@@ -616,6 +632,7 @@ contract AssayEscrowWithdrawTest is Fixture {
             "redeemVoucher((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64),bytes)",
             "redeemVoucherBatch((address,address,uint64,bytes32,bytes32,uint64,uint64,uint64)[],bytes[])",
             "refundHeld(address,uint64)",
+            "refundChannels((address,address,address,bytes32)[],uint40[],uint64[],bytes32[])",
             "refundHeldBatch(address[],uint64[])",
             "requestWithdraw(uint64)",
             "requestWithdrawBySig(address,uint64,uint64,uint64,bytes)",
@@ -623,17 +640,16 @@ contract AssayEscrowWithdrawTest is Fixture {
             "revokeDelegateBySig(address,address,uint64,uint64,bytes)",
             "setLimits(uint64,uint64)",
             "setLimitsBySig(address,uint64,uint64,uint64,uint64,bytes)",
+            "settleChannels((address,address,bytes32,uint64,uint32,uint64,uint64)[],bytes,uint64[],uint64[])",
             "totalEscrowed()",
             "totalHeld()",
             "upgradeToAndCall(address,bytes)",
             "withdraw()",
-            "" // the 34th slot is deliberately empty: a 34th function makes this test red
+            "" // the 40th slot is deliberately empty: a 40th function makes this test red
         ];
 
-        string memory artifact =
-            vm.readFile(string.concat(vm.projectRoot(), "/out/AssayEscrow.sol/AssayEscrow.json"));
-        string[] memory keys = vm.parseJsonKeys(artifact, ".methodIdentifiers");
-        assertEq(keys.length, 33, "AssayEscrow's external surface changed size");
+        string[] memory keys = _proxySurface();
+        assertEq(keys.length, 39, "the escrow proxy's external surface changed size");
 
         for (uint256 i = 0; i < keys.length; i++) {
             bool found;
@@ -650,6 +666,38 @@ contract AssayEscrowWithdrawTest is Fixture {
             assertTrue(
                 found, string.concat("a pinned external function disappeared: ", expected[j])
             );
+        }
+    }
+
+    /// The selectors the escrow proxy answers: the core's, plus the extension's it does not
+    /// shadow. Their overlap is the storage base's public getters, answered by the core.
+    function _proxySurface() internal view returns (string[] memory out) {
+        string[] memory a = vm.parseJsonKeys(
+            vm.readFile(string.concat(vm.projectRoot(), "/out/AssayEscrow.sol/AssayEscrow.json")),
+            ".methodIdentifiers"
+        );
+        string[] memory b = vm.parseJsonKeys(
+            vm.readFile(
+                string.concat(
+                    vm.projectRoot(), "/out/AssayEscrowExtension.sol/AssayEscrowExtension.json"
+                )
+            ),
+            ".methodIdentifiers"
+        );
+        out = new string[](a.length + b.length);
+        uint256 n;
+        for (uint256 i = 0; i < a.length; i++) {
+            out[n++] = a[i];
+        }
+        for (uint256 i = 0; i < b.length; i++) {
+            bool dup;
+            for (uint256 j = 0; j < a.length; j++) {
+                if (keccak256(bytes(a[j])) == keccak256(bytes(b[i]))) dup = true;
+            }
+            if (!dup) out[n++] = b[i];
+        }
+        assembly ("memory-safe") {
+            mstore(out, n)
         }
     }
 

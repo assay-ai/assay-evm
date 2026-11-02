@@ -22,6 +22,8 @@ cd "$HERE"
 FORGE="${FORGE:-forge}"
 # shellcheck source=script/abi-surface.sh
 . "$HERE/script/abi-surface.sh"
+# shellcheck source=script/linked-code.sh
+. "$HERE/script/linked-code.sh"
 rc=0
 found=0
 for rec in deployments/*.json; do
@@ -38,13 +40,41 @@ for rec in deployments/*.json; do
     # It was never noticed because no record had reached `"status": "deployed"`, so the loop this
     # line is in had never run. `tr -d '\n'` and the argument form, as new-deployment-record.sh
     # already spells it.
-    got=$(cast keccak "$($FORGE inspect "$c" deployedBytecode | tr -d '\n')")
+    # Link spans zeroed (script/linked-code.sh); the library itself is compared just below.
+    got=$(runtime_keccak "$c")
     if [ "$got" != "$want" ]; then
       echo "implementation bytecode drift in $c vs $rec"
       echo "  built  $got"
       echo "  record $want"
       echo "  -> this is an UPGRADE (runbook §7) or a redeploy. Say which in .status."
       rc=1
+    fi
+    # Each library the implementation links: its own runtime code, so a change to the
+    # library is bytecode drift of the contract that DELEGATECALLs into it.
+    for lib in $(linked_libraries "out/$c.sol/$c.json"); do
+      wantLib=$(jq -r ".contracts.\"$c\".libraries.\"$lib\".runtimeKeccak // empty" "$rec")
+      gotLib=$(runtime_keccak "$lib")
+      if [ "$gotLib" != "$wantLib" ]; then
+        echo "library bytecode drift in $lib (linked by $c) vs $rec"
+        echo "  built  $gotLib"
+        echo "  record ${wantLib:-<none: the record predates the library>}"
+        echo "  -> this is an UPGRADE (runbook §7) or a redeploy. Say which in .status."
+        rc=1
+      fi
+    done
+    # The escrow's extension (D-29): code the escrow's `fallback` runs in the escrow's storage,
+    # so a change to it is bytecode drift of the escrow. Its one immutable (its own address) is
+    # zero in the build, as `runtime_keccak` hashes it.
+    if [ "$c" = "AssayEscrow" ] && jq -e '.methodIdentifiers["EXTENSION()"]' "out/$c.sol/$c.json" >/dev/null; then
+      wantExt=$(jq -r ".contracts.AssayEscrow.extension.runtimeKeccak // empty" "$rec")
+      gotExt=$(runtime_keccak AssayEscrowExtension)
+      if [ "$gotExt" != "$wantExt" ]; then
+        echo "extension bytecode drift in AssayEscrowExtension vs $rec"
+        echo "  built  $gotExt"
+        echo "  record ${wantExt:-<none: the record predates the extension>}"
+        echo "  -> this is an UPGRADE (runbook §7) or a redeploy. Say which in .status."
+        rc=1
+      fi
     fi
     # The function surface, separately, because it answers a different question. Bytecode drift
     # says "the code changed"; surface drift says "the code changed SHAPE", and only the second

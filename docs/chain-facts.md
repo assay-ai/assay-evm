@@ -39,7 +39,12 @@ $ cast block-number --rpc-url https://rpc.testnet.chain.robinhood.com
 
 ---
 
-## 1. USDG on mainnet — **UNRESOLVED. This blocks the mainnet deploy only.**
+## 1. USDG on mainnet — **RESOLVED (2026-10-26 deploy; re-probed 2026-11-02, §1c).**
+
+The rest of this section is the 2026-09-07 measurement, kept as history: it found that mainnet
+USDG is NOT at the testnet address. The address used by the mainnet deployment is
+`0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` (`deployments/4663.json` `.asset`), and §1c is
+the probe of that address.
 
 The hypothesis was that mainnet USDG sits at the same address as testnet USDG,
 `0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec`. **It does not.** There is no code at
@@ -209,6 +214,63 @@ or `nonces()`, nothing in the contracts changes — no permit path ships either 
 the risk register gains a row: the two networks run different token code, and anything
 inferred from testnet about the token must be re-checked.
 
+### §1c. Mainnet USDG, re-probed before the channel upgrade (D-28)
+
+- **Measured:** 2026-11-02 (UTC), 12:25–12:28, mainnet block 104,213,766 onward.
+- **Tool:** same pinned `cast` 1.2.1-nightly `7e68208`.
+- **Read-only.** Every row is an `eth_call` or `eth_getStorageAt`. The write selectors were
+  probed with `cast call --from 0x…dEaD`, which is a simulation: a revert naming a missing role
+  proves the function exists without sending anything.
+
+| probe (mainnet USDG `0x5fc5360D…d168`) | result | reading |
+|---|---|---|
+| `name()` / `symbol()` / `decimals()` | `"Global Dollar"` / `"USDG"` / **`6`** | the token, 6 decimals as the design assumes |
+| proxy runtime | 170 bytes, keccak `0x864cc9ad…f36a6`, a bare ERC-1967 forwarder | **upgradeable** by the issuer |
+| EIP-1967 implementation slot | `0x68184c449e1a8f34fa18d289737129fd27b66f8f` | implementation: 18,644 bytes, keccak `0x3a551ac5…f3baf`, exports `upgradeToAndCall` |
+| EIP-1967 admin / beacon slots | zero / zero | UUPS, not a transparent proxy |
+| unknown selector | reverts `0x800ab12c` = `FacetNotFound()` | the implementation routes selectors to facets; a PUSH4 scan of it does NOT list every function (`paused`, `isFrozen`, `pause`, `freeze`, `nonces`, `permit` are answered but not in its selector table) |
+| `paused()(bool)` | **`false`** | token-wide pause exists and is off |
+| `pause()` / `unpause()` from `0x…dEaD` | revert `AccessControl: … missing role 0x139c2898…e46d` = `keccak256("PAUSE_ROLE")` | **pause exists**, role-gated |
+| `isFrozen(address)(bool)` | `false` for `0x…01` and **`false` for the escrow proxy** | **freeze view exists** under the name `isFrozen`; the escrow is not frozen |
+| `isFrozen` of the treasury (`params().treasury`) and of the three staked providers | all `false` | no payee is frozen at the time of the upgrade |
+| `freeze(address)` / `unfreeze(address)` / `wipeFrozenAddress(address)` from `0x…dEaD` | revert `missing role 0xe3e4f9d7…9796` = `keccak256("ASSET_PROTECTION_ROLE")` | **freeze and wipe exist**, role-gated |
+| `freeze(address[])`, `wipeFrozenAddress(address,address)` | `FacetNotFound()` | single-address forms only |
+| `isBlocked` / `isBlacklisted` / `frozen` (address) | `FacetNotFound()` | `isFrozen` is the only freeze view |
+| `DOMAIN_SEPARATOR()` | `0x7a3d7400…62036` | EIP-712 domain present |
+| `nonces(address)` / `permit(…)` | `0` / reverts `0x1a15a3cc` on a zero signature | **EIP-2612 present** (testnet's token has none, §1a) |
+| `authorizationState(address,bytes32)` / `transferWithAuthorization(…)` | `false` / reverts `0x0f05f5bf` on a zero signature | **EIP-3009 present** |
+| `owner()` | `0xcFA0388f5ddf905FdC08c45c716C15Dc10A14C6F` | not `PAUSE_ROLE` itself (`hasRole` false) |
+| `balanceOf(escrow proxy)` | 103,071,000 | = `totalEscrowed` 98,471,000 + `totalHeld` 4,600,000 at the same block |
+
+```
+$ U=0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168; R=https://rpc.mainnet.chain.robinhood.com
+$ cast call $U 'paused()(bool)' -r $R
+false
+$ cast call $U 'isFrozen(address)(bool)' 0xe54E0142b1D0d34226498D563A16074C81Bc9A5e -r $R
+false
+$ cast call $U 'pause()' --from 0x000000000000000000000000000000000000dEaD -r $R
+Error: … execution reverted, data: "0x08c379a0…" (AccessControl: account 0x…dead is missing role 0x139c2898…)
+$ cast call $U 'freeze(address)' 0x0000000000000000000000000000000000000001 --from 0x…dEaD -r $R
+Error: … execution reverted, data: "0x08c379a0…" (… missing role 0xe3e4f9d7…)
+$ cast storage $U 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc -r $R
+0x00000000000000000000000068184c449e1a8f34fa18d289737129fd27b66f8f
+```
+
+**What follows.**
+
+- The backend's `EVM_TOKEN_FREEZE_FUNCTIONS={"eip155:4663":"isFrozen"}` names a view that
+  exists and answers `bool` for any address. Keep it.
+- The issuer can pause the token, freeze an address and wipe a frozen address, and can replace
+  the token's code (UUPS). The channel door's `TransferDeferred` path covers a frozen payee and a
+  token-wide pause (runbook 07 §6); a frozen or wiped escrow stays an accepted risk
+  (`docs/risk-register.md`).
+- Testnet and mainnet run **different token code** (§1a has no pause, freeze, EIP-2612 or
+  EIP-3009). Nothing in the contracts uses permit or 3009, so no money path changes; anything
+  inferred from testnet about the token's freeze or pause behaviour is unproven until a mainnet
+  fork test exercises it.
+- The token is upgradeable, so these rows are true for implementation
+  `0x68184c44…6f8f` only. Re-probe after any change of that slot.
+
 ---
 
 ## 2. Permit2 — not used
@@ -315,6 +377,10 @@ that file**: the 2026-09-08 edition read 5,180,000 / 16.2 % / 6.18×
 against a version of the escrow three commits older, and stayed on this page after the source moved
 because nothing tied the two together. Neither page is gated by a test, so **re-derive it in the same change that re-measures
 `docs/gas.md`** — the two pages are one measurement.
+
+> **Superseded (2026-10-31, D-30).** Since the hold design a redemption makes no transfer, and since
+> D-30 a `collectHeldBatch` of n items makes one transfer per distinct provider plus one fee
+> transfer (at most n + 1, not 2n). The per-transfer margin below is therefore conservative.
 
 **So 64 is validated, with the caveat named.** Every gas figure in `docs/gas.md` was against
 `MockUSDG`, roughly the cheapest possible ERC-20; the worst case now also has a real-token figure

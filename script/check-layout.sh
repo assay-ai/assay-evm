@@ -166,7 +166,23 @@ check_struct_size() {  # <contract> <struct label> <expected bytes> <why>
     echo "could not read the size of $2"; rc=1
   fi
 }
-check_struct_size AssayEscrow "struct AssayEscrow.Escrow" 128 "four slots — D-4"
+check_struct_size AssayEscrow "struct AssayEscrowStorage.Escrow" 128 "four slots — D-4"
+
+# D-29: the extension the escrow's fallback DELEGATECALLs runs in the escrow's storage, so its
+# layout must BE the escrow's, entry for entry (label, slot, offset, type key; the type key carries
+# the struct's AST id, one declaration for both). The snapshot above pins the escrow's; this pins
+# the extension to it.
+if ! python3 - "$($FORGE inspect AssayEscrow storageLayout --json)" \
+    "$($FORGE inspect AssayEscrowExtension storageLayout --json)" <<'PY'
+import json, sys
+a, b = (json.loads(x) for x in sys.argv[1:3])
+row = lambda e: (e["label"], e["slot"], e["offset"], e["type"])
+sys.exit(0 if [row(e) for e in a["storage"]] == [row(e) for e in b["storage"]] else 1)
+PY
+then
+  echo "AssayEscrowExtension's storage layout is not AssayEscrow's — its doors would write the wrong slots"
+  rc=1
+fi
 check_struct_size AssayStake "struct AssayStake.ProviderStake" 128 "four slots — the designed packing"
 check_struct_size AssayStake "struct AssayStake.SlashRecord" 192 "six slots — disputedAt appended as slot 5 (D-19)"
 

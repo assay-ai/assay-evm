@@ -585,6 +585,25 @@ re-judged under the replacement key.**
 An upgrade is the normal repair and a redeploy the exception (D-1). Both are here; the redeploy
 half is the last paragraph.
 
+**The channel-payment upgrade (D-28/D-29/D-31) has a cross-repository order.** This section is
+the contract half only. The full rollout is in the deploy repository's runbook 06 (round-2
+channels rollout), and channel incidents are in its runbook 07. In short:
+
+1. merge this branch to `main` first: the backend's error and event pin test reads `main`;
+2. the backend is deployed with BOTH the old and the new escrow implementation accepted
+   (`EVM_DEPLOYMENTS.previousEscrowImplementations`) and channels off, so its reconciler passes
+   on either side of the upgrade and withdrawals never freeze;
+3. the owner upgrades the proxy from the Ledger (this section);
+4. the post-checks below, plus a clean backend reconciliation run;
+5. the old implementation is dropped from the backend record;
+6. the SDK with the channel APIs is published, then the MCP is bumped to it;
+7. channels are enabled per chain (`EVM_CHANNELS_LIVE_CHAINS`), dev first.
+
+Once the first channel settle has landed, the backend image is never rolled back past the channel
+release: flag off, drain, then a forward fix. Keep `collectHoldSeconds` at 3,600: above about
+3,900 s a take-rate change can strand a channel's last voucher (final review L-1), and the
+backend stops offering channels above 3,600 s.
+
 ### Who does what (D-17)
 
 1. **The DEPLOYER** (a hot key with no role) deploys the new implementation(s):
@@ -622,7 +641,10 @@ half is the last paragraph.
       classify against the **merge base**, not `HEAD`; `docs/ci-gates.md` §3 has the recipe and the
       reason (a branch can otherwise append twice and land a net reorder nobody refused).
 - [ ] `forge test` green, including `test/Upgrade.t.sol`. `./script/check-sizes.sh` green — the new
-      implementation is still under 22,000 bytes. `./script/check-vendor.sh` green.
+      implementation is still under the 23,000-byte gate (with D-29 the escrow core is 13,834
+      and its extension 14,250; the escrow's creation code carries the extension's and is held
+      under EIP-3860's 49,152).
+      `./script/check-vendor.sh` green.
 - [ ] **The storage-layout snapshot diff is read by a human, out loud, field by field.** This is
       the review the Solana side did not have when a layout change left 41 devnet accounts
       unreadable.
@@ -651,8 +673,10 @@ half is the last paragraph.
       what was added and why it is safe to expose. `script/abi-surface.sh` states what the
       comparison can and cannot see.
 - [ ] **The new implementation's EIP-712 constructor is still `EIP712("Assay Settlement", "2")`.**
-      `grep -rn 'EIP712("' src/` must print exactly two lines, `AssayEscrow.sol` and `AssayStake.sol`,
-      both with those two strings. See the warning below.
+      `grep -rn 'EIP712("' src/` must print exactly one line, `AssayStake.sol`; the escrow passes
+      `EIP712_NAME` and `EIP712_VERSION` from `src/AssayEscrowStorage.sol` (D-29), which must still
+      be those two strings, because the extension builds the same separator from them. See the
+      warning below.
 
 ### The transaction
 
@@ -669,6 +693,46 @@ also needs `EXPECTED_CODEHASH_<NAME>` — the `extcodehash` of `IMPL_<NAME>`
 `check-bytecode.sh` / `verify-deployment.sh` matched against the local build. The script refuses
 (`ImplementationCodehashMismatch`) an `IMPL_*` whose code is not that hash, so the owner signs for
 exactly the verified code and not for whatever address ended up in the env.
+
+**An escrow upgrade also names its library (D-28).** `UPGRADE_ESCROW` requires `CHANNEL_DOOR`
+(the `ChannelDoor` address `deploy()` prints, read back from the implementation's link spans)
+and `EXPECTED_CODEHASH_CHANNELDOOR` (`cast keccak $(cast code $CHANNEL_DOOR --rpc-url <rpc>)`,
+from the library the operator deployed). Both are also compared with the local build, so run
+`run()` from a fresh `forge build` of the reviewed commit. After the fork rehearsal, run
+`verify-deployment.sh` against the upgraded fork with the updated record (checks 2 and 3b only
+reach a new implementation once a proxy points at it). The script refuses an implementation whose
+link spans name any other address (`LinkedLibraryMismatch`) and a library whose code is not
+that hash (`LibraryCodehashMismatch`). The record carries the pair under
+`.contracts.AssayEscrow.libraries.ChannelDoor` (`address`, `runtimeKeccak`); the escrow's own
+`implementationRuntimeKeccak` is taken with the link spans zeroed (`script/linked-code.sh`).
+
+**An escrow upgrade also pins its extension (D-29).** `UPGRADE_ESCROW` requires
+`EXPECTED_CODEHASH_EXTENSION`: `cast keccak $(cast code $(cast call $IMPL_ESCROW 'EXTENSION()(address)' --rpc-url <rpc>) --rpc-url <rpc>)`.
+The extension's address is not an input. The script reads `EXTENSION()` from the implementation,
+refuses it unless it is the implementation's first CREATE (`ExtensionMismatch`), refuses other
+code (`ExtensionCodehashMismatch`), and compares the code with the local build with its one
+immutable (its own address) checked by value (`NotThisBuild`). After the upgrade it requires
+`effectiveCapsOf` and `delegatesOf` of the sample buyer, now answered through the extension, to
+equal what they were before, and an extension DOOR (`redeemVoucherBatch` with empty arrays, from
+the script, simulated) to answer the extension's own `NotRedeemer` through the fallback. Every
+span of every implementation immutable must hold one value; the escrow's `EXTENSION` has two (its
+getter and the `fallback`'s DELEGATECALL target), and code whose spans disagree is refused
+(`NotThisBuild`, and `verify-deployment.sh` "immutables are not consistent"). The record carries
+`.contracts.AssayEscrow.extension` (`address`, `runtimeKeccak`), and `verify-deployment.sh` check
+3c verifies it on chain.
+
+**The extension is part of the implementation.** There is no pointer to swap: a fix to the
+extension is a new escrow implementation (which creates its own new extension), upgraded like
+any other. **Rolling back past D-28** (to an implementation without the channel door) would leave
+channel money in buckets unreachable until a re-upgrade: pause, settle and collect every channel
+empty (and `claimUnpaid` drained), confirm `channelBooks(0, 0)` reads zero held and zero unpaid,
+then roll back.
+
+`check-bytecode.sh` will also report AssayConfig and AssayStake as drifted after D-28. That is the
+CBOR metadata trailer only (the shared `Types.sol` and `Errors.sol` changed, so the source hashes in
+the metadata changed): their runtime code without the trailer is byte-identical to `8620693`,
+measured 2026-10-31. The D-28 upgrade is `UPGRADE_ESCROW` alone; keep the Config and Stake
+record rows, and do not redeploy those two for a metadata change.
 
 The `bytes` payload is `0x` unless a reinitialiser is genuinely needed; if it is, it is a
 `reinitializer(n)` function — **a fresh deployment leaves all three contracts at version 1, so the
@@ -793,6 +857,10 @@ address, and the second is a distinct EOA. Neither is a contract this platform c
 off.
 
 ## 9. What is measured against a mock, and what that costs
+
+> **Superseded (2026-10-31, D-30).** Since the hold design a redemption makes no transfer, and since
+> D-30 a `collectHeldBatch` of n items makes one transfer per distinct provider plus one fee
+> transfer (at most n + 1, not 2n). The per-transfer margin below is therefore conservative.
 
 Every gas figure in `docs/gas.md` — including the 5,235,730 worst-case 64-item batch — was measured
 against `MockUSDG`, roughly the cheapest possible ERC-20. **Mainnet USDG is presumed to be an

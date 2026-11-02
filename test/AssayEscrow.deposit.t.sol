@@ -10,6 +10,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Fixture} from "./helpers/Fixture.sol";
 import {MockUSDG, ReentrantUSDG, FalseReturningUSDG, NoReturnUSDG} from "./helpers/MockUSDG.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
+import {AssayEscrowStorage} from "../src/AssayEscrowStorage.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
 import {IAssayConfig} from "../src/interfaces/IAssayConfig.sol";
 import {IAssayStakeView} from "../src/interfaces/IAssayStakeView.sol";
 import {ParamSet} from "../src/Types.sol";
@@ -61,7 +63,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// instances.
     function test_theStoredAddressesAreThisProxysOwn() public {
         MockUSDG other = new MockUSDG();
-        AssayEscrow a = _deployEscrow(address(other));
+        IAssayEscrow a = _deployEscrow(address(other));
         assertEq(address(a.ASSET()), address(other));
         assertEq(address(escrow.ASSET()), address(usdg), "the fixture's escrow is unchanged");
         assertEq(address(a.CONFIG()), address(config));
@@ -211,7 +213,7 @@ contract AssayEscrowDepositTest is Fixture {
             address(escrow), bytes32(base + 3), bytes32(uint256(TWDR_) | (uint256(TFUND_) << 128))
         );
 
-        AssayEscrow.Escrow memory e = escrow.escrowOf(buyer);
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(buyer);
         assertEq(e.balance, BAL_, "balance: slot 0, offset 0");
         assertEq(e.seqHigh, SEQ_, "seqHigh: slot 0, offset 16");
         assertEq(e.authNonce, NONCE_, "authNonce: slot 0, offset 24");
@@ -355,7 +357,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// Two proxies over one implementation share no storage. A degenerate holding its accounting
     /// anywhere but in the proxy's own slots fails here.
     function test_theBalancesAreThisProxysOwn() public {
-        AssayEscrow other = _deployEscrow(address(usdg));
+        IAssayEscrow other = _deployEscrow(address(usdg));
         _fund(buyer, 5_000_000);
         vm.startPrank(buyer);
         usdg.approve(address(escrow), 5_000_000);
@@ -387,7 +389,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// A fresh escrow is zero-valued, and zero limits mean REFUSE, not "unlimited".
     /// This is what replaces open_escrow: the EVM's default storage gives fail-closed free.
     function test_happyPath_aFreshEscrowHasZeroLimits() public view {
-        AssayEscrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(address(0xFEED));
         assertEq(e.maxVoucherAmount, 0);
         assertEq(e.maxPerWindow, 0);
         assertEq(e.seqHigh, 0);
@@ -397,7 +399,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// Every one of the twelve fields, so a later task cannot quietly change what "unopened"
     /// means. `open_escrow.rs` writes exactly these zeroes by hand on Solana.
     function test_happyPath_everyFieldOfAFreshEscrowIsZero() public view {
-        AssayEscrow.Escrow memory e = escrow.escrowOf(address(0xFEED));
+        AssayEscrowStorage.Escrow memory e = escrow.escrowOf(address(0xFEED));
         assertEq(e.balance, 0);
         assertEq(e.seqHigh, 0);
         assertEq(e.authNonce, 0);
@@ -539,7 +541,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// the only test that can distinguish `nonReentrant` from its absence.
     function test_wrongState_aReentrantAssetCannotRecurseIntoDepositFor() public {
         ReentrantUSDG bad = new ReentrantUSDG();
-        AssayEscrow re = _deployEscrow(address(bad));
+        IAssayEscrow re = _deployEscrow(address(bad));
         bad.setEscrow(address(re), 1);
         bad.mint(buyer, 1_000_000);
 
@@ -560,7 +562,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// the whole suite.
     function test_wrongState_aTokenThatReturnsFalseStopsTheDeposit() public {
         FalseReturningUSDG liar = new FalseReturningUSDG();
-        AssayEscrow onLiar = _deployEscrow(address(liar));
+        IAssayEscrow onLiar = _deployEscrow(address(liar));
         liar.mint(buyer, 1_000_000);
 
         vm.startPrank(buyer);
@@ -582,7 +584,7 @@ contract AssayEscrowDepositTest is Fixture {
     /// must SUCCEED here, and only the correct one does.
     function test_happyPath_aTokenThatReturnsNoDataIsAccepted() public {
         NoReturnUSDG usdt = new NoReturnUSDG();
-        AssayEscrow onUsdt = _deployEscrow(address(usdt));
+        IAssayEscrow onUsdt = _deployEscrow(address(usdt));
         usdt.mint(buyer, 2_500_000);
 
         vm.startPrank(buyer);

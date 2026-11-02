@@ -33,6 +33,8 @@ REC="$HERE/deployments/$CHAIN_ID.json"
 FORGE="${FORGE:-forge}"
 # shellcheck source=script/abi-surface.sh
 . "$HERE/script/abi-surface.sh"
+# shellcheck source=script/linked-code.sh
+. "$HERE/script/linked-code.sh"
 [ -f "$REC" ] || { echo "no deployment record at $REC"; exit 2; }
 fail() { echo "MISMATCH: $*"; exit 1; }
 TMP=$(mktemp -d)
@@ -86,18 +88,7 @@ artifact_for() { # <contract> -> path to the artifact built at the contract's re
   echo "$dir/out/$c.sol/$c.json"
 }
 
-masked_code() { # <contract> <address>
-  local code art starts
-  code=$(cast code "$2" --rpc-url "$RPC"); code=${code#0x}
-  art=$(artifact_for "$1")
-  starts=$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$art")
-  while read -r start len; do
-    [ -n "$start" ] || continue
-    local zeros; zeros=$(printf '%0*d' $((len * 2)) 0)
-    code="${code:0:$((start * 2))}${zeros}${code:$(((start + len) * 2))}"
-  done <<< "$starts"
-  echo "0x$code"
-}
+# masked_code (immutable consistency, then immutable and link spans zeroed): script/linked-code.sh
 
 # keccak256("eip1967.proxy.implementation") - 1
 SLOT=0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
@@ -199,10 +190,73 @@ for c in AssayConfig AssayStake AssayEscrow; do
   [ "$(lc "$live")" = "$(lc "$impl")" ] || fail "$c implementation slot ($live != $impl)"
 
   # 3. That implementation's runtime bytecode is the one CI built, immutables masked (above).
-  got=$(cast keccak "$(masked_code "$c" "$impl")")
+  masked=$(masked_code "$c" "$impl") || fail "$c implementation immutables are not consistent"
+  got=$(cast keccak "$masked")
   [ "$(lc "$got")" = "$(lc "$want")" ] || fail "$c implementation bytecode ($got != $want)"
 
+  # 3b. Every library the implementation links (D-28: the escrow DELEGATECALLs its channel doors
+  #     into ChannelDoor, so that code moves the escrow's money too). Each link span of the LIVE
+  #     implementation names the recorded library, and the code there is the one CI built, its
+  #     own address (the call guard, an immutable) masked and then compared to the address.
+  art=$(artifact_for "$c")
+  for lib in $(linked_libraries "$art"); do
+    laddr=$(jq -er ".contracts.\"$c\".libraries.\"$lib\".address" "$REC") \
+      || fail "$c links $lib but the record names no .contracts.$c.libraries.$lib.address"
+    lwant=$(jq -er ".contracts.\"$c\".libraries.\"$lib\".runtimeKeccak" "$REC") \
+      || fail "$c links $lib but the record has no runtimeKeccak for it"
+    [ "$(lc "$laddr")" != "0x0000000000000000000000000000000000000000" ] \
+      || fail "$c library $lib address is still the placeholder"
+    icode=$(cast code "$impl" --rpc-url "$RPC"); icode=$(lc "${icode#0x}")
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      span="0x${icode:$((start * 2)):$((len * 2))}"
+      [ "$span" = "$(lc "$laddr")" ] || fail "$c link span at $start names $span, record says $laddr ($lib)"
+    done <<< "$(link_spans "$art" "$lib")"
+    lart="$(dirname "$(dirname "$art")")/$lib.sol/$lib.json"
+    lcode=$(cast code "$laddr" --rpc-url "$RPC"); lcode=$(lc "${lcode#0x}")
+    [ -n "$lcode" ] || fail "$lib has no code at $laddr"
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      [ "${lcode:$((start * 2)):$((len * 2))}" = "$(printf '%0*s' $((len * 2 - 40)) '' | tr ' ' 0)$(lc "${laddr#0x}")" ] \
+        || fail "$lib at $laddr does not hold its own address at $start — not this library deployed there"
+    done <<< "$(jq -r '.deployedBytecode.immutableReferences // {} | [.[][]] | .[] | "\(.start) \(.length)"' "$lart")"
+    lmasked=$(masked_code "$lib" "$laddr" "$lart") || fail "$lib immutables are not consistent"
+    lgot=$(cast keccak "$lmasked")
+    [ "$(lc "$lgot")" = "$(lc "$lwant")" ] || fail "$lib library bytecode ($lgot != $lwant)"
+  done
+
   # 4. The proxy has code at all.
+  # 3c. The escrow's extension (D-29). The implementation's `fallback` DELEGATECALLs it in the
+  #     proxy's storage, so its code moves the escrow's money as much as the implementation's
+  #     own. The implementation created it (first CREATE, nonce 1) and holds its address in a
+  #     MASKED immutable, so the address is checked by value here: what `EXTENSION()` returns,
+  #     what nonce 1 of the implementation is, and what the record names must agree. Its own
+  #     single immutable must be its own address (the direct-call guard), and the rest of its
+  #     code must be this build's; it has no EIP-712 immutables to mask, by design.
+  if [ "$c" = "AssayEscrow" ] && jq -e '.methodIdentifiers["EXTENSION()"]' "$art" >/dev/null; then
+    ext=$(cast call "$impl" 'EXTENSION()(address)' --rpc-url "$RPC")
+    nonce1=$(cast compute-address "$impl" --nonce 1 | awk '{print $NF}')
+    [ "$(lc "$ext")" = "$(lc "$nonce1")" ] \
+      || fail "escrow EXTENSION() is $ext, but the implementation's first CREATE is $nonce1"
+    erec=$(jq -er '.contracts.AssayEscrow.extension.address' "$REC") \
+      || fail "the escrow has an extension but the record names no .contracts.AssayEscrow.extension.address"
+    [ "$(lc "$ext")" = "$(lc "$erec")" ] || fail "escrow extension is $ext, record says $erec"
+    ewant=$(jq -er '.contracts.AssayEscrow.extension.runtimeKeccak' "$REC") \
+      || fail "the record has no extension runtimeKeccak"
+    eart="$(dirname "$(dirname "$art")")/AssayEscrowExtension.sol/AssayEscrowExtension.json"
+    [ "$(jq -r '.deployedBytecode.immutableReferences // {} | keys | length' "$eart")" = "1" ] \
+      || fail "AssayEscrowExtension must have exactly one immutable (its own address)"
+    ecode=$(cast code "$ext" --rpc-url "$RPC"); ecode=$(lc "${ecode#0x}")
+    while read -r start len; do
+      [ -n "$start" ] || continue
+      [ "${ecode:$((start * 2)):$((len * 2))}" = "000000000000000000000000$(lc "${ext#0x}")" ] \
+        || fail "the extension at $ext does not hold its own address at $start"
+    done <<< "$(jq -r '.deployedBytecode.immutableReferences | [.[][]] | .[] | "\(.start) \(.length)"' "$eart")"
+    emasked=$(masked_code AssayEscrowExtension "$ext" "$eart") || fail "extension immutables are not consistent"
+    egot=$(cast keccak "$emasked")
+    [ "$(lc "$egot")" = "$(lc "$ewant")" ] || fail "extension bytecode ($egot != $ewant)"
+  fi
+
   [ "$(cast code "$proxy" --rpc-url "$RPC")" != "0x" ] || fail "$c proxy has no code"
 
 done
@@ -247,4 +301,16 @@ for c in AssayEscrow AssayStake; do
   [ "$(lc "$g")" = "$(lc "$w")" ] || fail "$c DOMAIN_SEPARATOR ($g != $w)"
 done
 
-echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"
+# Per-contract compiler settings (W3-B): when the record carries them, each must equal what the
+# artifact this script compared the code with was built with. A record from before the field
+# exists is accepted unchanged; the bytecode comparison above already binds the build.
+for path in AssayConfig AssayStake AssayEscrow "AssayEscrow.libraries.ChannelDoor:ChannelDoor" "AssayEscrow.extension:AssayEscrowExtension"; do
+  key=${path%%:*}; c=${path##*:}; [ "$key" = "$path" ] && c=$key
+  want=$(jq -c ".contracts.\"${key//./\".\"}\".compiler // empty" "$REC")
+  [ -n "$want" ] || continue
+  art=$(artifact_for "${key%%.*}"); art="$(dirname "$(dirname "$art")")/$c.sol/$c.json"
+  got=$(jq -c '.metadata.settings | {optimizerRuns: .optimizer.runs, viaIr: (.viaIR // false), evmVersion}' "$art")
+  [ "$(jq -S . <<< "$got")" = "$(jq -S . <<< "$want")" ] || fail "$c compiler settings ($got != record $want)"
+done
+
+echo "deployment $CHAIN_ID verified against $REC (implementation slot, bytecode, libraries, extension, function surface, wiring, admin, owner, domains, CREATE2 reproduction)"

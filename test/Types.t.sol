@@ -11,6 +11,7 @@ import {
     REQUEST_WITHDRAW_TYPEHASH,
     AUTHORIZE_DELEGATE_TYPEHASH,
     REVOKE_DELEGATE_TYPEHASH,
+    CHANNEL_VOUCHER_TYPEHASH,
     SlashStatus,
     ResponseClass,
     CancelReason,
@@ -30,7 +31,8 @@ import {
     RequestWithdrawAbiProbe,
     AuthorizeDelegateAbiProbe,
     RevokeDelegateAbiProbe,
-    ParamSetAbiProbe
+    ParamSetAbiProbe,
+    ChannelVoucherAbiProbe
 } from "./TypeAbiProbe.sol";
 
 /// The EIP-712 typehash drift gate (D-7).
@@ -132,6 +134,7 @@ contract TypesTest is Test {
         authorizeDelegateProbe = new AuthorizeDelegateAbiProbe();
         revokeDelegateProbe = new RevokeDelegateAbiProbe();
         paramSetProbe = new ParamSetAbiProbe();
+        new ChannelVoucherAbiProbe();
     }
 
     /// Every gated type, in one list. Adding a `*_TYPEHASH` to `src/Types.sol` without adding a
@@ -139,7 +142,7 @@ contract TypesTest is Test {
     /// probe fails the artifact read; adding one without a correct canonical string or pinned
     /// digest fails halves 2 and 3.
     function _registry() internal pure returns (GatedType[] memory g) {
-        g = new GatedType[](6);
+        g = new GatedType[](7);
         g[0] = GatedType({
             constantName: "VOUCHER_TYPEHASH",
             probeContract: "VoucherAbiProbe",
@@ -185,6 +188,14 @@ contract TypesTest is Test {
             typehash: REVOKE_DELEGATE_TYPEHASH,
             canonical: "RevokeDelegate(address payer,address delegate,uint64 nonce,uint64 deadline)",
             pinnedWire: 0xb76fe89d3e35d0a6374de5a472a654e25b45926d78c088c444d137fcba8790bc
+        });
+        g[6] = GatedType({
+            constantName: "CHANNEL_VOUCHER_TYPEHASH",
+            probeContract: "ChannelVoucherAbiProbe",
+            typehash: CHANNEL_VOUCHER_TYPEHASH,
+            canonical: "ChannelVoucher(address payer,address provider,bytes32 channelId,"
+                "uint64 cumulative,uint32 calls,uint64 issuedAt,uint64 expiresAt)",
+            pinnedWire: 0x7ba3537cf51dfda79b983fb69f43cd617e1616e7101451c035d8d59c9e753682
         });
     }
 

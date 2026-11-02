@@ -630,5 +630,100 @@ hand a buyer or a delegate fresh capacity inside the window it was spent in. It 
 `totalRedeemed`, so the per-escrow identity `totalFunded == balance + totalRedeemed +
 totalWithdrawn` keeps holding.
 
-**Solvency** is `balanceOf(escrow) >= totalEscrowed + totalHeld` (asserted by the invariant
-suites, never by the contract). `withdraw` reads `balance` only, so it cannot reach held money.
+**Solvency** is `balanceOf(escrow) >= totalEscrowed + totalHeld + channels.held +
+channels.totalUnpaid` (asserted by the invariant suites, never by the contract): the last two
+are the channel door's buckets and its set-aside payouts (§20, D-28), read with
+`channelBooks(0, 0)`. `withdraw` reads `balance` only, so it cannot reach held money.
+
+## 20. The channel door (D-28) — draft, audit pending
+
+- **`maxVoucherAmount` no longer bounds one signature on the channel door.** A channel voucher
+  can charge `Δcalls × maxVoucherAmount` in one settlement, up to the windows. A leaked
+  delegate key signs `calls` too, so the average cap does not bound it either. The bound for a
+  leaked key stays what §14a says: the delegate and escrow windows, `validUntil`, and
+  revocation with its grace. The backend's admission still refuses a call above the current
+  per-call cap.
+- **The redeemer decides how much of a signed total is charged.** A hacked redeemer can charge
+  up to what the buyer signed, as it can redeem any signed per-call voucher today. It can also
+  waive, refund until the window closes, or delay until the timeout. It cannot pay anyone but
+  the channel's provider and the treasury. With `fromSettled` it cannot charge a range twice or
+  charge a base it did not name.
+- **Collecting late defers payouts instead of losing them.** Two buckets per channel. When
+  both hold money of other hours, a settlement folds into the newest bucket of its rate, **only
+  if that bucket has not matured**, and moves its maturity to the new charge's
+  (`ChannelBucketDeferred`). Money is never released earlier than its own hold, and a matured
+  bucket (a dispute's `keepHeld` included) is never moved: its payout and its anyone-can-collect
+  deadline stay where they were. Before the fold, an uncollected matured bucket next to a
+  pending one, or a hold above one hour, refused the settlement, and the provider lost the
+  unsettled value once the newest voucher expired (review finding H1).
+  A fold is also refused while the other bucket is still pending at another take rate, so a rate
+  switched back and forth (the admin's `updateConfig` has no delay) cannot make each bucket the
+  newest of its rate in turn and keep both from ever maturing.
+  **Worst case and who controls it.** Only the redeemer settles. The pending bucket keeps moving
+  while the other bucket stays occupied, and the redeemer can keep that one occupied until its
+  maturity + 7 days (by not collecting it, or holding it with `keepHeld`). After that anyone can
+  collect it, and the pending bucket stops moving. So a provider's own way out moves from about
+  hold + 7 days to about 2 × hold + 14 days after a charge (about 16 days at the 24 h maximum
+  hold, about 14 days at the default hour). Nothing is lost and nothing is released early.
+  The backend should collect before settling, and must read a bucket's name again after
+  `ChannelBucketDeferred`, because a refund by the old name skips `NoSuchBucket` (judge refunds by
+  `ChannelRefunded` / `ChannelRefundSkipped`, not by the receipt). A settlement still skips
+  `NoBucket` when both buckets hold another take rate (only across a rate change), when the newest
+  bucket of its rate has matured (collect first), while the other bucket is pending at another
+  rate (around a rate change, until it matures), or when a bucket would exceed `MAX_BUCKET`.
+- **Issuer freeze.** A frozen provider or treasury no longer blocks anyone else: its share goes
+  to `unpaid` and `claimUnpaid` pays it once the freeze lifts. While frozen, that money is out
+  of reach of refunds. Mainnet USDG can also `decreaseSupplyFromAddress`, which would make the
+  escrow's own balance short; that is outside every guard here.
+- **A blocked party past maturity + 7 days strands its bucket.** The refund window has
+  closed and collect skips the item, so the money stays held until the party is unblocked,
+  and the channel cannot open a bucket for a new hour while both are occupied. The per-call
+  door's held vouchers behave the same way. Funds are not lost; they wait for the unblock.
+- **The fee rounds down per collect, not per bucket.** Splitting one bucket across collects
+  with `keepHeld` can lower the total fee by at most one unit per piece. Only the redeemer
+  can split, and the loss falls on the treasury.
+- **Pure waives.** A settlement with charge 0 moves no money and is not blocklist-, stake- or
+  cap-gated (it still checks time, authority and `calls`). Its `ChannelSettled` carries
+  `maturityHour = 0` and `takeRateBps = 0`; consumers must read those as "no bucket".
+- **Events (D-30).** `ChannelSettled` no longer carries `signer`, `channelId` or `waived`;
+  `ChannelOpened` carries the first two once per key, and the waived part is derived from the
+  key's previous `cumulative`. A reader indexes from the upgrade block that brings the channel
+  door (D-28 and D-30 ship in the same upgrade, so no live key predates `ChannelOpened`; a
+  local or dev chain that ran an earlier P2 build is re-seeded, not backfilled).
+  `check-events.sh` makes any later change to an event visible; event changes ship backend-first.
+- **In-memory caches (D-30).** The redeem memo, the grouped collect and the channel door cache
+  answers inside one call. They are sound because a redemption and a settlement make only view
+  calls and collect pays only after every item's checks, and because config's `assertActive`
+  treats its three addresses alike. A future change that adds a state-changing call to those
+  loops, or a role-specific blocklist check, must revisit the caches. An attacker who grinds
+  colliding addresses into a batch adds probes (bounded by the table size), never a wrong answer.
+- **Grouped per-call payouts (D-30).** A `collectHeldBatch` pays each provider once and the
+  treasury once, after every item's effects. An issuer-frozen provider still reverts the whole
+  batch (as before); the backend isolates it by simulation.
+- **Refunds name a bucket by hour and rate** (`maturityHour << 16 | rate`). Two buckets of one
+  channel never share both (I11), so a refund always reaches the bucket that holds the call,
+  including two buckets of the same hour after a take-rate change.
+- **Refunds are idempotent per refund id (D-31, audit F-3).** Every refund item carries a
+  `refundId`; once applied on a channel it is never applied there again, in a retry or as a
+  duplicate in the same batch (skip `AlreadyRefunded`, value 3). The id is scoped per channel
+  (`keccak256(abi.encode(key, refundId))`), and only an applied refund uses it: an item skipped
+  `NoSuchBucket`, `WindowClosed` or `Insufficient` can be retried with the same id. The backend
+  must derive the id from the dispute or intent (one id per intended refund), never per attempt.
+  What it does not bound: a stolen redeemer key can invent fresh ids and refund any pending
+  bucket to its payer within the window (F-4, accepted: the money only goes back to the payer).
+- **A malformed voucher signature skips its item (D-31, audit F-5).** High `s`, a `v` outside
+  {27, 28} or a signature that recovers no address skips `BadSignature` (value 12) with a zero
+  key; the rest of the batch settles. The acceptance rules are those of the per-call door, which
+  still reverts on the same signatures. Only a wrong total length of the concatenated
+  signatures reverts the batch, a calldata-only condition the sender controls.
+- **Library linkage.** The escrow implementation is linked to one `ChannelDoor` deployment, and
+  the escrow's money moves through that code. The escrow codehash pins the library address
+  (it is written into the bytecode); `UpgradeByOwner.s.sol` also requires `CHANNEL_DOOR` and
+  `EXPECTED_CODEHASH_CHANNELDOOR` and refuses an implementation whose link spans name another
+  address, a library whose code differs, or code that does not hold its own address in the
+  call-guard span. `verify-deployment.sh` checks each link span of the live implementation and
+  the library's code against `.contracts.AssayEscrow.libraries.ChannelDoor` in the record.
+- **Rollback.** Going back to an implementation without the channel door freezes every channel
+  bucket and every `unpaid` record. The response to a defect is pause and forward-fix, never a
+  rollback.
+

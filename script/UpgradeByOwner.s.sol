@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Strict-1.0.0
 pragma solidity 0.8.38;
 
-import {Script} from "forge-std/Script.sol";
+import {ChannelDoorLink} from "./ChannelDoorLink.sol";
 import {console2} from "forge-std/console2.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {AssayConfig} from "../src/AssayConfig.sol";
 import {AssayEscrow} from "../src/AssayEscrow.sol";
 import {AssayStake} from "../src/AssayStake.sol";
+import {IAssayEscrow} from "../src/interfaces/IAssayEscrow.sol";
+import {Voucher} from "../src/Types.sol";
+import {NotRedeemer} from "../src/Errors.sol";
+import {UnexpectedLinks, LinkedLibraryMismatch} from "./ChannelDoorLink.sol";
 
 error UnexpectedChain(uint256 got, uint256 want);
 error NotTheOwner(address broadcaster, address owner);
@@ -16,6 +20,7 @@ error ImplementationSlotMismatch(address proxy);
 error DomainSeparatorMoved(address proxy);
 error SampleMoved(address proxy);
 error StateMoved(string what);
+error LibraryCodehashMismatch(address lib, bytes32 got, bytes32 want);
 
 /// **Every upgrade after D-17, signed by the OWNER** (runbook §7). Two phases, two keys:
 ///
@@ -39,11 +44,28 @@ error StateMoved(string what);
 ///                 that `check-bytecode.sh` / `verify-deployment.sh` matched against the local
 ///                 build (`cast keccak $(cast code $IMPL_<NAME>)`), so the owner signs for exactly
 ///                 the code that was verified and not for whatever address ended up in the env.
+///                 Every flagged implementation, and the escrow's library, is ALSO compared with
+///                 this checkout's build (`_assertBuilt`, immutables masked, links filled): a hash
+///                 read from the chain only proves the code did not change since it was read.
+///                 Run from a fresh `forge build` of the commit being deployed.
+///   CHANNEL_DOOR, EXPECTED_CODEHASH_CHANNELDOOR   (run, safeCalldata; REQUIRED with
+///                 UPGRADE_ESCROW) the `ChannelDoor` library the escrow implementation is linked
+///                 against, and that library's `extcodehash`. The escrow DELEGATECALLs every
+///                 channel door into it, so its code moves the escrow's money as much as the
+///                 implementation's own; the escrow codehash pins the library ADDRESS (it is
+///                 written into the bytecode), this pins the library CODE. Take the hash from the
+///                 library `verify-deployment.sh` matched (`cast keccak $(cast code $CHANNEL_DOOR)`).
+///   EXPECTED_CODEHASH_EXTENSION   (run, safeCalldata; REQUIRED with UPGRADE_ESCROW) the
+///                 `extcodehash` of the implementation's `AssayEscrowExtension` (D-29), which its
+///                 `fallback` DELEGATECALLs for every selector the core does not have. The
+///                 address is not an input: it is `EXTENSION()` of the implementation and must
+///                 be its first CREATE. Take the hash from the extension `verify-deployment.sh`
+///                 matched (`cast keccak $(cast code $(cast call $IMPL_ESCROW 'EXTENSION()(address)'))`).
 ///
 /// **Order.** The proxies are always upgraded Config, Stake, Escrow, in that order (`_plan`), so
 /// a Stake or Escrow build that reads a new Config function lands after the Config that has it.
 /// An upgrade that introduces such a cross-contract dependency adds its own probe here.
-contract UpgradeByOwner is Script {
+contract UpgradeByOwner is ChannelDoorLink {
     bytes32 internal constant IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
@@ -51,13 +73,19 @@ contract UpgradeByOwner is Script {
         _chain();
         vm.startBroadcast();
         if (vm.envOr("UPGRADE_CONFIG", false)) {
-            console2.log("IMPL_CONFIG=", address(new AssayConfig()));
+            // From its own artifact, for the reason in Deploy.s.sol.
+            console2.log("IMPL_CONFIG=", _deployArtifact("AssayConfig.sol:AssayConfig"));
         }
         if (vm.envOr("UPGRADE_STAKE", false)) {
-            console2.log("IMPL_STAKE=", address(new AssayStake()));
+            console2.log("IMPL_STAKE=", _deployArtifact("AssayStake.sol:AssayStake"));
         }
         if (vm.envOr("UPGRADE_ESCROW", false)) {
-            console2.log("IMPL_ESCROW=", address(new AssayEscrow()));
+            address impl = address(new AssayEscrow());
+            console2.log("IMPL_ESCROW=", impl);
+            // forge deploys and links the library itself; the address is read back from the
+            // implementation's code at the link offsets of this build.
+            console2.log("CHANNEL_DOOR=", _linkedChannelDoor(impl));
+            console2.log("EXTENSION=", AssayEscrow(impl).EXTENSION());
         }
         vm.stopBroadcast();
     }
@@ -74,6 +102,11 @@ contract UpgradeByOwner is Script {
         for (uint256 i = 0; i < 3; i++) {
             if (!on[i]) continue;
             _assertImplementation(impls[i], hashes[i]);
+            _assertBuiltPlain(i, impls[i]);
+            if (i == 2) {
+                _assertChannelDoor(impls[i]);
+                _assertExtension(impls[i], vm.envBytes32("EXPECTED_CODEHASH_EXTENSION"));
+            }
             console2.log("to  ", proxies[i]);
             console2.logBytes(
                 abi.encodeCall(UUPSUpgradeable.upgradeToAndCall, (impls[i], calls[i]))
@@ -98,7 +131,13 @@ contract UpgradeByOwner is Script {
             bytes32[3] memory hashes
         ) = _plan();
         for (uint256 i = 0; i < 3; i++) {
-            if (on[i]) _assertImplementation(impls[i], hashes[i]);
+            if (!on[i]) continue;
+            _assertImplementation(impls[i], hashes[i]);
+            _assertBuiltPlain(i, impls[i]);
+        }
+        if (on[2]) {
+            _assertChannelDoor(impls[2]);
+            _assertExtension(impls[2], vm.envBytes32("EXPECTED_CODEHASH_EXTENSION"));
         }
 
         address sampleBuyer = vm.envAddress("SAMPLE_BUYER");
@@ -113,6 +152,10 @@ contract UpgradeByOwner is Script {
         address adminBefore = config.admin();
         bytes32 paramsBefore = keccak256(abi.encode(config.params()));
         bool pausedBefore = config.paused();
+        bytes32 channelsBefore = _channelTotals(escrow);
+        // Extension-answered reads, captured before and required after (no try/catch: a broken
+        // extension must fail here, not compare equal to itself).
+        bytes32 extensionReadsBefore = _extensionReads(escrow, sampleBuyer);
 
         vm.startBroadcast(owner);
         for (uint256 i = 0; i < 3; i++) {
@@ -141,6 +184,23 @@ contract UpgradeByOwner is Script {
         if (config.owner() != owner) revert StateMoved("owner");
         if (keccak256(abi.encode(config.params())) != paramsBefore) revert StateMoved("params");
         if (config.paused() != pausedBefore) revert StateMoved("paused");
+        if (_channelTotals(escrow) != channelsBefore) revert StateMoved("channel totals");
+        if (_extensionReads(escrow, sampleBuyer) != extensionReadsBefore) {
+            revert StateMoved("extension reads");
+        }
+        // An extension DOOR through the fallback (not only a view): an empty batch from this
+        // non-redeemer must come back as the extension's own `NotRedeemer`. Simulated, never
+        // broadcast.
+        (bool doorOk, bytes memory doorRet) = address(escrow).call(
+            abi.encodeCall(IAssayEscrow.redeemVoucherBatch, (new Voucher[](0), new bytes[](0)))
+        );
+        if (doorOk || doorRet.length != 4 || bytes4(doorRet) != NotRedeemer.selector) {
+            revert StateMoved("extension door");
+        }
+        if (on[2] && IAssayEscrow(address(escrow)).EXTENSION() != AssayEscrow(impls[2]).EXTENSION())
+        {
+            revert StateMoved("extension");
+        }
         // Printed for the record.
         console2.log("slashDelaySeconds", config.slashDelaySeconds());
         console2.log("arbiter", config.arbiter());
@@ -177,6 +237,13 @@ contract UpgradeByOwner is Script {
         _assertUups(impl);
     }
 
+    /// Config's and Stake's implementations against this tree's build (the escrow's is compared
+    /// in `_assertChannelDoor`, with its library address filled in).
+    function _assertBuiltPlain(uint256 i, address impl) internal view {
+        if (i == 0) _assertBuilt(impl, "out/AssayConfig.sol/AssayConfig.json", address(0));
+        if (i == 1) _assertBuilt(impl, "out/AssayStake.sol/AssayStake.json", address(0));
+    }
+
     /// The implementation has code and answers `proxiableUUID()` with the ERC-1967 slot, which
     /// is exactly what `upgradeToAndCall` will check — refused here, before the owner signs.
     function _assertUups(address impl) internal view {
@@ -184,6 +251,59 @@ contract UpgradeByOwner is Script {
         (bool ok, bytes memory ret) = impl.staticcall(abi.encodeWithSignature("proxiableUUID()"));
         if (!ok || ret.length != 32 || abi.decode(ret, (bytes32)) != IMPLEMENTATION_SLOT) {
             revert NotAUupsImplementation(impl);
+        }
+    }
+
+    /// The escrow implementation is linked to exactly one library, `ChannelDoor`, at
+    /// `CHANNEL_DOOR`, and the code there is exactly the code the operator verified.
+    function _assertChannelDoor(address impl) internal view {
+        _assertChannelDoor(
+            impl, vm.envAddress("CHANNEL_DOOR"), vm.envBytes32("EXPECTED_CODEHASH_CHANNELDOOR")
+        );
+    }
+
+    function _assertChannelDoor(address impl, address door, bytes32 want) internal view {
+        address got = _linkedChannelDoor(impl);
+        if (got != door) revert LinkedLibraryMismatch(impl, got, door);
+        if (door.codehash != want) revert LibraryCodehashMismatch(door, door.codehash, want);
+        // The pinned hash is read from the chain; these compare both codes with the build.
+        _assertBuilt(door, "out/ChannelDoor.sol/ChannelDoor.json", address(0));
+        _assertBuilt(impl, "out/AssayEscrow.sol/AssayEscrow.json", door);
+        // A deployed library holds its own address (the call guard that refuses a direct CALL
+        // into a state-changing function) at the compiler's `library_deploy_address` spans;
+        // code that names another address there was not deployed as this library here.
+        string memory art = vm.readFile("out/ChannelDoor.sol/ChannelDoor.json");
+        LinkRef[] memory refs = abi.decode(
+            vm.parseJson(art, ".deployedBytecode.immutableReferences.library_deploy_address"),
+            (LinkRef[])
+        );
+        bytes memory code = door.code;
+        if (refs.length == 0) revert UnexpectedLinks(0);
+        for (uint256 i = 0; i < refs.length; i++) {
+            if (
+                refs[i].length != 32 || refs[i].start + 32 > code.length
+                    || _word(code, refs[i].start) != uint256(uint160(door))
+            ) revert LinkedLibraryMismatch(impl, door, door);
+        }
+    }
+
+    /// What the escrow answers through `effectiveCapsOf` and `delegatesOf` for the sample buyer:
+    /// before D-29 the implementation answered both itself, after it `effectiveCapsOf` comes from
+    /// the extension. Equal before and after means the extension reads the same storage.
+    function _extensionReads(AssayEscrow escrow, address buyer) internal view returns (bytes32) {
+        IAssayEscrow e = IAssayEscrow(address(escrow));
+        (uint64 a, uint64 b, uint64 c, uint64 d) = e.effectiveCapsOf(buyer, address(0));
+        return keccak256(abi.encode(a, b, c, d, e.delegatesOf(buyer)));
+    }
+
+    /// The channel door's set-aside and held totals; zero before the first build that has them.
+    function _channelTotals(AssayEscrow escrow) internal view returns (bytes32) {
+        try escrow.channelBooks(bytes32(0), address(0)) returns (
+            uint256, uint128, uint128 totalUnpaid, uint128 held
+        ) {
+            return keccak256(abi.encode(totalUnpaid, held));
+        } catch {
+            return keccak256(abi.encode(uint128(0), uint128(0)));
         }
     }
 
